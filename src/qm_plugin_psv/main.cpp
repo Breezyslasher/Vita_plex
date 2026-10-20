@@ -1648,8 +1648,10 @@ struct Carry {
     Track cur;          // the song with the shell
     int started;        // seen playing, with its length (newSong)
     int menuPaused;     // the row's play/pause stopped it
+    int resuming;       // the row's play pressed, the shell not yet playing
     int failures;       // songs in a row that would not play
     uint32_t maxTime, prevTime, lenMs, lastLenMs;
+    uint32_t playMs;    // the clock as it last played, where it goes on from after a stop
     int havePrev, replays, lastState;
     int otherLogged;    // the shell seen playing something else in its place, logged
     int waitTicks;      // looks so far for it to play: ticks, not the clock, which runs on
@@ -2217,6 +2219,7 @@ bool carryStart() {
     const SceUInt64 now = sceKernelGetSystemTimeWide();
     g_c.started = 1;
     g_c.maxTime = time;
+    g_c.playMs = time;
     g_c.lenMs = len;
     g_c.songUs = now;
     g_c.checkUs = now;
@@ -2244,8 +2247,10 @@ bool carryPlay(const Track* t, const char* why) {
     g_c.cur = *t;
     g_c.started = 0;
     g_c.menuPaused = 0;
+    g_c.resuming = 0;
     g_c.havePrev = 0;
     g_c.maxTime = 0;
+    g_c.playMs = 0;
     g_c.lenMs = 0;
     g_c.replays = 0;
     g_c.otherLogged = 0;
@@ -2289,6 +2294,7 @@ void seekStart(const char* why) {
     logLine("carry on: song %d back to its start (%s): seek time 0x%08X, seek 0x%08X",
             g_c.cur.index + 1, why, (unsigned)rcTime, (unsigned)rcSeek);
     g_c.maxTime = 0;
+    g_c.playMs = 0;
     g_c.havePrev = 0;
 }
 
@@ -2319,6 +2325,7 @@ void carryPress(int press, int state, uint32_t time) {
     int rc;
     if (g_c.menuPaused || state != 1) {
         g_c.menuPaused = 0;
+        g_c.resuming = 1;
         rc = musicEvent(kEventPlay);
         lock();
         g_playing = 1;
@@ -2401,10 +2408,14 @@ void carryTick() {
     g_c.prevTime = time;
     g_c.havePrev = 1;
     if (g_c.started) {
+        // Playing again after a stop or the row's play: not its end, wherever
+        // it went on from (below), nor is the stop before the shell plays
+        // again after the row's play.
+        const bool back = state == 1 && (g_c.stoppedUs || g_c.resuming);
         if (time > g_c.maxTime) g_c.maxTime = time;
         const uint32_t lenMs = g_c.cur.durationMs > 0 ? g_c.cur.durationMs : g_c.lenMs;
-        if (g_c.maxTime + 10000 >= lenMs && (time + 5000 < g_c.maxTime || state != 1) &&
-            !g_c.menuPaused) {
+        if (!back && !g_c.resuming && g_c.maxTime + 10000 >= lenMs &&
+            (time + 5000 < g_c.maxTime || state != 1) && !g_c.menuPaused) {
             logLine("carry on: song %d of %d ended (it got to %s of %s)", g_c.cur.index + 1,
                     g_c.count, mmss(g_c.maxTime).s, mmss(lenMs).s);
             carryNext(1, true, "the one before ended");
@@ -2413,7 +2424,7 @@ void carryTick() {
         // Stopped before its end, not from the row: as the power button
         // stops the shell's music. Played again every 5 s while it stays so,
         // as the player does; logged the first times and then once a minute.
-        if (state != 1 && !g_c.menuPaused) {
+        if (state != 1 && !g_c.menuPaused && !g_c.resuming) {
             if (!g_c.stoppedUs) g_c.stoppedUs = now;
             if ((uint32_t)(now - g_c.lastPlayUs) >= 5000000u) {
                 g_c.lastPlayUs = now;
@@ -2424,12 +2435,27 @@ void carryTick() {
                             g_c.cur.index + 1, g_c.count, mmss(time).s, state, (unsigned)rcPlay);
                 g_c.replays++;
             }
-        } else if (state == 1 && g_c.stoppedUs) {
-            logLine("carry on: song %d of %d plays again at %s", g_c.cur.index + 1, g_c.count,
-                    mmss(time).s);
+        } else if (back) {
+            if (g_c.stoppedUs)
+                logLine("carry on: song %d of %d plays again at %s", g_c.cur.index + 1, g_c.count,
+                        mmss(time).s);
             g_c.stoppedUs = 0;
             g_c.replays = 0;
+            g_c.resuming = 0;
+            // As player.c's watchSong: an M4A download stopped at 1:58 went
+            // on at 1:23 (log f3042ca3), and is taken back to where it
+            // stopped.
+            if (time + 3000 < g_c.playMs || time > g_c.playMs + 3000) {
+                const int rcTime = musicSeekTime(g_c.playMs), rcSeek = musicEvent(kEventSeek);
+                logLine("carry on: song %d of %d went on at %s, not %s where it stopped; seek "
+                        "time 0x%08X, seek 0x%08X",
+                        g_c.cur.index + 1, g_c.count, mmss(time).s, mmss(g_c.playMs).s,
+                        (unsigned)rcTime, (unsigned)rcSeek);
+                g_c.maxTime = time;
+                return;
+            }
         }
+        if (state == 1) g_c.playMs = time;
         // Something else in the shell, as the system's Music app would put
         // there: not this song's length.
         if ((uint32_t)(now - g_c.checkUs) >= 2000000u) {
@@ -2535,12 +2561,16 @@ public:
             // The system clock runs on while the Vita sleeps, and every
             // process sleeps with it (player.c logs "did not run for"): the
             // row's owner gets its time again, rather than being taken for
-            // gone on the first look after.
+            // gone on the first look after. Writing the log can hold this
+            // thread up too: 3.7 s once, as the quick menu's first opening
+            // was logged while the player read every app's details (log
+            // c1930c5a).
             if (now - lastLoop > 2000000ULL) {
                 uint32_t secs, micros;
                 splitUs(now - lastLoop, &secs, &micros);
-                logLine("the plugin did not run for %u.%u s (the Vita asleep?)", (unsigned)secs,
-                        (unsigned)(micros / 100000));
+                logLine("the plugin's watch did not run for %u.%u s (the Vita asleep, or the log "
+                        "slow to write)",
+                        (unsigned)secs, (unsigned)(micros / 100000));
                 if (g_active) g_activatedUs = now;
             }
             lastLoop = now;

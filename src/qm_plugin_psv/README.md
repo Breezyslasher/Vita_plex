@@ -68,7 +68,9 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   queue (`src/bgplayer_psv/bgplayer.h`), and writes the status as the
   player does, with `by=SceShell`, so that VitaPlex BG takes the music back
   where SceShell got to (`QM_CMD_TAKE_BACK`). The row stays, its buttons
-  acting on this music. Its log lines begin "carry on:".
+  acting on this music. A song that goes on away from where it stopped, as
+  an M4A download went on 35 s back after a pause, is sought back there
+  (build 2036). Its log lines begin "carry on:".
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system

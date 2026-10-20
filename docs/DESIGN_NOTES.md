@@ -2592,6 +2592,56 @@ plugin's, and `b8cde643`, VitaPlex BG's).
   - The Downloads tab's queue items and rows, and the player's local-file
     path, use them.
 
+**Build 2035 on the console: handed over, and nothing carried on** (logs
+`f3042ca3`, the player's; `c1930c5a`, the plugin's; `34b19d01`, VitaPlex
+BG's).
+
+- The album of downloads handed over, and the row showed "Grenade" by Bruno
+  Mars, from Doo-Wops & Hooligans. The player sent SceShell each song's file
+  and made the next song's cover as it got it ready.
+- SceShell carried nothing on, because VitaPlex BG was opened rather than a
+  game. The system ended the player at about 19:16:03.
+  - VitaPlex BG told the plugin it took the music back at 19:16:08.299, 12 ms
+    before the plugin's 5 s were up.
+  - The other order ends the same way. The plugin would have begun carrying
+    on and then stopped at the take-back, its status written `by=SceShell`
+    and the music left playing. VitaPlex BG reads that status (build 2033).
+- The shell played song 2 on by itself after the player had gone, until
+  VitaPlex BG stopped it at 0:31, 21 s later, and went on from there in mpv.
+- These downloads are M4As that the shell does not seek to the second. MP3s
+  and BG Test 11's M4A did, in 0.3 s each time.
+  - The seek event took song 1 to 0:08 for 0:10.
+  - After the second hand-over it left song 2 at 0:35 for 0:39 at the end of
+    its 8 s. The clock never reached 0:37 on the way, so it either got there
+    late or stood there.
+  - `sceMusicPlayerServiceSeek`, the fallback, then stopped the shell at 0:00
+    (the BGM port's owner went from SceShell back to the player), and song 2
+    played again from its start.
+  - A pause from the row at 1:58 went on at 1:23, 35 s back. The clock then
+    ran to the song's end on time, so the music went back too.
+  - mpv warns "timescale not set" on `7562.m4a`. The songs were downloaded
+    through the server's download queue (log `b8cde643`).
+- On a host, the player's flow harness (now 29 cases), given a shell that
+  seeks these files as the console did, logs build 2035's lines exactly. It
+  also showed a pause in a song's last 10 s taken as its end when played
+  again, since the row's play cleared the pause before the shell played.
+- So build 2036:
+  - A jump to up to 10 s short of where a seek was sent counts as landed.
+  - The first seek event gets 12 s, and a second follows only if the first
+    made the clock jump nowhere. The seek call is gone.
+  - A seek that did not land logs the clock's way: where it first jumped,
+    and when it last moved.
+  - A clock that stands 3 s after a seek lands is stopped and played again.
+  - A song that plays again more than 3 s from where it stopped is sought
+    back there, in the player and in the plugin's carry-on.
+  - Neither the wait after the row's play nor the jump counts as the song's
+    end.
+- The plugin's watch thread once went 3.7 s without a look, and logged the
+  Vita asleep. The quick menu's first opening was being logged, line by line
+  to the card, while the player read every installed app's `param.sfo`
+  (213 of them, from 20 s after it started). It now says either may be the
+  cause.
+
 
 ### PS4: the popup, and nothing to hang progress on
 

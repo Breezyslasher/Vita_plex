@@ -909,29 +909,80 @@ static void shellClock(unsigned* timeMs, int* state) {
     *state = st.currentState;
 }
 
-// Whether `how` took the clock to ms within `wait` seconds: there or a little
-// past it, and over 3 s from where playing alone would have taken it from
-// `from`, where it was when asked, forward or back. 1 when it did.
+// What a seek did (seekLanded): took the clock there, made it jump somewhere
+// else, or never made it jump.
+enum { SEEK_LANDED = 1, SEEK_ELSEWHERE = 0, SEEK_NOTHING = -1 };
+
+// Whether `how` took the clock to ms within `wait` seconds, from `from`, where
+// it was when asked: to ms or a little past it, over 3 s from where playing
+// alone would have taken it, forward or back; or with a jump, to up to 10 s
+// short of it. The seek event took MP3s and BG Test 11's M4A to the second,
+// but M4A downloads short: 0:10 to 0:08, and 0:39 to 0:35 (log f3042ca3).
+// A jump is a move between two looks that playing does not make. The clock's
+// way is logged when it did not get there.
 static int seekLanded(const Song* s, unsigned ms, unsigned from, const char* how, int* state,
                       double wait) {
     const double t0 = now();
-    unsigned time = from;
+    unsigned time = from, last = from, jumpTo = 0;
+    double lastAt = 0, jumpAt = -1, movedAt = -1;
     char at[16];
     while (now() - t0 < wait && !g_paused && !g_stopped) {
         sceKernelDelayThread(250 * 1000);
         shellClock(&time, state);
-        const double off = (double)time - from - (now() - t0) * 1000;
-        if (time + 2000 >= ms && time <= ms + 6000 && (off > 3000 || off < -3000)) {
+        const double t = now() - t0;
+        const double step = (double)time - last - (t - lastAt) * 1000;
+        if (jumpAt < 0 && (step > 1500 || step < -1500)) {
+            jumpAt = t;
+            jumpTo = time;
+        }
+        if (time != last) movedAt = t;
+        last = time;
+        lastAt = t;
+        const double off = (double)time - from - t * 1000;
+        if ((time + 2000 >= ms && time <= ms + 6000 && (off > 3000 || off < -3000)) ||
+            (jumpAt >= 0 && time < ms && time + 10000 >= ms)) {
             mmss(at, sizeof(at), time);
             logLine("song %d of %d: %s took the clock to %s in %.1fs, state %d", s->index + 1,
-                    g_count, how, at, now() - t0, *state);
-            return 1;
+                    g_count, how, at, t, *state);
+            return SEEK_LANDED;
         }
     }
     mmss(at, sizeof(at), time);
-    logLine("song %d of %d: %s left the clock at %s, state %d", s->index + 1, g_count, how, at,
-            *state);
-    return 0;
+    char moved[32] = "it never moved";
+    if (movedAt >= 0) snprintf(moved, sizeof(moved), "it last moved at %.1fs", movedAt);
+    if (jumpAt < 0) {
+        logLine("song %d of %d: %s left the clock at %s, state %d; it never jumped, and %s",
+                s->index + 1, g_count, how, at, *state, moved);
+        return SEEK_NOTHING;
+    }
+    char to[16];
+    mmss(to, sizeof(to), jumpTo);
+    logLine("song %d of %d: %s left the clock at %s, state %d; it jumped to %s at %.1fs, and %s",
+            s->index + 1, g_count, how, at, *state, to, jumpAt, moved);
+    return SEEK_ELSEWHERE;
+}
+
+// Whether the song plays on from a seek that landed: in log f3042ca3 one sat
+// short of where it was sent at the end of its 8 s, either there late or
+// standing. The clock standing 3 s, the shell is stopped and played again, as
+// the quick menu's play/pause does.
+static void playsOn(const Song* s) {
+    unsigned at = 0, time = 0;
+    int state = 0;
+    shellClock(&at, &state);
+    // Looks, not the clock, which runs on through a sleep.
+    for (int look = 0; look < 12; look++) {
+        if (state != 1 || g_paused || g_stopped) return;
+        sceKernelDelayThread(250 * 1000);
+        shellClock(&time, &state);
+        if (time != at) return;
+    }
+    char where[16], r[2][24];
+    mmss(where, sizeof(where), at);
+    const int rcStop = sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_STOP, 0);
+    const int rcPlay = sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0);
+    logLine("song %d of %d: the clock has stood at %s for 3 s since the seek; stop %s, play %s",
+            s->index + 1, g_count, where, result(r[0], 24, rcStop), result(r[1], 24, rcPlay));
 }
 
 // Waits for s to play, so that the open cannot undo a seek: the clock moving
@@ -957,31 +1008,33 @@ static unsigned untilPlaying(const Song* s, int* playing) {
     return time;
 }
 
-// Takes s to ms from the clock at time: the time and then the seek event, as
-// ShellAudio.h has it, which worked on the console (log 0bbfcb94), and failing
-// that the call that seeks by itself.
+// Takes s to ms from the clock at time: the seek time and then the seek event,
+// as ShellAudio.h has it, which worked on the console (log 0bbfcb94). The
+// first gets 12 s, past the 8 s at whose end one had left the clock short (log
+// f3042ca3); a second follows only if the first moved nothing. The call that
+// seeks by itself, which followed before, stopped the shell at 0:00 there.
 static void seekFrom(const Song* s, unsigned ms, unsigned time) {
     char want[16], r[2][24];
     mmss(want, sizeof(want), ms);
-    int state = 1;
-    const int rcTime = sceMusicPlayerServiceSetSeekTime(ms);
-    const int rcEvent = sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_SEEK, 0);
-    logLine("song %d of %d: set seek time %s, seek event %s", s->index + 1, g_count,
-            result(r[0], 24, rcTime), result(r[1], 24, rcEvent));
-    int landed = seekLanded(s, ms, time, "the seek event", &state, 8.0);
-    if (!landed && !g_paused && !g_stopped) {
-        shellClock(&time, &state);
-        logLine("song %d of %d: seek call %s", s->index + 1, g_count,
-                result(r[0], 24, sceMusicPlayerServiceSeek(ms)));
-        landed = seekLanded(s, ms, time, "the seek call", &state, 4.0);
+    int state = 1, landed = SEEK_NOTHING;
+    for (int tries = 0; tries < 2 && landed == SEEK_NOTHING && !g_paused && !g_stopped; tries++) {
+        if (tries) shellClock(&time, &state);
+        const int rcTime = sceMusicPlayerServiceSetSeekTime(ms);
+        const int rcEvent = sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_SEEK, 0);
+        logLine("song %d of %d: %sset seek time %s, seek event %s", s->index + 1, g_count,
+                tries ? "again: " : "", result(r[0], 24, rcTime), result(r[1], 24, rcEvent));
+        landed = seekLanded(s, ms, time, tries ? "the second seek event" : "the seek event",
+                            &state, tries ? 5.0 : 12.0);
     }
     if (g_paused || g_stopped) return;
-    if (!landed)
-        logLine("song %d of %d: neither way took it to %s; it goes on from where it is",
+    if (landed != SEEK_LANDED)
+        logLine("song %d of %d: the seek did not take it to %s; it goes on from where it is",
                 s->index + 1, g_count, want);
     if (state != 1)
         logLine("song %d of %d: not playing after the seek; play %s", s->index + 1, g_count,
                 result(r[0], 24, sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0)));
+    else if (landed == SEEK_LANDED)
+        playsOn(s);
 }
 
 // Takes s on to ms, where the app or a pause left it.
@@ -1052,14 +1105,16 @@ static int watchSong(const Song* s) {
     char dur[16], at[16], r[24];
     mmss(dur, sizeof(dur), durMs);
     int lastState = -100, started = 0, otherLogged = 0, havePrev = 0, beat = 0;
-    unsigned maxTime = 0, prevTime = 0;
+    // playMs: the clock as it last played, where the song goes on from after a stop.
+    unsigned maxTime = 0, prevTime = 0, playMs = 0;
     const double t0 = now();
     double lastLine = t0;
     // A song stopped part-way: since when, and for how long in all, which the
     // time it is given leaves out; and whether the quick menu was open as it
-    // stopped (byMenu), which leaves it stopped.
+    // stopped (byMenu), which leaves it stopped. resuming: the row's play
+    // pressed, the shell not yet playing.
     double stoppedSince = 0, stoppedFor = 0, lastPlay = 0;
-    int byMenu = 0;
+    int byMenu = 0, resuming = 0;
     for (;;) {
         sceKernelDelayThread(500 * 1000);
         if (g_stopped) return WATCH_STOPPED;
@@ -1101,11 +1156,13 @@ static int watchSong(const Song* s) {
                 g_menuPaused = 0;
                 seekFrom(s, 0, time);
                 maxTime = 0;
+                playMs = 0;
                 havePrev = 0;
                 continue;
             }
             if (g_menuPaused || state != 1) {
                 g_menuPaused = 0;
+                resuming = 1;
                 logLine("song %d of %d: play at %s, from the quick menu: %s", s->index + 1, g_count,
                         at, result(r, sizeof(r), sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0)));
             } else {
@@ -1158,9 +1215,14 @@ static int watchSong(const Song* s) {
         const unsigned lenMs =
             durMs > 0 ? durMs : (unsigned)(g_lastShellLenMs > 0 ? g_lastShellLenMs : 0);
         if (started) {
+            // Playing again after a stop or the row's play: not its end,
+            // wherever it went on from (below), nor is the stop before the
+            // shell plays again after the row's play, which a song paused in
+            // its last 10 s would be.
+            const int back = state == 1 && (stoppedSince > 0 || resuming);
             if (time > maxTime) maxTime = time;
-            if (maxTime + 10000 >= lenMs && (time + 5000 < maxTime || state != 1) &&
-                !g_menuPaused) {
+            if (!back && maxTime + 10000 >= lenMs && (time + 5000 < maxTime || state != 1) &&
+                !g_menuPaused && !resuming) {
                 mmss(at, sizeof(at), maxTime);
                 logLine("song %d of %d ended (it got to %s of %s)", s->index + 1, g_count, at, dur);
                 return WATCH_ENDED;
@@ -1170,7 +1232,8 @@ static int watchSong(const Song* s) {
             // stays so, and move on after two minutes of it. Not when it
             // stopped with the quick menu open, where it may be the Music
             // row's pause: then it stays stopped until the shell plays again.
-            if (state != 1) {
+            // Nor while the shell has yet to play after the row's play.
+            if (state != 1 && !resuming) {
                 if (stoppedSince == 0) {
                     stoppedSince = t;
                     const double menu = quickMenuSince();
@@ -1193,14 +1256,38 @@ static int watchSong(const Song* s) {
                                    sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0)));
                     lastPlay = t;
                 }
-            } else if (stoppedSince > 0) {
-                logLine("song %d of %d plays again at %s, after %.1fs stopped%s", s->index + 1,
-                        g_count, at, t - stoppedSince,
-                        byMenu ? ", from a stop with the quick menu open" : "");
-                stoppedFor += t - stoppedSince;
+            } else if (back) {
+                // A pause and a play between two looks: no stop was seen.
+                if (stoppedSince > 0) {
+                    logLine("song %d of %d plays again at %s, after %.1fs stopped%s",
+                            s->index + 1, g_count, at, t - stoppedSince,
+                            byMenu ? ", from a stop with the quick menu open" : "");
+                    stoppedFor += t - stoppedSince;
+                }
                 stoppedSince = 0;
                 byMenu = 0;
                 g_menuPaused = 0;
+                resuming = 0;
+                // The shell keeps an MP3's place through a stop (log
+                // 7d5ae5e7), but an M4A download stopped at 1:58 went on at
+                // 1:23 (log f3042ca3): it is taken back to where it stopped.
+                if (time + 3000 < playMs || time > playMs + 3000) {
+                    char where[16];
+                    mmss(where, sizeof(where), playMs);
+                    logLine("song %d of %d stopped at %s; seeking back there", s->index + 1,
+                            g_count, where);
+                    seekFrom(s, playMs, time);
+                    unsigned to = time;
+                    int toState = state;
+                    shellClock(&to, &toState);
+                    maxTime = prevTime = to;
+                    if (toState == 1) playMs = to;
+                    continue;
+                }
+            }
+            if (state == 1) {
+                playMs = time;
+                resuming = 0;
             }
         } else if (t - t0 > 15.0) {
             logLine("song %d of %d: the system player never started it", s->index + 1, g_count);
