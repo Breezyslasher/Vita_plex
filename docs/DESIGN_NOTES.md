@@ -2175,6 +2175,47 @@ Build 2024:
   colour, visible bit and size, for 12 opens a boot.
 - **Protocol 3**: pipes `VitaPlexQM3::…`, module `VitaPlexQM3`.
 
+**Build 2024 on the console: the song shows, the buttons still look off**
+(logs `0e16ecae`, the plugin's, and `84df1537`, VitaPlex BG's).
+
+- The song's title and "artist / album" showed.
+- Every draw object's size read as its widget's (64x64 icons, 106x46
+  buttons, 290x40 lines), so their layout is the headers'.
+- The icons' and buttons' draw objects read FFFFFFFF too, with the row
+  looking off. So no colour or alpha the plugin can reach is what makes them
+  look off, and the lit look found nothing to light. The visible bit read 0
+  for every draw object, the visible heading's too, so it is not that bit.
+- The lines' draw objects read D8FFFFFF and CCFFFFFF, which no widget
+  colour gives: a text object keeps its colour in another form.
+- The groups were at other places in the background player's open than in
+  VitaPlex BG's: SceShell makes the row anew at least sometimes.
+- The plugin had "playing" and "paused" from VitaPlex at each change. It
+  showed nothing of them yet.
+
+What is left between the two looks is the images and how they are drawn.
+Each plane's draw object (`PlaneObj`) has four texture slots, and every draw
+object has a shader. SceShell's own row lit by its Music app shows ⏸ where
+play is, and the row has a second icon there, `0xB26E4562`, sized 0x0, with a
+64x64 texture of its own: the pause icon, most likely.
+
+Build 2025:
+
+- **⏸ while VitaPlex plays.** The first time the row is taken in a boot, the
+  plugin holds the play and pause icons' textures, keeping the reference
+  `GetTexture` adds, so they outlive any row SceShell makes. While VitaPlex
+  plays (`QM_CMD_PLAYING`), the play icon gets the pause texture
+  (`SetTexture`, a virtual call), and its own back when paused, when the row
+  is given back with the quick menu open, and at the next open with the row
+  SceShell's and its play button off. `intrusive_ptr` is filled and emptied
+  by hand, so the plugin imports neither `Surface::AddRef` nor `Release`.
+- **The textures and shaders in the log**: each plane's four texture slots,
+  and each draw object's class (its vtable) and shader, so that SceShell's
+  lit row can be set beside its off one.
+- **SceShell's lit row logged.** Past the 12 opens, opens with the row
+  SceShell's are still logged, up to the 40th, until its row has been seen
+  lit once, its play button on. That open is marked in the log.
+- **Protocol 4**: pipes `VitaPlexQM4::…`, module `VitaPlexQM4`.
+
 **The header took longer than the download** (log `2114643f`). This
 hand-over's first song was OGG, so the player fetched the server's MP3 (6.77
 MB in 7.6 s). Inspecting it and copying it behind a Xing header then took

@@ -16,11 +16,15 @@
  *
  * - The buttons stayed dimmed with ElevenMPV-A's ButtonBase::Enable(false),
  *   though presses got through, and with Enable(true) as well (build 2022).
- *   Their icons are planes of their own beside them, and SceShell fades
- *   buttons and icons with every colour and alpha a widget has at full
- *   (build 2023): in what they are drawn with, most likely. The way they are
- *   switched on can be chosen (QM_LOOK_*); the default also lights them
- *   there, and puts back what it changed when the row is SceShell's again.
+ *   Their icons are planes of their own beside them, and SceShell draws
+ *   buttons and icons faded with every colour and alpha a widget has at full
+ *   (build 2023), its draw objects' colours too (build 2024): the images or
+ *   how they are drawn, then, which the log now lists. The way they are
+ *   switched on can be chosen (QM_LOOK_*); the default also lights any
+ *   colour it finds faded, and puts back what it changed when the row is
+ *   SceShell's again.
+ * - While VitaPlex plays, the play icon shows ⏸, as SceShell's own row does
+ *   for its Music app.
  * - It takes the row 200 ms after the quick menu opens, as ElevenMPV-A's
  *   plugin about does: the song this one put on the lines at once did not
  *   show (build 2022). While the quick menu stays open it puts back what
@@ -183,6 +187,8 @@ const uint32_t kHashTextBottom = 0xF099B450;
 const uint32_t kHashIconRew = 0xD639AB27;
 const uint32_t kHashIconPlay = 0xE057A7D0;
 const uint32_t kHashIconFf = 0x6FA104CC;
+// One more there, at play's place and sized 0x0: the pause icon (showPlaying).
+const uint32_t kHashIconPause = 0xB26E4562;
 // The row's heading, "Music", in a group of its own above it.
 const uint32_t kHashHeading = 0x90E6251E;
 
@@ -221,7 +227,7 @@ uint16_t g_title[256], g_artist[256], g_album[256];
 // While the quick menu is open:
 SceUInt64 g_openedUs;  // when it was seen open
 paf::ui::Widget *g_rew, *g_play, *g_ff, *g_textTop, *g_textBottom;
-paf::ui::Widget *g_iconRew, *g_iconPlay, *g_iconFf;
+paf::ui::Widget *g_iconRew, *g_iconPlay, *g_iconFf, *g_iconPause;
 uint32_t g_topHash, g_bottomHash;  // the lines as this plugin set them
 int g_applied;                     // the row is ours this time it is open
 int g_findTries;                   // looks for the buttons this time
@@ -233,6 +239,7 @@ int g_lookLogged = -1;            // ... and the first with each look
 int g_revertsLogged;              // buttons found switched off again, logged
 int g_textsLogged;                // lines found changed, logged
 int g_dimsLogged;                 // icons and buttons found dimmed, logged
+int g_sawLitRow;                  // SceShell's own row seen lit, its music in it
 
 void lock() {
     sceKernelLockMutex(g_lock, 1, NULL);
@@ -299,7 +306,9 @@ struct ButtonPeek : paf::ui::ButtonBase {
 };
 // What a widget is drawn with (Widget::GetDrawObj, a virtual call): PAF's
 // graph::DrawObj has a colour of its own besides the widget's. Its layout
-// is the headers' if its size reads as its widget's (drawLayoutOk).
+// is the headers' if its size reads as its widget's (drawLayoutOk), as every
+// one did in build 2024. Its visible bit read 0 for all of them, the row's
+// heading too, so it is not read.
 struct DrawPeek : paf::graph::DrawObj {
     static DrawPeek* of(paf::graph::DrawObj* d) {
         return static_cast<DrawPeek*>(d);
@@ -310,11 +319,15 @@ struct DrawPeek : paf::graph::DrawObj {
     static void setColor(paf::graph::DrawObj* d, uint32_t color) {
         of(d)->m_color = color;
     }
-    static int visible(paf::graph::DrawObj* d) {
-        return of(d)->m_visible;
-    }
     static int size(paf::graph::DrawObj* d, int i) {
         return (int)reinterpret_cast<const float*>(&of(d)->m_size)[i];
+    }
+    // Its class (its vtable) and its shader: a SharedPtr's first word.
+    static const void* vtable(paf::graph::DrawObj* d) {
+        return *reinterpret_cast<const void* const*>(d);
+    }
+    static const void* shader(paf::graph::DrawObj* d) {
+        return *reinterpret_cast<const void* const*>(&of(d)->m_shader);
     }
 };
 
@@ -339,22 +352,56 @@ bool isA(paf::ui::Widget* w, const char* type) {
     return w && type && w->IsInherit(type);
 }
 
-// A widget's texture, for the log: where it is and its size. The reference
-// GetTexture adds is dropped again without ever freeing the texture from
-// this thread, should SceShell have let go of it meanwhile; ref's own
-// destructor, which would, is never run.
-void textureOf(paf::ui::Widget* w, const void** tex, int* width, int* height) {
-    union Ref {
-        paf::intrusive_ptr<paf::graph::Surface> ptr;
-        Ref() : ptr() {}
-        ~Ref() {}
-    } ref;
-    w->GetTexture(ref.ptr);
+// An intrusive_ptr to a texture that the plugin fills itself and never
+// destroys: setting it adds no reference and nothing takes one away, so it
+// calls neither Surface::AddRef nor Release, imports the plugin does without.
+struct TexPtr : paf::intrusive_ptr<paf::graph::Surface> {
+    void set(paf::graph::Surface* s) {
+        m_ptr = s;
+    }
+};
+union TexRef {
+    TexPtr ptr;
+    explicit TexRef(paf::graph::Surface* s) : ptr() {
+        ptr.set(s);
+    }
+    ~TexRef() {}
+};
+
+// A widget's texture in slot `index` of its first draw object, for the log:
+// where it is and its size. The reference GetTexture adds is dropped again
+// without ever freeing the texture from this thread, should SceShell have let
+// go of it meanwhile. Slot 0 by the call the console has run since build 2023.
+void textureOf(paf::ui::Widget* w, int index, const void** tex, int* width, int* height) {
+    TexRef ref(NULL);
+    if (index == 0) w->GetTexture(ref.ptr);
+    else w->GetTexture(ref.ptr, 0, (uint32_t)index);
     paf::graph::Surface* s = ref.ptr.get();
     *tex = s;
     *width = s ? s->GetWidth() : 0;
     *height = s ? s->GetHeight() : 0;
     if (s) s->UnsafeRelease();
+}
+
+// A widget's texture, with the reference GetTexture adds kept for good: the
+// plugin's own hold on it, so it outlives any row SceShell makes.
+paf::graph::Surface* holdTexture(paf::ui::Widget* w) {
+    TexRef ref(NULL);
+    w->GetTexture(ref.ptr);
+    return ref.ptr.get();
+}
+
+paf::graph::Surface* currentTexture(paf::ui::Widget* w) {
+    const void* tex;
+    int width, height;
+    textureOf(w, 0, &tex, &width, &height);
+    return (paf::graph::Surface*)tex;
+}
+
+// Gives a widget a texture the plugin holds (holdTexture).
+void giveTexture(paf::ui::Widget* w, paf::graph::Surface* s) {
+    TexRef ref(s);
+    w->SetTexture(ref.ptr);
 }
 
 // ── The row ─────────────────────────────────────────────────────────────────
@@ -369,7 +416,7 @@ int g_snapCount;
 
 void forgetWidgets() {
     g_rew = g_play = g_ff = g_textTop = g_textBottom = NULL;
-    g_iconRew = g_iconPlay = g_iconFf = NULL;
+    g_iconRew = g_iconPlay = g_iconFf = g_iconPause = NULL;
     g_rowGroup = g_headingGroup = NULL;
     g_applied = 0;
     g_findTries = 0;
@@ -524,6 +571,40 @@ void unlightAll(const char* why) {
     g_litCount = 0;
 }
 
+// ── The play/pause icon ─────────────────────────────────────────────────────
+// SceShell's row has a second icon at play's place, 0xB26E4562, sized 0x0:
+// its pause icon, by all appearances, since its own Music app's row shows ⏸
+// there while it plays (screenshot, build 2023). While VitaPlex plays, the
+// play icon is given that one's texture, and its own back when paused or
+// when the row is SceShell's again.
+paf::graph::Surface *g_playTex, *g_pauseTex;  // held for good (holdTexture)
+int g_pauseShown;   // the play icon has the pause icon's texture
+int g_pauseLogged;
+
+// Holds the two icons' textures, the first time the row is taken in a boot:
+// SceShell's own then, before the plugin has changed either.
+void holdPlayTextures() {
+    if (g_playTex || !g_iconPlay || !g_iconPause) return;
+    g_playTex = holdTexture(g_iconPlay);
+    g_pauseTex = holdTexture(g_iconPause);
+    logLine("row: play icon %p, pause icon %p, held", (void*)g_playTex, (void*)g_pauseTex);
+}
+
+// The play icon as VitaPlex's music is, or as SceShell's own row had it:
+// under g_lock, the quick menu open. true when it changed it.
+bool showPlaying(bool pause) {
+    if (!g_iconPlay || !g_playTex || !g_pauseTex) return false;
+    paf::graph::Surface* want = pause ? g_pauseTex : g_playTex;
+    if (currentTexture(g_iconPlay) == want) return false;
+    giveTexture(g_iconPlay, want);
+    g_pauseShown = pause;
+    if (g_pauseLogged < 6) {
+        g_pauseLogged++;
+        logLine("row: play icon now shows %s", pause ? "pause" : "play");
+    }
+    return true;
+}
+
 // Switches a button on the way g_look says, logged before and after if asked.
 void applyLook(paf::ui::Widget* w, const char* name, int logIt) {
     paf::ui::ButtonBase* b = static_cast<paf::ui::ButtonBase*>(w);
@@ -671,10 +752,13 @@ struct Snap {
     int isText;
     uint32_t textHash;
     char text[40];
-    const void* draw;  // its first draw object, and that one's colour, size and visible bit
+    const void* draw;  // its first draw object, and that one's colour, size, class and shader
     uint32_t drawColor;
     int drawWidth, drawHeight;
-    int drawVisible;
+    const void* drawClass;
+    const void* shader;
+    const void* moreTex[3];  // a plane's or plane button's textures in slots 1 to 3
+    int moreWidth[3], moreHeight[3];
 };
 Snap g_snaps[kSnapMax], g_next[kSnapMax];
 
@@ -699,7 +783,8 @@ void snapWidget(paf::ui::Widget* w, Snap* s) {
         s->drawColor = DrawPeek::color(d);
         s->drawWidth = DrawPeek::size(d, 0);
         s->drawHeight = DrawPeek::size(d, 1);
-        s->drawVisible = DrawPeek::visible(d);
+        s->drawClass = DrawPeek::vtable(d);
+        s->shader = DrawPeek::shader(d);
     }
     if (isA(w, paf::ui::Text::TypeName())) {
         paf::wstring str;
@@ -719,8 +804,14 @@ void snapWidget(paf::ui::Widget* w, Snap* s) {
     }
     // Planes and app icons by their type's name: Plane::TypeName, which
     // IsInherit would want, is an import the plugin does without.
-    if (button || startsWith(s->type, "plane") || startsWith(s->type, "app_icon"))
-        textureOf(w, &s->tex, &s->texWidth, &s->texHeight);
+    const bool plane = startsWith(s->type, "plane");
+    if (button || plane || startsWith(s->type, "app_icon"))
+        textureOf(w, 0, &s->tex, &s->texWidth, &s->texHeight);
+    // A plane's draw object has four texture slots (PlaneObj); whether
+    // SceShell keeps a lit icon in another is for the log to say.
+    if (plane)
+        for (int i = 0; i < 3; i++)
+            textureOf(w, i + 1, &s->moreTex[i], &s->moreWidth[i], &s->moreHeight[i]);
 }
 
 // The children of the heading's group and of the row's, as they are now.
@@ -745,9 +836,12 @@ void logSnap(const char* when, const Snap& s) {
         if (s.disableColor) l.add(", dimmed color %08X", (unsigned)s.disableColor);
     }
     if (s.tex) l.add(", texture %p %dx%d", s.tex, s.texWidth, s.texHeight);
+    for (int i = 0; i < 3; i++)
+        if (s.moreTex[i])
+            l.add(", slot %d %p %dx%d", i + 1, s.moreTex[i], s.moreWidth[i], s.moreHeight[i]);
     if (s.draw)
-        l.add(", drawn %08X%s %dx%d", (unsigned)s.drawColor, s.drawVisible ? "" : " (hidden)",
-              s.drawWidth, s.drawHeight);
+        l.add(", drawn %08X %dx%d by %p, shader %p", (unsigned)s.drawColor, s.drawWidth,
+              s.drawHeight, s.drawClass, s.shader);
     if (s.isText) l.add(", text \"%s\"", s.text);
     logLine("%s %s 0x%08X at %p: state %u, color %08X, show %d%%/%d%%, meta %d%%/%d%%%s, "
             "size %dx%d%s",
@@ -773,11 +867,15 @@ void logChange(int ms, const Snap& was, const Snap& now) {
         l.add(", dimmed color %08X", (unsigned)now.disableColor);
     if (was.tex != now.tex || was.texWidth != now.texWidth || was.texHeight != now.texHeight)
         l.add(", texture %p %dx%d", now.tex, now.texWidth, now.texHeight);
+    for (int i = 0; i < 3; i++)
+        if (was.moreTex[i] != now.moreTex[i])
+            l.add(", slot %d %p %dx%d", i + 1, now.moreTex[i], now.moreWidth[i],
+                  now.moreHeight[i]);
     if (was.draw != now.draw || was.drawColor != now.drawColor ||
-        was.drawVisible != now.drawVisible || was.drawWidth != now.drawWidth ||
-        was.drawHeight != now.drawHeight)
-        l.add(", drawn %08X%s %dx%d", (unsigned)now.drawColor, now.drawVisible ? "" : " (hidden)",
-              now.drawWidth, now.drawHeight);
+        was.drawWidth != now.drawWidth || was.drawHeight != now.drawHeight ||
+        was.drawClass != now.drawClass || was.shader != now.shader)
+        l.add(", drawn %08X %dx%d by %p, shader %p", (unsigned)now.drawColor, now.drawWidth,
+              now.drawHeight, now.drawClass, now.shader);
     if (was.textHash != now.textHash) l.add(", text \"%s\"", now.text);
     if (l.n) logLine("+%d ms %s 0x%08X%s", ms, now.type, (unsigned)now.hash, l.buf);
 }
@@ -804,6 +902,12 @@ void timelineTick(SceUInt64 now) {
         paf::ui::Widget* heading = find(kHashHeading);
         g_headingGroup = heading ? heading->GetParent() : NULL;
         g_snapCount = snapAll(g_snaps);
+        // SceShell's own row with its play button on has its own music in it:
+        // the lit look the plugin is after.
+        if (!g_active && static_cast<paf::ui::ButtonBase*>(play)->IsEnable()) {
+            g_sawLitRow = 1;
+            logLine("+%d ms row: SceShell's own, lit: its own music is in it", ms);
+        }
         // The groups' places tell whether SceShell keeps the row from one
         // open to the next or makes it anew.
         logLine("+%d ms row: %d widgets, %s (groups at %p and %p)", ms, g_snapCount,
@@ -850,6 +954,7 @@ bool findRow() {
     g_iconRew = find(kHashIconRew);
     g_iconPlay = find(kHashIconPlay);
     g_iconFf = find(kHashIconFf);
+    g_iconPause = find(kHashIconPause);
     return g_rew && g_play && g_ff;
 }
 
@@ -871,6 +976,8 @@ bool takeRow(SceUInt64 now) {
                 msOpen(now), lookName(g_look));
     }
     applyLookToAll(logIt);
+    holdPlayTextures();
+    showPlaying(g_playing == 1);
     g_rew->SetEventCallback(paf::ui::ButtonBase::CB_BTN_DECIDE, onPress,
                             (void*)(uintptr_t)QM_PRESS_PREVIOUS);
     g_play->SetEventCallback(paf::ui::ButtonBase::CB_BTN_DECIDE, onPress,
@@ -891,6 +998,7 @@ bool takeRow(SceUInt64 now) {
 bool keepRow() {
     bool changed = watchButtons();
     changed |= keepTexts();
+    changed |= showPlaying(g_playing == 1);
     if (g_look == QM_LOOK_LIT) {
         const int logIt = g_dimsLogged < 6;
         if (lightAll(logIt)) {
@@ -902,11 +1010,13 @@ bool keepRow() {
 }
 
 // The row given back with the quick menu open: it is left as SceShell's own
-// set-up had it with no music of its own (build 2023's log), the lines empty
-// and the buttons off and faded, and kept no longer. Under g_lock.
+// set-up had it with no music of its own (build 2023's log), the lines empty,
+// the buttons off and faded and play showing ▶, and kept no longer. Under
+// g_lock.
 void releaseRow(const char* why) {
     if (!g_applied) return;
     unlightAll(why);
+    if (g_pauseShown) showPlaying(false);
     const paf::wstring empty;
     if (g_textTop) g_textTop->SetString(empty);
     if (g_textBottom) g_textBottom->SetString(empty);
@@ -922,7 +1032,9 @@ void quickMenuOpened(SceUInt64 now) {
     forgetWidgets();
     g_openedUs = now;
     g_opens++;
-    g_timeline = g_opens <= kTimelineOpens;
+    // Past the first opens, those with the row SceShell's are still logged
+    // until its own row has been seen lit once: the look to match.
+    g_timeline = g_opens <= kTimelineOpens || (!g_active && !g_sawLitRow && g_opens <= 40);
     g_openLogged = g_active || g_timeline;
     if (g_openLogged) logLine("quick menu opened%s", g_active ? "" : ", the row SceShell's");
 }
@@ -957,9 +1069,16 @@ public:
                     changed = takeRow(now);
                 } else if (g_active && g_applied) {
                     changed = keepRow();
-                } else if (!g_active && g_litCount && findRow()) {
-                    // Lit while the row was ours, and the quick menu closed since.
+                } else if (!g_active && (g_litCount || g_pauseShown) && findRow()) {
+                    // Changed while the row was ours, and the quick menu
+                    // closed since. Its play icon is put back only with the
+                    // button off: with it on, SceShell's own music is in the
+                    // row, and ⏸ may be SceShell's.
                     unlightAll("the row SceShell's");
+                    if (g_pauseShown &&
+                        !static_cast<paf::ui::ButtonBase*>(g_play)->IsEnable())
+                        showPlaying(false);
+                    g_pauseShown = 0;
                     changed = true;
                 }
                 if (changed) timelineQuiet();
@@ -1038,6 +1157,7 @@ private:
         case QM_CMD_PLAYING:
             if (g_playing != (int)m.arg) logLine("%s", m.arg ? "playing" : "paused");
             g_playing = (int)m.arg;
+            if (g_applied && g_active && showPlaying(g_playing == 1)) timelineQuiet();
             break;
         case QM_CMD_LOOK:
             if (m.arg < QM_LOOK_COUNT && g_look != (int)m.arg) {

@@ -15,9 +15,10 @@
 // then asks for the row. Version 2's plugin waits before it takes the row and
 // keeps it as set while the quick menu is open; version 3's lights the
 // buttons and icons where they are drawn, and sets the song's lines white,
-// which version 2's set transparent.
-#define QM_PIPE_TO_PLUGIN   "VitaPlexQM3::ToPlugin"
-#define QM_PIPE_FROM_PLUGIN "VitaPlexQM3::FromPlugin"
+// which version 2's set transparent; version 4's shows ⏸ while VitaPlex
+// plays (QM_CMD_PLAYING) and logs each icon's textures.
+#define QM_PIPE_TO_PLUGIN   "VitaPlexQM4::ToPlugin"
+#define QM_PIPE_FROM_PLUGIN "VitaPlexQM4::FromPlugin"
 
 // To the plugin, a whole QmMessage each time.
 enum {

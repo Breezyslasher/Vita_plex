@@ -30,15 +30,19 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
 - **When:** it takes the row 200 ms after the quick menu opens, as
   ElevenMPV-A's plugin about does. A song set at once did not show. While
   the quick menu stays open, it puts back what SceShell changes.
+- **Play and pause:** while VitaPlex plays, the play icon shows the pause
+  icon's texture (`0xB26E4562`, a second icon at play's place, sized 0x0),
+  as SceShell's own row shows ⏸ while its Music app plays.
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system
   ends cannot hold the quick menu up.
 - **A log:** `ux0:data/VitaPlex/qm-plugin.log`, one file a boot, the boot
   before in `qm-plugin.prev.log`. For the first 12 opens of a boot it lists
-  the widgets of the Music row and its heading, with their draw objects,
-  then their changes for 3 s, whoever has the row. It also logs the BGM port
-  as SceShell reads it.
+  the widgets of the Music row and its heading, with their textures and draw
+  objects, then their changes for 3 s, whoever has the row. Opens with the
+  row SceShell's go on being logged until its own row has been seen lit. It
+  also logs the BGM port as SceShell reads it.
 - **No static constructors:** there is no C runtime to run them, so a global
   object that needs one stays all zeros. The build fails if it has any.
 
