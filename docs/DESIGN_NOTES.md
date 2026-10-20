@@ -2443,6 +2443,126 @@ If a call never comes back, only the test's thread waits. VitaPlex BG then
 reports that the plugin never said it was done, and the last line is the
 step it stopped at.
 
+**Build 2032 on the console: SceShell plays a file itself** (logs
+`96f10ce8`, the plugin's, and `fb1a0930`, VitaPlex BG's).
+
+- VitaPlex BG took the BGM port at 0x80 and loaded the plugin, which had
+  the test 43 ms later: `downloads/15756.mp3`.
+- `sceShellSvcGetSvcObj` was in SceShell already, in its module SceShellSvc,
+  so nothing was loaded. The client object came back at once.
+- Start, stop, open and play each returned 0, within 9 ms.
+- The state went from 0 to 1 in 0.27 s. The clock ran 1.1 s, 2.1 s, ...,
+  29.1 s, one second each second. Then stop and end returned 0, and the
+  plugin said "SceShell played it".
+- As SceShell reads the BGM port (the plugin's hook):
+  - VitaPlex BG's process had it at 0x80 before the play.
+  - From 0.1 s after the play, the owner read 0x00011DC1, still at 0x80. That
+    owner is also the one the port showed once VitaPlex BG was left for the
+    LiveArea, so it is most likely SceShell.
+  - VitaPlex BG's process was the owner again 0.1 s after the stop. So the
+    service takes the port for SceShell itself while it plays for SceShell.
+
+So code in SceShell can drive the music service, with the same calls and the
+same results as the background player gets from its own process. Step 1 is
+next.
+
+Build 2033: **SceShell carries the queue on** (step 1, `qm_protocol.h`).
+Until now, when the system ended the background player, the plugin gave the
+row back 5 s after the player's last check-in, and the queue stopped after
+the song then playing.
+
+- **When.** The plugin has the row for the player, and the player's
+  once-a-second `QM_CMD_ACTIVATE` stops for 5 s with no `QM_CMD_DEACTIVATE`.
+  That happens when the system ends the player: an app with extended memory
+  starts, or VitaPlex BG opens.
+- **What it checks first.**
+  - The player's status says a song plays.
+  - The queue file is the one it plays (its `written=` against the status's
+    `queue=`, to the microsecond).
+  - The shell has a song of that song's length, to 3 s. The player may have
+    handed the next song over just before it went, while its status still
+    named the one before, so the song after the status's is accepted too.
+  - Otherwise nothing is carried on, and the row goes back as before.
+- **What it plays.** At the song's end, the next song in the queue's order
+  that is on the card. The end is found as `watchSong` finds it: the clock
+  going back in the last 10 s, or the state leaving 1.
+  - First choice: the download the queue names, if the shell plays its format
+    (MP3, M4A, AAC, WAV).
+  - Second: the player's own file of it. The player now names its files to
+    the plugin (`QM_CMD_SONG_FILE`): the song with the shell, and the next
+    once it is ready.
+  - Up to 20 songs are looked at, and songs on neither are passed over.
+    Repeat one plays the song again; repeat all goes round.
+  - A song the shell has not started within 15 s, counted in looks rather
+    than by the clock, is passed over. Three in a row end it.
+  - A song the shell starts part-way, as it can with a file it has had
+    before, is taken back to 0:00.
+- **The row.**
+  - The song's lines and ⏸.
+  - Its cover, if the player made one. The player now makes the next song's
+    cover as soon as that song is ready (`bgplayer/<key>.png`, written beside
+    its name and moved in whole).
+  - Its buttons act on SceShell's music, as the player's do: play/pause,
+    next, and previous. Previous within the first 3 s goes to the song
+    before if it is still on the card, and otherwise to the start.
+- **The status.** Written every 2 s and at each change, as the player writes
+  it, with `by=SceShell`.
+  - VitaPlex BG, opening, tells the plugin first (`QM_CMD_TAKE_BACK`).
+    It only sends to a plugin already in SceShell, and never loads one.
+  - It waits up to 2 s for the plugin's last status, then takes the music
+    back as it does from an ended player: the song stopped in the shell, and
+    played on in VitaPlex BG from the same place.
+  - The ask also keeps a queue from being carried on behind VitaPlex BG
+    while it is open, until the player takes the row again.
+- **When it stops.**
+  - The queue's end, or no further song on the card: the service is stopped
+    and ended.
+  - Something else playing in the shell, by the length it gives, checked
+    every 2 s: that song is left playing.
+  - A process taking the row: the music is left to it.
+  - Paused from the row, it stays paused. Stopped otherwise, as the power
+    button stops it, it is played again every 5 s, as the player does.
+- **Files.** The player's file of a song is removed once the next has the
+  shell, as the player removes its own; downloads never are.
+- **Sleep.** The system clock runs on through a sleep. So after a gap of over
+  2 s in its own loop, the plugin gives the row's owner its time again,
+  rather than taking the player for gone on the first look after.
+
+What it leaves out:
+
+- **No downloads.** A queue of downloads is carried on to its end. With the
+  player one song ahead, a streamed queue gets the song playing and the next
+  one. Going further needs VitaPlex BG to save the next songs while it plays,
+  or the plugin to download them itself (step 2).
+- **No scrobbling** for songs played this way.
+- **No power callback** (ScePower) or `sceKernelPowerTick` (SceProcessmgr).
+  Those would be new libraries in SceShell. The 5 s retry stands in for the
+  first. Whether the Vita sleeps by itself while SceShell plays is for the
+  log to show.
+
+The plugin gains two NIDs, `sceIoRead` and `sceIoClose`, from SceIofilemgr
+(0xF2FF276E), the user library it already takes `sceIoWrite` and
+`sceIoSyncByFd` from. It gains no library. Its PAF stubs are unchanged. It
+no longer has a 64-bit division: build 2032's test had one, and times are
+now split a byte at a time, in 32-bit steps (`splitUs`).
+
+On the host, the carry-on code, taken whole from `main.cpp`, ran against a
+simulated music service and real files, under ASan and UBSan, in 57 checks:
+
+- a queue of five carried on from its second song through a download, a song
+  not on the card and the player's file to its end;
+- taken back part-way, and yielding to a process that takes the row;
+- each button;
+- the power button's stop;
+- something else playing;
+- repeat all and repeat one, with the shell starting a file part-way;
+- a song that never starts;
+- statuses and queues that do not match;
+- CRLF lines, and a line longer than the reader holds.
+
+`qm_link.c`'s test has the new messages, and `qmCoverWriteFile` writes the
+same PNG as `qmCoverWrite` and leaves nothing behind on a bad image.
+
 
 ### PS4: the popup, and nothing to hang progress on
 

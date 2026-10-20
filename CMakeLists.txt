@@ -1518,6 +1518,11 @@ if(PLATFORM_PSV)
             ${CMAKE_CURRENT_SOURCE_DIR}/src/bgplayer_psv)
         target_compile_options(vitaplex_qm PRIVATE
             "$<$<COMPILE_LANGUAGE:CXX>:-O2;-fno-rtti;-fno-exceptions;-fno-builtin;-fshort-wchar;-fno-threadsafe-statics;-fno-sized-deallocation;-Wno-unused-function;-Wno-sign-compare;-Wno-template-body;-D__declspec(x)=>")
+        # bgplayer.h's files, which it reads and writes as it carries the
+        # background player's queue on (qm_protocol.h).
+        target_compile_definitions(vitaplex_qm PRIVATE
+            BGPLAYER_TITLEID=\"${VITA_BG_PLAYER_TITLEID}\"
+            BGPLAYER_APP_TITLEID=\"${VITA_BG_TITLEID}\")
         target_link_options(vitaplex_qm PRIVATE -nostartfiles -nostdlib)
         target_link_libraries(vitaplex_qm
             SceLibKernel_stub

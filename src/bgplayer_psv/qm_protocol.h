@@ -19,9 +19,27 @@
 // plays (QM_CMD_PLAYING) and logs each icon's textures; version 5's changes
 // the row on SceShell's own UI thread, and shows the song's cover on the
 // Music heading's icon (QM_CMD_ART); version 6's plays a file itself, from
-// inside SceShell, for a test (QM_CMD_MUSIC_TEST).
-#define QM_PIPE_TO_PLUGIN   "VitaPlexQM6::ToPlugin"
-#define QM_PIPE_FROM_PLUGIN "VitaPlexQM6::FromPlugin"
+// inside SceShell, for a test (QM_CMD_MUSIC_TEST); version 7's carries the
+// background player's queue on when the system ends the player (below).
+#define QM_PIPE_TO_PLUGIN   "VitaPlexQM7::ToPlugin"
+#define QM_PIPE_FROM_PLUGIN "VitaPlexQM7::FromPlugin"
+
+// SceShell carries the queue on. The system ends the background player as an
+// app with extended memory starts, and SceShell is never ended. So when the
+// player stops sending QM_CMD_ACTIVATE without giving the row back, the
+// plugin plays the rest of its queue itself, from inside SceShell:
+//
+// - The song playing, from the player's status (bgplayer.h), plays on to its
+//   end. Then the queue's next song on the memory card plays: its download
+//   if the shell plays its format, else the file the player had ready for it
+//   (QM_CMD_SONG_FILE). Songs that are on neither are passed over.
+// - The row stays: the song, its cover if the player made one
+//   (QM_SONG_COVER_FMT), and its buttons, which now act on SceShell's music.
+// - The player's status file is written as the player writes it, with
+//   "by=SceShell" in it, so that VitaPlex BG takes the music back where
+//   SceShell has got to. It asks first (QM_CMD_TAKE_BACK).
+// - It stops at the queue's end, when no further song is on the card, when
+//   the shell plays something else, and when any process takes the row.
 
 // To the plugin, a whole QmMessage each time.
 enum {
@@ -45,9 +63,32 @@ enum {
     // line with "music test:" in it and the last with "music test: done".
     // Whether this works decides whether the background music can move into
     // SceShell, where no game ends it (docs/DESIGN_NOTES.md).
-    QM_CMD_MUSIC_TEST
+    QM_CMD_MUSIC_TEST,
+    // From the background player: a song of its queue that is on the memory
+    // card, as a QmSongFile. Sent for the song with the shell and for the next
+    // one once it is ready, so that SceShell can carry the queue on.
+    QM_CMD_SONG_FILE,
+    // From VitaPlex BG, as it opens: it takes the music back. A queue SceShell
+    // carries on stops where it is, with the song left playing for VitaPlex BG
+    // to stop, and the status written one last time. None is carried on after
+    // this until the background player takes the row again.
+    QM_CMD_TAKE_BACK
 };
 enum { QM_OWNER_APP = 1, QM_OWNER_PLAYER = 2 };
+
+// QM_CMD_SONG_FILE's message, sent in a QmMessage's place.
+typedef struct QmSongFile {
+    uint32_t cmd;    // QM_CMD_SONG_FILE
+    uint32_t arg;    // the song's place in the queue, from 0
+    char key[16];    // its ratingKey
+    char path[128];  // the file the shell is given
+} QmSongFile;
+
+// A song's cover for SceShell to show as it carries the queue on: a PNG as
+// QM_ART_PATH_FMT's, made by the background player for the next song once it
+// is ready, in the player's folder of songs (bgplayer.h's BGPLAYER_SONGS) with
+// the song's ratingKey in its name.
+#define QM_SONG_COVER_FMT "ux0:data/VitaPlex/bgplayer/%s.png"
 // The row's buttons stay dimmed with ElevenMPV-A's way, ButtonBase::Enable(false),
 // though presses get through (screenshot, build 2019), and with
 // Enable(true) as well (build 2022), the buttons then in their normal state:

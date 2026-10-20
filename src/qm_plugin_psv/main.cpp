@@ -35,6 +35,10 @@
  *   asked for it again in QM_ACTIVE_TIMEOUT_S.
  * - It logs the row's widgets as the quick menu opens and their changes for
  *   3 s, for the first opens of a boot, whoever has the row.
+ * - When the system ends the background player, as an app with extended
+ *   memory starts, SceShell carries its queue on: this plays the queue's
+ *   songs that are on the memory card through SceShell's music service, from
+ *   inside SceShell, and keeps the row (qm_protocol.h, build 2033).
  *
  * Built with vitasdk against the PAF headers scripts/vita/fetch_paf_headers.sh
  * fetches; its PAF imports are in paf_stubs.S. Logs to
@@ -55,6 +59,7 @@
 
 #include <paf.h>
 
+#include "bgplayer.h"
 #include "qm_protocol.h"
 
 // ── taiHEN, by NID (taihen_stub.S) ──────────────────────────────────────────
@@ -281,7 +286,16 @@ paf::graph::SurfacePool* g_surfacePool;  // power_manage_plugin's, for the cover
 SceUID g_toPlugin = -1, g_fromPlugin = -1;
 SceUID g_lock = -1;  // everything below, and the widgets
 
-// From VitaPlex, by the receiving thread:
+// The row's owner while SceShell itself carries the background player's queue
+// on (qm_protocol.h), beside QM_OWNER_APP and QM_OWNER_PLAYER.
+const uint32_t kOwnerShell = 3;
+// The serials of the covers SceShell shows as it carries the queue on: from
+// a file named by path (g_artPath), not by QM_ART_PATH_FMT. VitaPlex's
+// serials are milliseconds since boot, which never reach this bit.
+const uint32_t kShellArt = 0x80000000u;
+
+// From VitaPlex, by the receiving thread, and as it carries the queue on,
+// by the music thread:
 int g_active;
 uint32_t g_owner;
 SceUInt64 g_activatedUs;  // the last QM_CMD_ACTIVATE
@@ -289,7 +303,14 @@ int g_look = QM_LOOK_LIT;
 int g_playing = -1;
 uint16_t g_title[256], g_artist[256], g_album[256];
 uint32_t g_artSerial;  // the cover at QM_ART_PATH, 0 for none
+char g_artPath[160];   // the file a kShellArt serial names
 int g_releaseDue;      // the row given back, to be left as SceShell had it
+// The music thread's (startMusicThread), woken for a test, for a press while
+// SceShell carries the queue on, and to stop that.
+SceUID g_musicSema = -1;
+// From SceShell's UI thread (onPress), atomic: a press on the row for the
+// music thread while SceShell carries the queue on, QM_PRESS_*.
+int g_carryPress;
 
 // The quick menu, by the watch thread:
 int g_open;            // it is open
@@ -332,8 +353,10 @@ int msOpen(SceUInt64 now) {
 }
 
 const char* ownerName(uint32_t owner) {
-    return owner == QM_OWNER_APP ? "VitaPlex BG" : owner == QM_OWNER_PLAYER ? "the background player"
-                                                                            : "?";
+    return owner == QM_OWNER_APP      ? "VitaPlex BG"
+         : owner == QM_OWNER_PLAYER   ? "the background player"
+         : owner == kOwnerShell       ? "SceShell"
+                                      : "?";
 }
 const char* lookName(int look) {
     return look == QM_LOOK_ENABLE_NORMAL ? "Enable(true) and normal state"
@@ -540,6 +563,12 @@ void onPress(int32_t type, paf::ui::Handler* self, paf::ui::Event* e, void* data
                                                    : "previous";
     if (!g_active) {
         logLine("press: %s, with the row given back; dropped", name);
+        return;
+    }
+    // SceShell's own music: for the music thread, which is woken for it.
+    if (__atomic_load_n(&g_owner, __ATOMIC_SEQ_CST) == kOwnerShell) {
+        __atomic_store_n(&g_carryPress, (int)press, __ATOMIC_SEQ_CST);
+        if (g_musicSema >= 0) sceKernelSignalSema(g_musicSema, 1);
         return;
     }
     QmPress msg;
@@ -762,8 +791,11 @@ void holdHeadingTexture() {
 // A cover's file as a texture, with one reference: the caller's.
 paf::graph::Surface* loadArt(uint32_t serial) {
     if (!g_surfacePool) return NULL;
-    char path[64];
-    sceClibSnprintf(path, sizeof(path), QM_ART_PATH_FMT, (unsigned)(serial & 1));
+    char path[sizeof(g_artPath)];
+    if (serial & kShellArt)
+        sceClibSnprintf(path, sizeof(path), "%s", g_artPath);
+    else
+        sceClibSnprintf(path, sizeof(path), QM_ART_PATH_FMT, (unsigned)(serial & 1));
     int32_t err = 0;
     paf::common::SharedPtr<paf::LocalFile> file =
         paf::LocalFile::Open(path, SCE_O_RDONLY, 0, &err);
@@ -1330,24 +1362,26 @@ void mainTick(void* data) {
     unlock();
 }
 
-// ── Playing from inside SceShell (a test) ───────────────────────────────────
+// ── SceShell's music service ────────────────────────────────────────────────
 // The background player plays through SceShell's music service from a process
-// of its own, which the system ends as a game with extended memory starts.
-// Whether code inside SceShell can drive the same service, so that the queue
-// could move here, is what QM_CMD_MUSIC_TEST tries (docs/DESIGN_NOTES.md):
-// the service's client library (SceShellSvc), found in SceShell or loaded
-// into it; its client object (sceShellSvcGetSvcObj), found with taiHEN so
-// that the plugin does not import it and loads whatever SceShell has; then
-// libShellAudio's calls (lib/libshellaudio), as the background player makes
-// them. The BGM port is VitaPlex BG's to hold for it, as for its own system
-// player tests: the libraries that take it (SceAppMgr) and that name a module
-// (SceModulemgr) are ones no plugin known to load in SceShell imports, and
-// one SceShell refused would keep the whole plugin out. On a thread of its
-// own, never SceShell's UI thread, which may be the one to answer the calls;
-// every code logged, each line with "music test:" in it.
+// of its own, which the system ends as an app with extended memory starts.
+// Code in SceShell drives the same service (build 2032's test,
+// docs/DESIGN_NOTES.md), so the queue is carried on from here once the player
+// is gone (qm_protocol.h). The service's client object (sceShellSvcGetSvcObj)
+// is found with taiHEN, so that the plugin does not import it and takes
+// whatever SceShell has: in build 2032 SceShell's own module SceShellSvc had
+// it. It is spoken to with libShellAudio's calls (lib/libshellaudio), as the
+// background player makes them. The BGM port is left to the service, which
+// took it for SceShell itself while it played for SceShell (build 2032): the
+// libraries that take it (SceAppMgr) and that name a module (SceModulemgr)
+// are ones no plugin known to load in SceShell imports, and one SceShell
+// refused would keep the whole plugin out. All of it on a thread of its own,
+// never SceShell's UI thread, which may be the one to answer the calls.
 const uint32_t kShellSvcLibrary = 0x773242C7;  // SceShellSvc (src/utils's shellsvc_stub.S)
 const uint32_t kGetSvcObj = 0xB31E7F1C;        // sceShellSvcGetSvcObj
 const char* const kShellSvcPath = "vs0:sys/external/libshellsvc.suprx";
+// The events libShellAudio sends (ShellAudio.h's SCE_MUSIC_EVENTID_*).
+const int kEventPlay = 1, kEventStop = 2, kEventSeek = 0x11;
 
 typedef void* (*GetSvcObj)(void);
 // A method's arguments, in and out (libShellAudio's SceShellSvcAudioCustomParams).
@@ -1365,9 +1399,9 @@ struct SvcTracking {
 };
 
 GetSvcObj g_getSvcObj;
-SceUID g_musicSema = -1;
 char g_musicPath[256];   // the file the test plays; under g_lock
-int g_musicBusy;         // a test runs
+int g_musicTestDue;      // a test asked for, not yet begun; under g_lock
+int g_musicBusy;         // a test runs, or is asked for
 int g_musicThread;       // its thread started
 
 void setArg(SvcParams* a, int i, const void* p, uint32_t size) {
@@ -1417,7 +1451,7 @@ int musicTracked(int method) {
 }
 
 // The play status (0x30007): the state at 0x10, the clock in ms at 0x2C.
-int musicStatus(int* state, unsigned* timeMs) {
+int musicStatus(int* state, uint32_t* timeMs) {
     uint32_t buf[0x70 / 4];
     sceClibMemset(buf, 0, sizeof(buf));
     SvcParams in, out;
@@ -1428,6 +1462,32 @@ int musicStatus(int* state, unsigned* timeMs) {
     const int rc = svcCall(0x30007, &in, 1, &out, 1);
     *state = (int)buf[0x10 / 4];
     *timeMs = buf[0x2C / 4];
+    return rc;
+}
+
+// Where the next seek event takes the song (0x3000B), as libShellAudio's
+// sceMusicPlayerServiceSetSeekTime sets it.
+int musicSeekTime(uint32_t ms) {
+    SvcParams in;
+    sceClibMemset(&in, 0, sizeof(in));
+    setArg(&in, 0, &ms, sizeof(ms));
+    setArg(&in, 1, &kMusicPlayer, sizeof(kMusicPlayer));
+    return svcCall(0x3000B, &in, 2, NULL, 0);
+}
+
+// The track info (0x3001B): the length the shell gives its song, in ms at 8,
+// of a buffer libShellAudio sizes at 0x1810.
+uint32_t g_trackInfo[0x1810 / 4];  // the music thread's
+int musicLength(uint32_t* ms) {
+    sceClibMemset(g_trackInfo, 0, sizeof(g_trackInfo));
+    SvcParams in, out;
+    sceClibMemset(&in, 0, sizeof(in));
+    sceClibMemset(&out, 0, sizeof(out));
+    setArg(&in, 0, &kMusicPlayer, sizeof(kMusicPlayer));
+    setArg(&out, 0, g_trackInfo, sizeof(g_trackInfo));
+    const int rc = svcCall(0x3001B, &in, 1, &out, 1);
+    const int len = (int)g_trackInfo[8 / 4];
+    *ms = rc >= 0 && len > 0 ? (uint32_t)len : 0;
     return rc;
 }
 
@@ -1444,22 +1504,23 @@ int findGetSvcObj(uintptr_t* fn, const char** found) {
 }
 
 // The client object's maker, from SceShell's own SceShellSvc, else from the
-// library loaded into SceShell now. true when found.
-bool findSvcObj() {
+// library loaded into SceShell now. `who` begins each line it logs. true when
+// found.
+bool findSvcObj(const char* who) {
     if (g_getSvcObj) return true;
     uintptr_t fn = 0;
     const char* name = "";
     int rc = findGetSvcObj(&fn, &name);
-    logLine("music test: sceShellSvcGetSvcObj in SceShell already: 0x%08X%s%s", (unsigned)rc,
+    logLine("%s: sceShellSvcGetSvcObj in SceShell already: 0x%08X%s%s", who, (unsigned)rc,
             rc >= 0 ? ", in module " : "", rc >= 0 ? name : "");
     if (rc < 0) {
         int status = 0;
         const SceUID mod = sceKernelLoadStartModule(kShellSvcPath, 0, NULL, 0, NULL, &status);
-        logLine("music test: %s loaded into SceShell: 0x%08X, its start 0x%08X", kShellSvcPath,
+        logLine("%s: %s loaded into SceShell: 0x%08X, its start 0x%08X", who, kShellSvcPath,
                 (unsigned)mod, (unsigned)status);
         if (mod < 0) return false;
         rc = findGetSvcObj(&fn, &name);
-        logLine("music test: sceShellSvcGetSvcObj in it: 0x%08X%s%s", (unsigned)rc,
+        logLine("%s: sceShellSvcGetSvcObj in it: 0x%08X%s%s", who, (unsigned)rc,
                 rc >= 0 ? ", in module " : " (not under either library's name)",
                 rc >= 0 ? name : "");
         if (rc < 0) return false;
@@ -1468,17 +1529,21 @@ bool findSvcObj() {
     return true;
 }
 
+// ── Playing a file from inside SceShell (a test) ────────────────────────────
+// QM_CMD_MUSIC_TEST: the first thing the queue needed here, tried on its own.
+// Every code logged, each line with "music test:" in it.
+
 // Watches the service's clock for `seconds`, logging what changes. true when
 // it ran on by 2 s or more, counting only the small steps between readings,
 // not a jump to where an earlier song left it; with `untilMoving`, it stops
 // watching then.
 bool watchMusic(int seconds, bool untilMoving) {
     int lastState = -1000, havePrev = 0;
-    unsigned prev = 0, ran = 0, lastSecond = 0xFFFFFFFF;
+    uint32_t prev = 0, ran = 0, lastSecond = 0xFFFFFFFF;
     bool moved = false;
     for (int i = 0; i < seconds * 4; i++) {
         int state = 0;
-        unsigned timeMs = 0;
+        uint32_t timeMs = 0;
         const int rc = musicStatus(&state, &timeMs);
         if (rc < 0) {
             logLine("music test: status: 0x%08X", (unsigned)rc);
@@ -1487,8 +1552,8 @@ bool watchMusic(int seconds, bool untilMoving) {
             prev = timeMs;
             havePrev = 1;
             if (state != lastState || timeMs / 1000 != lastSecond)
-                logLine("music test: state %d, at %u.%u s", state, timeMs / 1000,
-                        (timeMs % 1000) / 100);
+                logLine("music test: state %d, at %u.%u s", state, (unsigned)(timeMs / 1000),
+                        (unsigned)((timeMs % 1000) / 100));
             lastState = state;
             lastSecond = timeMs / 1000;
             if (ran >= 2000) moved = true;
@@ -1501,7 +1566,7 @@ bool watchMusic(int seconds, bool untilMoving) {
 
 void musicTest(const char* path) {
     logLine("music test: %s, from inside SceShell", path);
-    if (!findSvcObj()) {
+    if (!findSvcObj("music test")) {
         logLine("music test: done: no client for SceShell's music service");
         return;
     }
@@ -1518,60 +1583,935 @@ void musicTest(const char* path) {
         logLine("music test: done: the service would not start");
         return;
     }
-    const int rcStop = musicEvent(2), rcOpen = musicOpen(path), rcPlay = musicEvent(1);
+    const int rcStop = musicEvent(kEventStop), rcOpen = musicOpen(path),
+              rcPlay = musicEvent(kEventPlay);
     const SceUInt64 playAt = sceKernelGetSystemTimeWide();
     logLine("music test: stop 0x%08X, open 0x%08X, play 0x%08X", (unsigned)rcStop,
             (unsigned)rcOpen, (unsigned)rcPlay);
     const bool played = watchMusic(8, true);
     if (played) {
-        const int left =
-            QM_MUSIC_TEST_S - (int)((sceKernelGetSystemTimeWide() - playAt) / 1000000);
+        // In 32 bits, as msOpen: the test is over in well under 71 minutes.
+        const int left = QM_MUSIC_TEST_S -
+                         (int)((uint32_t)(sceKernelGetSystemTimeWide() - playAt) / 1000000u);
         logLine("music test: playing; on for %d s more", left);
         watchMusic(left, false);
     }
-    const int rcEnd = musicEvent(2), rcFinish = musicTracked(0x30001);
+    const int rcEnd = musicEvent(kEventStop), rcFinish = musicTracked(0x30001);
     logLine("music test: stop 0x%08X, end the service 0x%08X", (unsigned)rcEnd,
             (unsigned)rcFinish);
     logLine("music test: done: %s", played ? "SceShell played it" : "its clock never moved");
 }
 
+// ── SceShell carries the queue on ───────────────────────────────────────────
+// (qm_protocol.h) The background player stopped checking in without giving
+// the row back: the system has ended it, and its song plays on in the shell.
+// From that song's end the queue's next song on the memory card is played
+// from here, and the one after, much as the player plays them (player.c's
+// watchSong). Everything comes from the files the player and VitaPlex BG keep
+// (bgplayer.h): the player's status for the song playing, the queue for the
+// songs and their downloads, and the player's own files of them as
+// QM_CMD_SONG_FILE named them. The status is written as the player writes it,
+// with "by=SceShell", so that VitaPlex BG takes the music back where SceShell
+// has got to. The row stays the player's as it was: the song's lines, its
+// cover if the player made one (QM_SONG_COVER_FMT), and its buttons, which act
+// on the music here. Its lines in the log begin "carry on:".
+const int kLookAhead = 20;        // songs looked at for the next on the card
+const int kSongFiles = 4;         // the player's song files remembered
+// Stopping: the place written and the music left, for VitaPlex BG to take
+// back; the music left to a process that took the row, with nothing written;
+// something else in the shell, the status saying stopped; the queue played
+// out, or nothing more on the card: the service stopped and ended.
+enum { kEndTakeBack = 1, kEndYield, kEndOther, kEndOver, kEndStopped };
+
+// Under g_lock:
+QmSongFile g_songFiles[kSongFiles];  // the last QM_CMD_SONG_FILEs
+int g_songFilesNext;
+int g_carryAllowed;      // the player has had the row since VitaPlex BG took the music back
+int g_carry;             // 1 to begin (the watch thread's ask), 2 carrying on
+const char* g_carryStop; // why it is to stop, or NULL ...
+int g_carryStopHow;      // ... and how (kEnd*)
+uint32_t g_shellArts;    // kShellArt serials so far
+
+// The music thread's alone.
+struct Track {
+    int index;          // its place in the queue, from 0
+    char key[16];       // its ratingKey
+    uint32_t durationMs;  // the server's length, 0 if unknown
+    char local[128];    // a download of it, or ""
+    char title[192], artist[128], album[128];  // UTF-8, for the row
+    char path[128];     // the file the shell is given
+    int own;            // the player's (BGPLAYER_SONGS): removed once played
+};
+struct Carry {
+    char queue[32];     // the queue's "written=", as it has it
+    int repeat, count;
+    Track cur;          // the song with the shell
+    int started;        // seen playing, with its length (newSong)
+    int menuPaused;     // the row's play/pause stopped it
+    int failures;       // songs in a row that would not play
+    uint32_t maxTime, prevTime, lenMs, lastLenMs;
+    int havePrev, replays, lastState;
+    int otherLogged;    // the shell seen playing something else in its place, logged
+    int waitTicks;      // looks so far for it to play: ticks, not the clock, which runs on
+                        // through a sleep
+    SceUInt64 songUs;      // when it was handed to the shell
+    SceUInt64 stoppedUs;   // stopped before its end since, 0 if not
+    SceUInt64 lastPlayUs, statusUs, checkUs;
+};
+Carry g_c;
+Track g_found;  // a song looked at for what comes next
+int g_statusErrors, g_statusReadErrors;
+
+// No 64-bit division here: it would bring in libgcc's, built for another
+// wchar_t. Microseconds as seconds and the rest, a byte at a time, each step
+// a 32-bit division (the remainder stays below 1e6 * 256).
+void splitUs(SceUInt64 us, uint32_t* secs, uint32_t* micros) {
+    uint32_t q = 0, r = 0;
+    for (int shift = 56; shift >= 0; shift -= 8) {
+        const uint32_t cur = (r << 8) | (uint32_t)((us >> shift) & 0xFF);
+        q = (q << 8) | (cur / 1000000u);
+        r = cur % 1000000u;
+    }
+    *secs = q;
+    *micros = r;
+}
+
+// Milliseconds as "m:ss", for the log.
+struct Mmss {
+    char s[16];
+};
+Mmss mmss(uint32_t ms) {
+    Mmss m;
+    sceClibSnprintf(m.s, sizeof(m.s), "%u:%02u", (unsigned)(ms / 60000),
+                    (unsigned)(ms / 1000 % 60));
+    return m;
+}
+
+bool same(const char* a, const char* b) {
+    for (; *a && *a == *b; a++, b++) {
+    }
+    return *a == *b;
+}
+
+uint32_t toUint(const char* s) {
+    uint32_t v = 0;
+    for (; *s >= '0' && *s <= '9'; s++) v = v * 10 + (uint32_t)(*s - '0');
+    return v;
+}
+
+int toInt(const char* s) {
+    return *s == '-' ? -(int)toUint(s + 1) : (int)toUint(s);
+}
+
+// A time on the system clock as a note has it ("%.6f" seconds): the same two
+// times as these whatever their last digits.
+void toSecs(const char* s, uint32_t* secs, uint32_t* micros) {
+    *secs = toUint(s);
+    *micros = 0;
+    while (*s >= '0' && *s <= '9') s++;
+    if (*s != '.') return;
+    s++;
+    uint32_t m = 0;
+    int digits = 0;
+    for (; digits < 6 && *s >= '0' && *s <= '9'; s++, digits++) m = m * 10 + (uint32_t)(*s - '0');
+    for (; digits < 6; digits++) m *= 10;
+    *micros = m;
+}
+
+bool sameTime(const char* a, const char* b) {
+    uint32_t as, am, bs, bm;
+    toSecs(a, &as, &am);
+    toSecs(b, &bs, &bm);
+    return as == bs && am == bm;
+}
+
+// A file read whole into buf, as much as fits, ended with 0. Its length, or
+// the error.
+int readFile(const char* path, char* buf, int cap) {
+    const SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
+    if (fd < 0) return fd;
+    int n = 0;
+    while (n < cap - 1) {
+        const int got = sceIoRead(fd, buf + n, (SceSize)(cap - 1 - n));
+        if (got <= 0) break;
+        n += got;
+    }
+    sceIoClose(fd);
+    buf[n] = 0;
+    return n;
+}
+
+bool exists(const char* path) {
+    const SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
+    if (fd < 0) return false;
+    sceIoClose(fd);
+    return true;
+}
+
+// The value of key in a note (bgplayer.h's "key=value" lines) into out, cut
+// to fit. true when it is there.
+bool noteValue(const char* text, const char* key, char* out, int cap) {
+    const int klen = (int)sceClibStrnlen(key, 64);
+    for (const char* p = text; *p;) {
+        if (startsWith(p, key) && p[klen] == '=') {
+            p += klen + 1;
+            int n = 0;
+            for (; *p && *p != '\n' && *p != '\r'; p++)
+                if (n < cap - 1) out[n++] = *p;
+            out[n] = 0;
+            return true;
+        }
+        while (*p && *p != '\n') p++;
+        if (*p) p++;
+    }
+    out[0] = 0;
+    return false;
+}
+
+// The queue a line at a time, without its end; a line longer than the room
+// for it is cut. POD, so that nothing needs constructing as the module loads.
+struct LineReader {
+    SceUID fd;
+    char buf[2048];
+    int len, pos;
+};
+LineReader g_reader;
+char g_line[1024];  // the line read last
+
+bool readerOpen(const char* path) {
+    g_reader.fd = sceIoOpen(path, SCE_O_RDONLY, 0);
+    g_reader.len = g_reader.pos = 0;
+    return g_reader.fd >= 0;
+}
+
+void readerClose() {
+    if (g_reader.fd >= 0) sceIoClose(g_reader.fd);
+    g_reader.fd = -1;
+}
+
+// The next line in g_line. false at the file's end.
+bool readerNext() {
+    int n = 0;
+    bool any = false;
+    for (;;) {
+        if (g_reader.pos == g_reader.len) {
+            const int got = sceIoRead(g_reader.fd, g_reader.buf, sizeof(g_reader.buf));
+            g_reader.len = got > 0 ? got : 0;
+            g_reader.pos = 0;
+            if (g_reader.len == 0) break;
+        }
+        any = true;
+        const char c = g_reader.buf[g_reader.pos++];
+        if (c == '\n') break;
+        if (c != '\r' && n < (int)sizeof(g_line) - 1) g_line[n++] = c;
+    }
+    g_line[n] = 0;
+    return any;
+}
+
+// The queue read through: its head lines, which come before its songs, and
+// each song in turn.
+struct QueueScan {
+    int index;          // the song read last, -1 before the first
+    bool whole;         // its "end" read
+    char written[32];
+    int repeat;
+};
+
+bool scanOpen(QueueScan* s) {
+    s->index = -1;
+    s->whole = false;
+    s->written[0] = 0;
+    s->repeat = BGPLAYER_REPEAT_OFF;
+    return readerOpen(BGPLAYER_QUEUE);
+}
+
+// The next song's fields, after "track=", in *fields. false at the end.
+bool scanNext(QueueScan* s, const char** fields) {
+    while (readerNext()) {
+        if (startsWith(g_line, "track=")) {
+            s->index++;
+            *fields = g_line + 6;
+            return true;
+        }
+        if (startsWith(g_line, "written=")) {
+            sceClibSnprintf(s->written, sizeof(s->written), "%s", g_line + 8);
+        } else if (startsWith(g_line, "repeat=")) {
+            s->repeat = (int)toUint(g_line + 7);
+        } else if (same(g_line, "end")) {
+            s->whole = true;
+        }
+    }
+    return false;
+}
+
+// Up to the next '|' of *p into out, and past it: cut to fit, but never in
+// the middle of a UTF-8 character.
+void field(const char** p, char* out, int cap) {
+    int n = 0;
+    bool cut = false;
+    for (; **p && **p != '|'; (*p)++) {
+        if (n < cap - 1) out[n++] = **p;
+        else cut = true;
+    }
+    if (**p == '|') (*p)++;
+    if (cut) {
+        while (n > 0 && ((unsigned char)out[n - 1] & 0xC0) == 0x80) n--;
+        if (n > 0 && ((unsigned char)out[n - 1] & 0x80)) n--;
+    }
+    out[n] = 0;
+}
+
+// The same, but left empty if it does not fit: a path is never cut.
+void wholeField(const char** p, char* out, int cap) {
+    int n = 0;
+    bool cut = false;
+    for (; **p && **p != '|'; (*p)++) {
+        if (n < cap - 1) out[n++] = **p;
+        else cut = true;
+    }
+    if (**p == '|') (*p)++;
+    out[cut ? 0 : n] = 0;
+}
+
+// A song's fields as bgplayer.h lays them out (BGPLAYER_TRACK_*).
+void parseTrack(const char* p, int index, Track* t) {
+    sceClibMemset(t, 0, sizeof(*t));
+    t->index = index;
+    char num[16], skip[4];
+    field(&p, t->key, sizeof(t->key));
+    field(&p, num, sizeof(num));
+    t->durationMs = toUint(num);
+    wholeField(&p, t->local, sizeof(t->local));
+    field(&p, skip, sizeof(skip));  // the rating
+    field(&p, skip, sizeof(skip));  // its cover on the server
+    field(&p, t->title, sizeof(t->title));
+    field(&p, t->artist, sizeof(t->artist));
+    field(&p, t->album, sizeof(t->album));
+}
+
+// The queue's song at index into *t. true when it is there.
+bool trackAt(int index, Track* t) {
+    QueueScan s;
+    if (index < 0 || !scanOpen(&s)) return false;
+    const char* fields;
+    bool found = false;
+    while (!found && scanNext(&s, &fields)) {
+        if (s.index == index) {
+            parseTrack(fields, index, t);
+            found = true;
+        }
+    }
+    readerClose();
+    return found;
+}
+
+// A format the shell plays (player.c's shellDecodes, with mp4 as m4a).
+bool shellPlays(const char* path) {
+    const char* dot = NULL;
+    for (const char* p = path; *p; p++)
+        if (*p == '.') dot = p;
+    if (!dot) return false;
+    char ext[8];
+    int n = 0;
+    for (const char* p = dot + 1; *p && n < 7; p++) ext[n++] = (*p >= 'A' && *p <= 'Z') ? *p + 32 : *p;
+    ext[n] = 0;
+    return same(ext, "mp3") || same(ext, "m4a") || same(ext, "mp4") || same(ext, "aac") ||
+           same(ext, "wav");
+}
+
+// Where t is on the card, into t->path: its download if the shell plays its
+// format, else the player's file of it. false when it is on neither.
+bool onCard(Track* t) {
+    if (t->local[0] && shellPlays(t->local) && exists(t->local)) {
+        sceClibSnprintf(t->path, sizeof(t->path), "%s", t->local);
+        t->own = 0;
+        return true;
+    }
+    char path[128] = "";
+    lock();
+    for (int i = 0; i < kSongFiles; i++)
+        if (g_songFiles[i].key[0] && same(g_songFiles[i].key, t->key))
+            sceClibSnprintf(path, sizeof(path), "%s", g_songFiles[i].path);
+    unlock();
+    if (!path[0] || !exists(path)) return false;
+    sceClibSnprintf(t->path, sizeof(t->path), "%s", path);
+    t->own = startsWith(path, BGPLAYER_SONGS "/");
+    return true;
+}
+
+// The song `steps` on from `from` in the queue's order, back for a negative
+// count, repeat all going round; -1 past either end.
+int stepFrom(int from, int steps) {
+    const int i = from + steps;
+    if (i >= 0 && i < g_c.count) return i;
+    if (g_c.repeat != BGPLAYER_REPEAT_ALL || g_c.count <= 0) return -1;
+    return ((i % g_c.count) + g_c.count) % g_c.count;
+}
+
+// The nearest song on the card after `from` (direction 1) or before it (-1),
+// within kLookAhead songs, into g_found; songs not on it are passed over.
+// true when there is one.
+bool nearestOnCard(int from, int direction) {
+    for (int d = 1; d <= kLookAhead; d++) {
+        const int i = stepFrom(from, direction * d);
+        if (i < 0 || i == from) return false;
+        if (!trackAt(i, &g_found)) return false;
+        if (onCard(&g_found)) return true;
+        logLine("carry on: song %d of %d, \"%s\", is not on the memory card: passed over", i + 1,
+                g_c.count, g_found.title);
+    }
+    return false;
+}
+
+// Whether the shell has a song of the length len (its own figure) where it
+// should have t: the server's length to 3 s, or with none from the server,
+// any length but the song before's. As player.c's shellHasNewSong.
+bool hasSong(uint32_t len, const Track* t, uint32_t lenBefore) {
+    if (len == 0) return false;
+    if (t->durationMs > 0) {
+        const int d = (int)len - (int)t->durationMs;
+        return d > -3000 && d < 3000;
+    }
+    const int e = (int)len - (int)lenBefore;
+    return lenBefore == 0 || e <= -3000 || e >= 3000;
+}
+
+// UTF-8 to the UTF-16 the row shows, ending in 0, cut to fit; what is not
+// UTF-8 becomes U+FFFD. As qm_link.c's toUtf16.
+void fromUtf8(const char* s, uint16_t* out, int cap) {
+    const unsigned char* p = (const unsigned char*)s;
+    int n = 0;
+    while (*p && n + 1 < cap) {
+        uint32_t c = *p++;
+        int more = 0;
+        if (c >= 0xF0 && c <= 0xF4) {
+            c &= 0x07;
+            more = 3;
+        } else if (c >= 0xE0 && c <= 0xEF) {
+            c &= 0x0F;
+            more = 2;
+        } else if (c >= 0xC2 && c <= 0xDF) {
+            c &= 0x1F;
+            more = 1;
+        } else if (c >= 0x80) {
+            c = 0xFFFD;
+        }
+        for (; more > 0; more--) {
+            if ((*p & 0xC0) != 0x80) {
+                c = 0xFFFD;
+                break;
+            }
+            c = (c << 6) | (*p++ & 0x3F);
+        }
+        if (c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) c = 0xFFFD;
+        if (c >= 0x10000) {
+            if (n + 2 >= cap) break;
+            c -= 0x10000;
+            out[n++] = (uint16_t)(0xD800 | (c >> 10));
+            out[n++] = (uint16_t)(0xDC00 | (c & 0x3FF));
+        } else {
+            out[n++] = (uint16_t)c;
+        }
+    }
+    out[n] = 0;
+}
+
+// The status as the player writes it (player.c's writeStatus), with
+// "by=SceShell" on it.
+void carryStatus(const char* state, uint32_t positionMs) {
+    static char text[448];
+    const SceUInt64 now = sceKernelGetSystemTimeWide();
+    uint32_t secs, micros;
+    splitUs(now, &secs, &micros);
+    const int n = sceClibSnprintf(
+        text, sizeof(text),
+        "written=%u.%06u\nqueue=%s\nindex=%d\nratingKey=%s\npositionMs=%u\ndurationMs=%u\n"
+        "state=%s\nwasPlaying=0\nby=SceShell\nend\n",
+        (unsigned)secs, (unsigned)micros, g_c.queue, g_c.cur.index, g_c.cur.key,
+        (unsigned)positionMs, (unsigned)g_c.cur.durationMs, state);
+    const char* const part = BGPLAYER_STATUS ".part";
+    const SceUID fd = sceIoOpen(part, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+    int rc = fd;
+    if (fd >= 0) {
+        rc = sceIoWrite(fd, text, (SceSize)n);
+        sceIoClose(fd);
+    }
+    if (rc == n) {
+        // rename does not replace a file on every target (player.c's moveIn).
+        sceIoRemove(BGPLAYER_STATUS);
+        rc = sceIoRename(part, BGPLAYER_STATUS);
+    }
+    if (rc < 0 && g_statusErrors < 3) {
+        g_statusErrors++;
+        logLine("carry on: status not written: 0x%08X", (unsigned)rc);
+    }
+    g_c.statusUs = now;
+}
+
+// The player's file of a song played, and its cover, once the shell has
+// another: as player.c removes its own.
+void removeOwn(const Track* t) {
+    if (!t->own || !t->path[0]) return;
+    const int rc = sceIoRemove(t->path);
+    char cover[160];
+    sceClibSnprintf(cover, sizeof(cover), QM_SONG_COVER_FMT, t->key);
+    sceIoRemove(cover);
+    logLine("carry on: song %d's file removed: 0x%08X", t->index + 1, (unsigned)rc);
+}
+
+// The row as t is: its lines, ⏸, and its cover if the player made one.
+void showTrack(const Track* t) {
+    char cover[160];
+    sceClibSnprintf(cover, sizeof(cover), QM_SONG_COVER_FMT, t->key);
+    const bool art = exists(cover);
+    lock();
+    fromUtf8(t->title, g_title, 256);
+    fromUtf8(t->artist, g_artist, 256);
+    fromUtf8(t->album, g_album, 256);
+    g_playing = 1;
+    if (art) {
+        sceClibSnprintf(g_artPath, sizeof(g_artPath), "%s", cover);
+        g_artSerial = kShellArt | (++g_shellArts & ~kShellArt);
+    } else {
+        g_artSerial = 0;
+    }
+    unlock();
+}
+
+// Stops carrying the queue on (kEnd*). The row goes back to SceShell unless a
+// process has taken it.
+void carryEnd(const char* why, int how) {
+    int state = 0;
+    uint32_t time = 0;
+    musicStatus(&state, &time);
+    const char* written = "nothing";
+    if (how == kEndTakeBack) {
+        written = state == 1 ? BGPLAYER_STATE_PLAYING : BGPLAYER_STATE_STOPPED;
+    } else if (how == kEndOther || how == kEndStopped) {
+        written = BGPLAYER_STATE_STOPPED;
+    } else if (how == kEndOver) {
+        written = BGPLAYER_STATE_OVER;
+    }
+    if (how != kEndYield) carryStatus(written, time);
+    int rcStop = 0, rcEnd = 0;
+    if (how == kEndOver || how == kEndStopped) {
+        rcStop = musicEvent(kEventStop);
+        rcEnd = musicTracked(0x30001);
+        removeOwn(&g_c.cur);
+    }
+    logLine("carry on: stopped at song %d of %d, %s, state %d (%s): status %s; stop 0x%08X, "
+            "end 0x%08X",
+            g_c.cur.index + 1, g_c.count, mmss(time).s, state, why, written, (unsigned)rcStop,
+            (unsigned)rcEnd);
+    lock();
+    g_carry = 0;
+    g_carryStop = NULL;
+    if (g_owner == kOwnerShell) {
+        g_active = 0;
+        g_releaseDue = 1;
+        g_artSerial = 0;
+        g_playing = -1;
+        logLine("carry on: row given back");
+    }
+    unlock();
+}
+
+// Nothing carried on after all: the row goes back, as it would have without
+// SceShell carrying anything on.
+void carryNone() {
+    lock();
+    g_carry = 0;
+    g_carryStop = NULL;
+    if (g_owner == kOwnerShell) {
+        g_active = 0;
+        g_releaseDue = 1;
+        g_artSerial = 0;
+        g_playing = -1;
+        logLine("carry on: nothing carried on; row given back");
+    }
+    unlock();
+}
+
+// Begins carrying on, from the player's status and the queue. true when it
+// does; else nothing has changed.
+bool carryStart() {
+    static char text[1024];
+    const int n = readFile(BGPLAYER_STATUS, text, sizeof(text));
+    if (n <= 0) {
+        logLine("carry on: no status from the player (0x%08X)", (unsigned)n);
+        return false;
+    }
+    char state[16], statusQueue[32], key[16], num[16];
+    noteValue(text, "state", state, sizeof(state));
+    noteValue(text, "queue", statusQueue, sizeof(statusQueue));
+    noteValue(text, "ratingKey", key, sizeof(key));
+    noteValue(text, "index", num, sizeof(num));
+    const int index = toInt(num);
+    if (!same(state, BGPLAYER_STATE_PLAYING)) {
+        logLine("carry on: the player's status says \"%s\": nothing to carry on", state);
+        return false;
+    }
+    QueueScan s;
+    if (!scanOpen(&s)) {
+        logLine("carry on: no queue at %s", BGPLAYER_QUEUE);
+        return false;
+    }
+    sceClibMemset(&g_c, 0, sizeof(g_c));
+    const char* fields;
+    bool have = false;
+    while (scanNext(&s, &fields)) {
+        if (s.index == index) {
+            parseTrack(fields, index, &g_c.cur);
+            have = true;
+        }
+    }
+    readerClose();
+    g_c.count = s.index + 1;
+    g_c.repeat = s.repeat;
+    sceClibSnprintf(g_c.queue, sizeof(g_c.queue), "%s", s.written);
+    if (!s.whole || !sameTime(s.written, statusQueue)) {
+        logLine("carry on: the queue (%s, %s) is not the one the player plays (%s)", s.written,
+                s.whole ? "whole" : "not whole", statusQueue);
+        return false;
+    }
+    if (!have || !same(g_c.cur.key, key)) {
+        logLine("carry on: song %d of the queue is not the player's song %s", index + 1, key);
+        return false;
+    }
+    // The song plays on from the player's file of it; removed once it has
+    // played, as the player would.
+    if (!onCard(&g_c.cur)) g_c.cur.path[0] = 0;
+    if (!findSvcObj("carry on") || !g_getSvcObj()) {
+        logLine("carry on: no client for SceShell's music service");
+        return false;
+    }
+    const int rcStart = musicTracked(0x30000);
+    int shellState = 0;
+    uint32_t time = 0, len = 0;
+    const int rcStatus = musicStatus(&shellState, &time);
+    const int rcLen = musicLength(&len);
+    logLine("carry on: song %d of %d, \"%s\" by %s, %s, from %s; music service started "
+            "(0x%08X): at %s, state %d, a song %s long (0x%08X, 0x%08X); repeat %d",
+            index + 1, g_c.count, g_c.cur.title, g_c.cur.artist, mmss(g_c.cur.durationMs).s,
+            g_c.cur.path[0] ? g_c.cur.path : "a file not known here", (unsigned)rcStart,
+            mmss(time).s, shellState, mmss(len).s, (unsigned)rcStatus, (unsigned)rcLen,
+            g_c.repeat);
+    if (rcStart < 0 || rcStatus < 0) return false;
+    if (!hasSong(len, &g_c.cur, 0)) {
+        // Ended between handing the shell its next song and saying so: the
+        // status still names the song before (player.c writes it once the
+        // new one plays).
+        const int next = stepFrom(index, 1);
+        if (next >= 0 && trackAt(next, &g_found) && hasSong(len, &g_found, 0)) {
+            logLine("carry on: the shell has song %d of %d, \"%s\", the one after the status's",
+                    next + 1, g_c.count, g_found.title);
+            g_c.cur = g_found;
+            if (!onCard(&g_c.cur)) g_c.cur.path[0] = 0;
+            showTrack(&g_c.cur);
+        } else {
+            logLine("carry on: the shell has another song: nothing carried on");
+            return false;
+        }
+    }
+    const SceUInt64 now = sceKernelGetSystemTimeWide();
+    g_c.started = 1;
+    g_c.maxTime = time;
+    g_c.lenMs = len;
+    g_c.songUs = now;
+    g_c.checkUs = now;
+    g_c.lastState = shellState;
+    lock();
+    // Paused from the row as the player went, it stays paused.
+    g_c.menuPaused = g_playing == 0;
+    unlock();
+    carryStatus(BGPLAYER_STATE_PLAYING, time);
+    return true;
+}
+
+// Hands t to the shell: stop, open and play, as the player does. The song
+// before's file goes once the shell has this one. true when it took the file.
+bool carryPlay(const Track* t, const char* why) {
+    const int rcStop = musicEvent(kEventStop), rcOpen = musicOpen(t->path),
+              rcPlay = musicEvent(kEventPlay);
+    logLine("carry on: song %d of %d (%s), \"%s\" by %s, %s, %s: stop 0x%08X, open 0x%08X, "
+            "play 0x%08X",
+            t->index + 1, g_c.count, why, t->title, t->artist, mmss(t->durationMs).s, t->path,
+            (unsigned)rcStop, (unsigned)rcOpen, (unsigned)rcPlay);
+    if (rcOpen < 0) return false;
+    if (!same(g_c.cur.path, t->path)) removeOwn(&g_c.cur);
+    g_c.lastLenMs = g_c.lenMs;
+    g_c.cur = *t;
+    g_c.started = 0;
+    g_c.menuPaused = 0;
+    g_c.havePrev = 0;
+    g_c.maxTime = 0;
+    g_c.lenMs = 0;
+    g_c.replays = 0;
+    g_c.otherLogged = 0;
+    g_c.waitTicks = 0;
+    g_c.stoppedUs = 0;
+    g_c.songUs = sceKernelGetSystemTimeWide();
+    showTrack(t);
+    carryStatus(BGPLAYER_STATE_PLAYING, 0);
+    return true;
+}
+
+// The song after the one with the shell, as the queue goes on (direction 1),
+// or the one before (-1): the nearest on the card, the same one again for
+// repeat one as a song ends. Up to three that will not play are passed over.
+void carryNext(int direction, bool ended, const char* why) {
+    int from = g_c.cur.index;
+    for (int tries = 0; tries < 3; tries++) {
+        bool found;
+        if (ended && g_c.repeat == BGPLAYER_REPEAT_ONE && g_c.cur.path[0] && tries == 0) {
+            g_found = g_c.cur;
+            found = true;
+        } else {
+            found = nearestOnCard(from, direction);
+        }
+        if (!found) {
+            const bool over = direction > 0 && stepFrom(from, 1) < 0;
+            carryEnd(over ? "the queue is over" : "no further song is on the memory card",
+                     over ? kEndOver : kEndStopped);
+            return;
+        }
+        if (carryPlay(&g_found, why)) return;
+        from = g_found.index;
+    }
+    carryEnd("three songs in a row would not open", kEndStopped);
+}
+
+// Takes the song back to its start: the seek time, then the seek event, as
+// player.c's seekFrom does first.
+void seekStart(const char* why) {
+    const int rcTime = musicSeekTime(0), rcSeek = musicEvent(kEventSeek);
+    logLine("carry on: song %d back to its start (%s): seek time 0x%08X, seek 0x%08X",
+            g_c.cur.index + 1, why, (unsigned)rcTime, (unsigned)rcSeek);
+    g_c.maxTime = 0;
+    g_c.havePrev = 0;
+}
+
+// A press on the row, as player.c's watchSong takes them: play/pause stops
+// the shell and plays it again, which keeps its place; previous goes back to
+// the start past a song's first 3 s, and to the song before within them;
+// next goes on past repeat one.
+void carryPress(int press, int state, uint32_t time) {
+    if (press == QM_PRESS_NEXT) {
+        logLine("carry on: next, from the row, at %s", mmss(time).s);
+        carryNext(1, false, "next, from the row");
+        return;
+    }
+    if (press == QM_PRESS_PREVIOUS) {
+        if (g_c.started && time >= 3000) {
+            g_c.menuPaused = 0;
+            seekStart("previous, from the row");
+        } else {
+            logLine("carry on: previous, from the row, at %s", mmss(time).s);
+            const int before = stepFrom(g_c.cur.index, -1);
+            if (before >= 0 && trackAt(before, &g_found) && onCard(&g_found) &&
+                carryPlay(&g_found, "previous, from the row"))
+                return;
+            seekStart("previous, from the row, with the song before not on the card");
+        }
+        return;
+    }
+    int rc;
+    if (g_c.menuPaused || state != 1) {
+        g_c.menuPaused = 0;
+        rc = musicEvent(kEventPlay);
+        lock();
+        g_playing = 1;
+        unlock();
+    } else {
+        g_c.menuPaused = 1;
+        rc = musicEvent(kEventStop);
+        lock();
+        g_playing = 0;
+        unlock();
+    }
+    logLine("carry on: %s at %s, from the row: 0x%08X", g_c.menuPaused ? "paused" : "play",
+            mmss(time).s, (unsigned)rc);
+}
+
+// Each half second while it carries on, as player.c's watchSong does each.
+void carryTick() {
+    lock();
+    const char* stop = g_carryStop;
+    const int how = g_carryStopHow;
+    unlock();
+    if (stop) {
+        carryEnd(stop, how);
+        return;
+    }
+    const SceUInt64 now = sceKernelGetSystemTimeWide();
+    int state = 0;
+    uint32_t time = 0;
+    const int rc = musicStatus(&state, &time);
+    if (rc < 0) {
+        if (g_statusReadErrors < 6) {
+            g_statusReadErrors++;
+            logLine("carry on: the music service's status: 0x%08X", (unsigned)rc);
+        }
+        return;
+    }
+    if (state != g_c.lastState) {
+        logLine("carry on: song %d of %d: state %d at %s", g_c.cur.index + 1, g_c.count, state,
+                mmss(time).s);
+        g_c.lastState = state;
+    }
+    const int press = __atomic_exchange_n(&g_carryPress, 0, __ATOMIC_SEQ_CST);
+    if (press) {
+        carryPress(press, state, time);
+        return;
+    }
+    if (!g_c.started) {
+        if (state == 1 && g_c.havePrev && time > g_c.prevTime) {
+            uint32_t len = 0;
+            musicLength(&len);
+            if (hasSong(len, &g_c.cur, g_c.lastLenMs)) {
+                g_c.started = 1;
+                g_c.failures = 0;
+                g_c.maxTime = time;
+                g_c.lenMs = len;
+                logLine("carry on: song %d of %d plays: the shell has it as %s long, the server "
+                        "%s, and is at %s",
+                        g_c.cur.index + 1, g_c.count, mmss(len).s, mmss(g_c.cur.durationMs).s,
+                        mmss(time).s);
+                // The shell can start a file it has had before where it left
+                // it (player.c's fromTheStart).
+                if (time >= 5000) seekStart("the shell started it part-way");
+            } else if (!g_c.otherLogged) {
+                g_c.otherLogged = 1;
+                logLine("carry on: song %d of %d: the shell plays something %s long, not this "
+                        "song of %s",
+                        g_c.cur.index + 1, g_c.count, mmss(len).s, mmss(g_c.cur.durationMs).s);
+            }
+        }
+        if (!g_c.started && ++g_c.waitTicks > 30) {
+            logLine("carry on: song %d of %d: the shell never started it", g_c.cur.index + 1,
+                    g_c.count);
+            if (++g_c.failures >= 3)
+                carryEnd("three songs in a row would not play", kEndStopped);
+            else
+                carryNext(1, false, "the one before would not play");
+            return;
+        }
+    }
+    g_c.prevTime = time;
+    g_c.havePrev = 1;
+    if (g_c.started) {
+        if (time > g_c.maxTime) g_c.maxTime = time;
+        const uint32_t lenMs = g_c.cur.durationMs > 0 ? g_c.cur.durationMs : g_c.lenMs;
+        if (g_c.maxTime + 10000 >= lenMs && (time + 5000 < g_c.maxTime || state != 1) &&
+            !g_c.menuPaused) {
+            logLine("carry on: song %d of %d ended (it got to %s of %s)", g_c.cur.index + 1,
+                    g_c.count, mmss(g_c.maxTime).s, mmss(lenMs).s);
+            carryNext(1, true, "the one before ended");
+            return;
+        }
+        // Stopped before its end, not from the row: as the power button
+        // stops the shell's music. Played again every 5 s while it stays so,
+        // as the player does; logged the first times and then once a minute.
+        if (state != 1 && !g_c.menuPaused) {
+            if (!g_c.stoppedUs) g_c.stoppedUs = now;
+            if ((uint32_t)(now - g_c.lastPlayUs) >= 5000000u) {
+                g_c.lastPlayUs = now;
+                const int rcPlay = musicEvent(kEventPlay);
+                if (g_c.replays < 3 || g_c.replays % 12 == 0)
+                    logLine("carry on: song %d of %d stopped at %s, before its end (state %d); "
+                            "play again: 0x%08X",
+                            g_c.cur.index + 1, g_c.count, mmss(time).s, state, (unsigned)rcPlay);
+                g_c.replays++;
+            }
+        } else if (state == 1 && g_c.stoppedUs) {
+            logLine("carry on: song %d of %d plays again at %s", g_c.cur.index + 1, g_c.count,
+                    mmss(time).s);
+            g_c.stoppedUs = 0;
+            g_c.replays = 0;
+        }
+        // Something else in the shell, as the system's Music app would put
+        // there: not this song's length.
+        if ((uint32_t)(now - g_c.checkUs) >= 2000000u) {
+            g_c.checkUs = now;
+            uint32_t len = 0;
+            if (musicLength(&len) >= 0 && len > 0 && state == 1 && !hasSong(len, &g_c.cur, 0) &&
+                (g_c.lenMs == 0 || len + 3000 < g_c.lenMs || len > g_c.lenMs + 3000)) {
+                logLine("carry on: the shell plays a song %s long, not song %d", mmss(len).s,
+                        g_c.cur.index + 1);
+                carryEnd("something else plays in the shell", kEndOther);
+                return;
+            }
+        }
+    }
+    if ((uint32_t)(now - g_c.statusUs) >= 2000000u) carryStatus(BGPLAYER_STATE_PLAYING, time);
+}
+
+// The music thread: tests as they are asked for, and the queue carried on,
+// looked at every half second.
 class MusicThread : public paf::thread::Thread {
 public:
     using paf::thread::Thread::Thread;
 
     void EntryFunction() override {
         while (!IsCanceled()) {
-            if (sceKernelWaitSema(g_musicSema, 1, NULL) < 0) {
-                paf::thread::Sleep(1000);
-                continue;
-            }
+            SceUInt timeout = 500 * 1000;
+            sceKernelWaitSema(g_musicSema, 1, &timeout);
             char path[sizeof(g_musicPath)];
             lock();
-            sceClibMemcpy(path, g_musicPath, sizeof(path));
+            const int test = g_musicTestDue;
+            g_musicTestDue = 0;
+            if (test) sceClibMemcpy(path, g_musicPath, sizeof(path));
+            const int carry = g_carry;
             unlock();
-            musicTest(path);
-            lock();
-            g_musicBusy = 0;
-            unlock();
+            if (test) {
+                musicTest(path);
+                lock();
+                g_musicBusy = 0;
+                unlock();
+            }
+            if (carry == 1) {
+                if (carryStart()) {
+                    lock();
+                    g_carry = 2;
+                    unlock();
+                    logLine("carry on: SceShell carries the queue on");
+                } else {
+                    carryNone();
+                }
+            } else if (carry == 2) {
+                carryTick();
+            }
         }
     }
 };
 
-// The test's thread, made the first time a test is asked for, so that a boot
-// with none has no stack for it in SceShell. true when there is one.
+// The music thread, made the first time it is wanted, so that a boot with
+// no test and no queue carried on has no stack for it in SceShell. true when
+// there is one.
 bool startMusicThread() {
     if (g_musicThread) return true;
     if (g_musicSema < 0) {
         g_musicSema = sceKernelCreateSema("VitaPlexQM::Music", 0, 0, 1, NULL);
         if (g_musicSema < 0) {
-            logLine("music test: its semaphore: 0x%08X", (unsigned)g_musicSema);
+            logLine("music: its semaphore: 0x%08X", (unsigned)g_musicSema);
             return false;
         }
     }
     const int rc = (new MusicThread(kThreadPriority, 0x8000, "VitaPlexQM::Music"))->Start();
-    logLine("music test: its thread started: 0x%08X", (unsigned)rc);
+    logLine("music: its thread started: 0x%08X", (unsigned)rc);
     g_musicThread = rc >= 0;
     return g_musicThread;
+}
+
+// Has SceShell stop carrying the queue on, if it does: at its next look, on
+// the music thread. Under g_lock.
+void stopCarry(const char* why, int how) {
+    if (!g_carry || g_carryStop) return;
+    g_carryStop = why;
+    g_carryStopHow = how;
+    logLine("carry on: to stop: %s", why);
+    if (g_musicSema >= 0) sceKernelSignalSema(g_musicSema, 1);
 }
 
 // ── Threads ─────────────────────────────────────────────────────────────────
@@ -1583,6 +2523,7 @@ public:
 
     void EntryFunction() override {
         const SceUInt64 started = sceKernelGetSystemTimeWide();
+        SceUInt64 lastLoop = started;
         int wasOpen = 0, openLogged = 0;
         while (!IsCanceled()) {
             SceAppMgrAppState st;
@@ -1591,6 +2532,18 @@ public:
             const int open = st.isSystemUiOverlaid != 0;
             const SceUInt64 now = sceKernelGetSystemTimeWide();
             lock();
+            // The system clock runs on while the Vita sleeps, and every
+            // process sleeps with it (player.c logs "did not run for"): the
+            // row's owner gets its time again, rather than being taken for
+            // gone on the first look after.
+            if (now - lastLoop > 2000000ULL) {
+                uint32_t secs, micros;
+                splitUs(now - lastLoop, &secs, &micros);
+                logLine("the plugin did not run for %u.%u s (the Vita asleep?)", (unsigned)secs,
+                        (unsigned)(micros / 100000));
+                if (g_active) g_activatedUs = now;
+            }
+            lastLoop = now;
             if (open && !wasOpen) {
                 g_openedUs = now;
                 g_opens++;
@@ -1606,11 +2559,27 @@ public:
                 logLine("quick menu closed after %d ms", msOpen(now));
             }
             g_open = open;
-            if (g_active && now - g_activatedUs > QM_ACTIVE_TIMEOUT_S * 1000000ULL) {
-                g_active = 0;
-                g_releaseDue = 1;
-                logLine("nothing from %s for %d s: row given back", ownerName(g_owner),
-                        QM_ACTIVE_TIMEOUT_S);
+            if (g_active && g_owner != kOwnerShell &&
+                now - g_activatedUs > QM_ACTIVE_TIMEOUT_S * 1000000ULL) {
+                // The background player gone without giving the row back:
+                // the system has ended it, and SceShell carries its queue on.
+                // The row stays, the player's song and cover still on it.
+                if (g_owner == QM_OWNER_PLAYER && g_carryAllowed && !g_carry &&
+                    startMusicThread()) {
+                    g_owner = kOwnerShell;
+                    g_carry = 1;
+                    g_carryStop = NULL;
+                    __atomic_store_n(&g_carryPress, 0, __ATOMIC_SEQ_CST);
+                    logLine("nothing from the background player for %d s: SceShell carries its "
+                            "queue on",
+                            QM_ACTIVE_TIMEOUT_S);
+                    sceKernelSignalSema(g_musicSema, 1);
+                } else {
+                    g_active = 0;
+                    g_releaseDue = 1;
+                    logLine("nothing from %s for %d s: row given back", ownerName(g_owner),
+                            QM_ACTIVE_TIMEOUT_S);
+                }
             }
             // SceShell's UI thread has never called mainTick: the row is
             // ticked from here instead, as before build 2026.
@@ -1656,6 +2625,9 @@ private:
         case QM_CMD_ACTIVATE:
             if (!g_active || g_owner != m.arg)
                 logLine("row wanted by %s", ownerName(m.arg));
+            // A process with the row has the music: SceShell leaves it be.
+            stopCarry("a process takes the row", kEndYield);
+            if (m.arg == QM_OWNER_PLAYER) g_carryAllowed = 1;
             if (g_owner != m.arg) g_artSerial = 0;  // the last owner's cover
             g_active = 1;
             g_owner = m.arg;
@@ -1663,6 +2635,7 @@ private:
             break;
         case QM_CMD_DEACTIVATE:
             if (g_active) logLine("row given back by %s", ownerName(g_owner));
+            stopCarry("the row given back", kEndTakeBack);
             g_active = 0;
             g_releaseDue = 1;
             g_artSerial = 0;
@@ -1697,14 +2670,33 @@ private:
             g_artSerial = m.arg;
             break;
         case QM_CMD_MUSIC_TEST:
-            if (g_musicBusy || !startMusicThread()) {
-                logLine("music test: done: %s", g_musicBusy ? "one runs already" : "no thread for it");
+            if (g_musicBusy || g_carry || !startMusicThread()) {
+                logLine("music test: done: %s", g_musicBusy ? "one runs already"
+                                                : g_carry   ? "SceShell carries a queue on"
+                                                            : "no thread for it");
                 break;
             }
             // VitaPlex's paths are ASCII: its data folder and a song's rating key.
             toLog(m.title, g_musicPath, sizeof(g_musicPath));
             g_musicBusy = 1;
+            g_musicTestDue = 1;
             sceKernelSignalSema(g_musicSema, 1);
+            break;
+        case QM_CMD_SONG_FILE: {
+            QmSongFile f;
+            sceClibMemcpy(&f, &m, sizeof(f));
+            f.key[sizeof(f.key) - 1] = 0;
+            f.path[sizeof(f.path) - 1] = 0;
+            g_songFiles[g_songFilesNext] = f;
+            g_songFilesNext = (g_songFilesNext + 1) % kSongFiles;
+            logLine("song file: song %u, %s", (unsigned)f.arg + 1, f.path);
+            break;
+        }
+        case QM_CMD_TAKE_BACK:
+            logLine("take back: VitaPlex BG takes the music back%s",
+                    g_carry ? "" : "; no queue carried on here");
+            g_carryAllowed = 0;
+            stopCarry("VitaPlex BG takes the music back", kEndTakeBack);
             break;
         default:
             logLine("unknown command %u", (unsigned)m.cmd);

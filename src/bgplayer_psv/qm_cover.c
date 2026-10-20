@@ -141,7 +141,10 @@ uint32_t qmCoverNextSerial(uint32_t last, uint64_t nowUs) {
     return serial ? serial : 1;
 }
 
-int qmCoverWrite(const void* image, size_t len, uint32_t serial, char* why, size_t whySize) {
+// An image as a cover PNG at path. 0 when written; else -1, with what failed
+// in why.
+static int writeCover(const void* image, size_t len, const char* path, char* why,
+                      size_t whySize) {
     if (len > INT_MAX) {
         snprintf(why, whySize, "too big (%u bytes)", (unsigned)len);
         return -1;
@@ -167,8 +170,6 @@ int qmCoverWrite(const void* image, size_t len, uint32_t serial, char* why, size
         snprintf(why, whySize, "no memory for a %dx%d image", width, height);
         return -1;
     }
-    char path[64];
-    snprintf(path, sizeof(path), QM_ART_PATH_FMT, (unsigned)(serial & 1));
     FILE* f = fopen(path, "wb");
     if (!f) {
         free(png);
@@ -180,6 +181,33 @@ int qmCoverWrite(const void* image, size_t len, uint32_t serial, char* why, size
     free(png);
     if (!wrote || !closed) {
         snprintf(why, whySize, "not written to %s", path);
+        return -1;
+    }
+    return 0;
+}
+
+int qmCoverWrite(const void* image, size_t len, uint32_t serial, char* why, size_t whySize) {
+    char path[64];
+    snprintf(path, sizeof(path), QM_ART_PATH_FMT, (unsigned)(serial & 1));
+    return writeCover(image, len, path, why, whySize);
+}
+
+int qmCoverWriteFile(const void* image, size_t len, const char* path, char* why,
+                     size_t whySize) {
+    char part[192];
+    if (snprintf(part, sizeof(part), "%s.part", path) >= (int)sizeof(part)) {
+        snprintf(why, whySize, "not written: the path is too long");
+        return -1;
+    }
+    if (writeCover(image, len, part, why, whySize) != 0) {
+        remove(part);
+        return -1;
+    }
+    // rename does not replace a file on every target (platform_common.cpp).
+    remove(path);
+    if (rename(part, path) != 0) {
+        remove(part);
+        snprintf(why, whySize, "not moved to %s", path);
         return -1;
     }
     return 0;

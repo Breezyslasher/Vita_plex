@@ -103,6 +103,23 @@ static struct {
     int started;        // seen playing, so the shell's clock is its
 } g_now;
 
+// The songs on the card that SceShell carries the queue on with, should the
+// system end this player (qm_protocol.h, QM_CMD_SONG_FILE): the one with the
+// shell, and the next once ready. Under g_statusLock; playerQuickMenuTick
+// sends them.
+typedef struct SongFile {
+    int index;  // -1 for none
+    char key[16];
+    char path[128];
+} SongFile;
+static SongFile g_fileNow = {-1, "", ""}, g_fileNext = {-1, "", ""};
+
+static void setSongFile(SongFile* f, const Song* s) {
+    f->index = s->index;
+    snprintf(f->key, sizeof(f->key), "%s", s->key);
+    snprintf(f->path, sizeof(f->path), "%s", s->path);
+}
+
 static volatile int g_shellUp, g_portHeld;
 static volatile int g_handedOver;   // a song is with the shell
 // A queue is playing, or getting its next song ready (playQueue).
@@ -675,6 +692,10 @@ static int prepareSong(int index, Song* s, const char* readyFile) {
 
 static void removeSong(const Song* s) {
     if (s->own && s->path[0]) remove(s->path);
+    // The cover made for SceShell with it (songCover).
+    char cover[160];
+    snprintf(cover, sizeof(cover), QM_SONG_COVER_FMT, s->key);
+    remove(cover);
 }
 
 // Every file in BGPLAYER_SONGS but keep: songs a player before this one left
@@ -1341,14 +1362,26 @@ static int coverFor(const Entry* e, uint32_t* serial) {
     return made;
 }
 
+// A song file for SceShell (QM_CMD_SONG_FILE), once each: what was sent last
+// in *sent.
+static void sendSongFile(const SongFile* f, SongFile* sent) {
+    if (f->index < 0 || (f->index == sent->index && strcmp(f->path, sent->path) == 0)) return;
+    char r[24];
+    const int rc = qmSongFile(f->index, f->key, f->path);
+    logLine("quick menu: song %d's file for SceShell, %s: %s", f->index + 1, f->path,
+            result(r, sizeof(r), rc));
+    if (rc >= 0) *sent = *f;
+}
+
 // The row, from main.c's watcher: the plugin opened the first time a song is
 // with the shell (and again at most every 30 s while that fails), the row
-// taken while the queue plays and the song and its cover sent as they
-// change, and presses passed to watchSong.
+// taken while the queue plays, the song, its cover and the songs' files
+// for SceShell sent as they change, and presses passed to watchSong.
 void playerQuickMenuTick(void) {
     static double lastTry, lastBeat;
     static int sentIndex = -2, sentPlaying = -1;
     static int64_t sentArt = -1;  // the cover's serial sent, -1 for none yet
+    static SongFile sentNow = {-1, "", ""}, sentNext = {-1, "", ""};
     char r[24];
     if (!(g_qmEnabled && g_handedOver && g_shellUp && !g_paused && !g_stopped)) {
         if (__atomic_exchange_n(&g_qmActive, 0, __ATOMIC_SEQ_CST))
@@ -1376,6 +1409,7 @@ void playerQuickMenuTick(void) {
         sentIndex = -2;
         sentPlaying = -1;
         sentArt = -1;
+        sentNow.index = sentNext.index = -1;
         lastBeat = now();
     }
     // VitaPlex's plugin gives the row back by itself once these stop, as when
@@ -1402,6 +1436,15 @@ void playerQuickMenuTick(void) {
         const int rc = qmSetArt(art);
         logLine("quick menu: cover %u sent: %s", (unsigned)art, result(r, sizeof(r), rc));
         if (rc >= 0) sentArt = art;
+    }
+    // The songs on the card, for SceShell to carry the queue on with should
+    // the system end this player.
+    if (qmIsOwn()) {
+        lockStatus();
+        const SongFile fileNow = g_fileNow, fileNext = g_fileNext;
+        unlockStatus();
+        sendSongFile(&fileNow, &sentNow);
+        sendSongFile(&fileNext, &sentNext);
     }
     for (int press; (press = qmPoll()) != QM_NONE;) {
         logLine("quick menu: %s pressed",
@@ -1508,10 +1551,48 @@ static int waitForPlay(void) {
     }
 }
 
+// The cover of the song at index for SceShell, should it carry the queue on
+// to it (qm_protocol.h's QM_SONG_COVER_FMT): made as the row's are, from the
+// download's copy of it, else from the server's.
+static void songCover(int index) {
+    const Entry* e = &g_queue[index];
+    if (!g_qmEnabled || !(e->cover[0] || e->thumb[0])) return;
+    char path[160], why[160] = "";
+    snprintf(path, sizeof(path), QM_SONG_COVER_FMT, e->key);
+    if (readable(path)) return;
+    const double t0 = now();
+    Body b = {0};
+    const char* from = "the download's copy";
+    int got = e->cover[0] && readWhole(e->cover, &b) == 0;
+    if (!got && e->thumb[0]) {
+        free(b.data);
+        memset(&b, 0, sizeof(b));
+        from = "the server";
+        const int status = fetchCover(e->thumb, &b);
+        got = status == 200;
+        if (!got) snprintf(why, sizeof(why), "not fetched: HTTP %d", status);
+    } else if (!got) {
+        snprintf(why, sizeof(why), "the download's copy would not read");
+    }
+    if (got && qmCoverWriteFile(b.data, b.len, path, why, sizeof(why)) == 0)
+        logLine("song %d of %d: its cover for SceShell made from %s in %.2f s", index + 1,
+                g_count, from, now() - t0);
+    else
+        logLine("song %d of %d: no cover for SceShell: %s", index + 1, g_count, why);
+    free(b.data);
+}
+
 static int prefetchMain(SceSize args, void* argp) {
     (void)args;
     (void)argp;
-    g_nextState = prepareSong(g_nextIndex, &g_next, NULL) == 0 ? 2 : -1;
+    const int ready = prepareSong(g_nextIndex, &g_next, NULL) == 0;
+    if (ready && !g_cancel) {
+        songCover(g_nextIndex);
+        lockStatus();
+        setSongFile(&g_fileNext, &g_next);
+        unlockStatus();
+    }
+    g_nextState = ready ? 2 : -1;
     return 0;
 }
 
@@ -1543,6 +1624,10 @@ static int takePrefetch(int index, Song* out) {
         *out = g_next;
     else if (g_nextState == 2 && (!out || strcmp(g_next.path, out->path) != 0))
         removeSong(&g_next);
+    // Not the next any more: the song the shell gets next names its own.
+    lockStatus();
+    if (!ready) g_fileNext.index = -1;
+    unlockStatus();
     g_nextState = 0;
     g_nextIndex = -1;
     return ready;
@@ -1623,6 +1708,10 @@ static int playQueue(void) {
             logLine("the system player would not start; stopping");
             return QUEUE_FAILED;
         }
+        lockStatus();
+        setSongFile(&g_fileNow, &cur);
+        if (g_fileNext.index == cur.index) g_fileNext.index = -1;
+        unlockStatus();
         if (played) scrobble(&prev);
         played = 0;
         // The song before is with the shell no more.

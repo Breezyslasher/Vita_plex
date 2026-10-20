@@ -20,6 +20,12 @@ extern "C" {
 // 0 when written; else -1, with what failed in why.
 int qmCoverWrite(const void* image, size_t len, uint32_t serial, char* why, size_t whySize);
 
+// The same at path, written beside it first and moved in once whole, so that
+// SceShell never loads half of one: a song's cover for SceShell to show as it
+// carries the queue on (qm_protocol.h's QM_SONG_COVER_FMT).
+int qmCoverWriteFile(const void* image, size_t len, const char* path, char* why,
+                     size_t whySize);
+
 // The serial for the next cover, the last one made being last (0 for none),
 // at nowUs on the system clock (sceKernelGetSystemTimeWide): the
 // milliseconds since boot, past last, with last's other lowest bit, so that

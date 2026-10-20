@@ -60,6 +60,15 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   `vs0:sys/external/libshellsvc.suprx` into SceShell if no module there
   has it. That is the first step of moving the background music into
   SceShell (docs/DESIGN_NOTES.md, build 2032).
+- **Carrying the queue on (build 2033):** when the background player stops
+  checking in without giving the row back, the system has ended it. The
+  same thread then plays the rest of its queue from inside SceShell, from
+  the songs on the memory card: downloads the queue names, and the player's
+  own files (`QM_CMD_SONG_FILE`). It reads the player's status and the
+  queue (`src/bgplayer_psv/bgplayer.h`), and writes the status as the
+  player does, with `by=SceShell`, so that VitaPlex BG takes the music back
+  where SceShell got to (`QM_CMD_TAKE_BACK`). The row stays, its buttons
+  acting on this music. Its log lines begin "carry on:".
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system
@@ -73,6 +82,8 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   BGM port as SceShell reads it.
 - **No static constructors:** there is no C runtime to run them, so a global
   object that needs one stays all zeros. The build fails if it has any.
+- **No 64-bit division:** libgcc's is built for another `wchar_t`, so times
+  are split into seconds a byte at a time (`splitUs`), with 32-bit steps.
 
 ## Building
 

@@ -76,6 +76,15 @@ int qmSetArt(uint32_t serial);
 // A test: VitaPlex's plugin plays the file at path itself, from inside
 // SceShell (QM_CMD_MUSIC_TEST). -1 with ElevenMPV-A's plugin.
 int qmMusicTest(const char* path);
+// The background player's: a song of its queue that is on the memory card
+// (QM_CMD_SONG_FILE), for SceShell to carry the queue on with should the
+// system end the player. -1 with ElevenMPV-A's plugin.
+int qmSongFile(int index, const char* key, const char* path);
+// VitaPlex BG's, as it opens: it takes the music back (QM_CMD_TAKE_BACK).
+// Sent to VitaPlex's plugin when it is in SceShell, whether or not this
+// process has opened it, and never loads it. 0 when sent; else the code
+// (the pipe's absence when the plugin is not there).
+int qmTakeBack(void);
 
 // A press waiting on the row, or QM_NONE. Never waits.
 int qmPoll(void);

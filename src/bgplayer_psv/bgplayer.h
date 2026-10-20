@@ -114,6 +114,9 @@ enum {
 //   durationMs=<its length, as the server gives it>
 //   state=<one of the four below>
 //   wasPlaying=<for paused: 1 if music was playing as it was asked to pause>
+//   by=<SceShell when VitaPlex's quick menu plugin wrote it, carrying the
+//       queue on after the system ended the player (qm_protocol.h); missing
+//       when the player did>
 //   end
 #define BGPLAYER_STATE_PLAYING "playing"   // handed to the shell
 #define BGPLAYER_STATE_PAUSED  "paused"    // stopped for its app, and staying

@@ -66,6 +66,7 @@ typedef struct FromPlugin {
 _Static_assert(sizeof(FromPlugin) == 260, "ipc.h's IpcDataTX is 260 bytes");
 
 _Static_assert(sizeof(QmMessage) == 1544, "qm_protocol.h's message, as the plugin takes it");
+_Static_assert(sizeof(QmSongFile) <= sizeof(QmMessage), "a song file goes in a message's place");
 _Static_assert(sizeof(QmPress) == 8, "qm_protocol.h's press, as the plugin sends it");
 
 // A message pipe moves a whole message or none of it with this mode, and
@@ -79,10 +80,12 @@ _Static_assert(sizeof(QmPress) == 8, "qm_protocol.h's press, as the plugin sends
 static SceUID g_lock = -1;
 static SceUID g_to = -1, g_from = -1;
 static int g_own;   // the pipes are VitaPlex's plugin's
-// Under g_lock: 1.5 KB, off the callers' stacks.
+// Under g_lock: 1.5 KB, off the callers' stacks. A song file goes whole, as
+// a QmMessage.
 static union {
     ToPlugin empva;
     QmMessage own;
+    QmSongFile file;
 } g_message;
 static union {
     FromPlugin empva;
@@ -371,6 +374,44 @@ int qmMusicTest(const char* path) {
         g_message.own.cmd = QM_CMD_MUSIC_TEST;
         toUtf16(path, g_message.own.title, 256);
         rc = sendLocked();
+    }
+    unlock();
+    return rc;
+}
+
+int qmSongFile(int index, const char* key, const char* path) {
+    lock();
+    int rc = -1;
+    if (g_own) {
+        memset(&g_message, 0, sizeof(g_message));
+        g_message.file.cmd = QM_CMD_SONG_FILE;
+        g_message.file.arg = (uint32_t)index;
+        snprintf(g_message.file.key, sizeof(g_message.file.key), "%s", key);
+        snprintf(g_message.file.path, sizeof(g_message.file.path), "%s", path);
+        rc = sendLocked();
+    }
+    unlock();
+    return rc;
+}
+
+int qmTakeBack(void) {
+    lock();
+    int rc;
+    memset(&g_message, 0, sizeof(g_message));
+    g_message.own.cmd = QM_CMD_TAKE_BACK;
+    if (g_own && g_to >= 0) {
+        rc = sendLocked();
+    } else {
+        // Only to a plugin that is there: one this would load has carried
+        // nothing on.
+        const SceUID to = vitaplexOpenMsgPipe(QM_PIPE_TO_PLUGIN);
+        rc = to;
+        if (to >= 0) {
+            unsigned int timeout = SEND_TIMEOUT_US;
+            rc = sceKernelSendMsgPipe(to, &g_message, sizeof(g_message.own), MSG_PIPE_MODE_FULL,
+                                      NULL, &timeout);
+            vitaplexCloseMsgPipe(to);
+        }
     }
     unlock();
     return rc;
