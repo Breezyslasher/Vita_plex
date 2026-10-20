@@ -1519,6 +1519,12 @@ if(PLATFORM_PSV)
             SceKernelThreadMgr_stub
             SceRtc_stub
             gcc)
+        # With no C runtime, nothing runs static constructors in it, and a
+        # global object that needs one stays all zeros (build 2023's white).
+        add_custom_command(TARGET vitaplex_qm POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -DOBJDUMP=${CMAKE_OBJDUMP} -DELF=$<TARGET_FILE:vitaplex_qm>
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_no_static_init.cmake
+            VERBATIM)
         # vita_create_self appends CONFIG and STRIPPED to VITA_ELF_CREATE_FLAGS
         # in this scope, as it does its own to VITA_MAKE_FSELF_FLAGS: both
         # start from nothing and are put back, or every SELF made after this

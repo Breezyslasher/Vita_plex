@@ -1177,15 +1177,16 @@ brls::Box* SettingsTab::createMusicSection() {
         // (build 2022). Not saved: it is for trying each in turn.
         box->addView(makePickerCell("Quick Menu Buttons (test)",
             {"Enabled", "Enabled, normal state", "As ElevenMPV-A",
-             "Enabled, icons undimmed"},
+             "Enabled, lit"},
             bgaudio::quickMenuLook(),
             [](int index) { bgaudio::setQuickMenuLook(index); }));
 
         auto* lookInfo = new brls::Label();
         lookInfo->setText("How the Music row's buttons are switched on. Each applies the next "
                           "time the quick menu opens; ux0:data/VitaPlex/qm-plugin.log says "
-                          "what each did to them. The last also undims their icons, should "
-                          "the system have dimmed them.");
+                          "what each did to them. The last also lights the buttons and "
+                          "their icons, which the system draws faded when it has no music "
+                          "of its own.");
         lookInfo->setFontSize(14);
         lookInfo->setMarginLeft(16);
         lookInfo->setMarginTop(8);

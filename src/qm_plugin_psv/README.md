@@ -21,10 +21,12 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
 - **Buttons:** ElevenMPV-A's plugin switches the row's buttons on with
   `ButtonBase::Enable(false)`. Presses got through, but the buttons stayed
   dimmed. They stayed dimmed with `Enable(true)` too: their icons are planes
-  of their own beside them. By default this one switches the buttons on and
-  sets the icons back to full colour and meta alpha if they were lowered.
-  VitaPlex BG's settings can pick the other ways (`QM_LOOK_*`), and the log
-  has each button's state before and after.
+  of their own beside them, and SceShell fades buttons and icons in what
+  they are drawn with. By default this one switches the buttons on and
+  lights their draw objects, and puts SceShell's colours back when the row
+  is SceShell's again. VitaPlex BG's settings can pick the other ways
+  (`QM_LOOK_*`), and the log has each button's state and colours before and
+  after.
 - **When:** it takes the row 200 ms after the quick menu opens, as
   ElevenMPV-A's plugin about does. A song set at once did not show. While
   the quick menu stays open, it puts back what SceShell changes.
@@ -33,9 +35,12 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   for it in 5 s (the owner asks again every second). So a process the system
   ends cannot hold the quick menu up.
 - **A log:** `ux0:data/VitaPlex/qm-plugin.log`, one file a boot, the boot
-  before in `qm-plugin.prev.log`. For the first 8 opens of a boot it lists
-  the widgets of the Music row and its heading, then their changes for 3 s,
-  whoever has the row. It also logs the BGM port as SceShell reads it.
+  before in `qm-plugin.prev.log`. For the first 12 opens of a boot it lists
+  the widgets of the Music row and its heading, with their draw objects,
+  then their changes for 3 s, whoever has the row. It also logs the BGM port
+  as SceShell reads it.
+- **No static constructors:** there is no C runtime to run them, so a global
+  object that needs one stays all zeros. The build fails if it has any.
 
 ## Building
 
@@ -77,4 +82,7 @@ missing one refuses the module, and VitaPlex falls back.
 
 From its own list of the row (build 2022): the icons' ids, previous
 `0xD639AB27`, play `0xE057A7D0` and next `0x6FA104CC`, and the heading's,
-"Music", `0x90E6251E`.
+"Music", `0x90E6251E`. A widget's draw object comes from the virtual
+`GetDrawObj` (slot `0xF8`, between `SetColor_core` and `GetTexture`, both
+checked on the console); its colour is written only if its size reads as its
+widget's.

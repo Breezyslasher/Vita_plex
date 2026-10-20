@@ -2119,6 +2119,62 @@ Build 2023:
   `VitaPlexQM2`, so a build-2022 plugin still loaded that boot is left
   alone, and the new one loads beside it.
 
+**Build 2023 on the console: the lines transparent, the fade elsewhere**
+(logs `a41b1550`, the plugin's, `fc92649a`, VitaPlex BG's, `ee7ee49a`, the
+player's, and two screenshots of the row).
+
+- The plugin took the row 266–373 ms after each open, switched the buttons
+  on (state 0), and every press worked.
+- The song's lines did not show: the plugin itself had set their colour to
+  00000000. Its white was a global object, whose constructor nothing ran,
+  since the module has no C runtime, so it stayed all zeros. The plugin then
+  "put back" that colour ten times a second.
+- SceShell had set the row up before the plugin first saw it open: lines
+  empty, buttons enabled 0, state 1. It changed nothing after the plugin
+  took the row, unlike build 2022's take at 0 ms.
+- The quick menu fades in: every widget's meta alpha product rose from
+  14–26% to 100% in about 270 ms.
+- Buttons and icons read colour FFFFFFFF, show and meta alpha 100%, in every
+  open, the row SceShell's or the plugin's, so there was nothing to undim at
+  that level. Each icon has a 64x64 texture of its own. The pause icon
+  (`0xB26E4562`) has one too, at size 0x0. The three buttons share one,
+  100x60, their background.
+- "There are no songs." (`0x5608C548`) read visible in every open, yet the
+  screenshot of the row with no music shows no text at all.
+- Screenshots: with no music of SceShell's own, buttons and icons are faded
+  and there is no text. With its Music app playing, the buttons are opaque
+  with white icons, ⏸ in play's place, the title, and the album below.
+- With the row given back and the quick menu still open, presses went to the
+  plugin, which dropped them.
+- Another of SceShell's overlays, the LiveArea's on the way out, also read as
+  the quick menu open. The plugin found no buttons in 3 s.
+- The hand-over was silent for about 6 s again: 2.96 MB in 3.4 s.
+
+So SceShell fades the buttons, their icons and that line somewhere the
+widgets do not show: in their draw objects (`graph::DrawObj`), most likely,
+which have a colour and a visible bit of their own.
+
+Build 2024:
+
+- **White lines.** The colour is made where it is used. CMake now fails
+  the plugin's build if it has static constructors
+  (`cmake/check_no_static_init.cmake`).
+- **"Enabled, lit"**, the default: `Enable(true)`, then
+  `ChangeButtonState(normal)`, which `PlaneButton` has a version of its
+  own. For each button and icon whose draw object is faded, the widget's
+  colour is set with `SetColor_core`. The draw object's colour is then set
+  to FFFFFFFE: white, with an alpha that marks it as the plugin's. That is
+  done only if the draw object's size reads as its widget's, so that its
+  layout is the headers'. The log has each colour before and after.
+- **Put back.** When the row is given back with the quick menu open, the
+  lines are emptied, the buttons switched off, and the draw objects get
+  SceShell's colours back. The next time the quick menu opens with the row
+  SceShell's, any draw object still in the plugin's colour gets SceShell's
+  back.
+- **The timeline** has each widget's place, and its first draw object's
+  colour, visible bit and size, for 12 opens a boot.
+- **Protocol 3**: pipes `VitaPlexQM3::…`, module `VitaPlexQM3`.
+
 **The header took longer than the download** (log `2114643f`). This
 hand-over's first song was OGG, so the player fetched the server's MP3 (6.77
 MB in 7.6 s). Inspecting it and copying it behind a Xing header then took

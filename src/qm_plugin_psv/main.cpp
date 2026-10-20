@@ -16,12 +16,15 @@
  *
  * - The buttons stayed dimmed with ElevenMPV-A's ButtonBase::Enable(false),
  *   though presses got through, and with Enable(true) as well (build 2022).
- *   Their icons are planes of their own beside them. The way they are
- *   switched on can be chosen (QM_LOOK_*); the default also undims the icons.
+ *   Their icons are planes of their own beside them, and SceShell fades
+ *   buttons and icons with every colour and alpha a widget has at full
+ *   (build 2023): in what they are drawn with, most likely. The way they are
+ *   switched on can be chosen (QM_LOOK_*); the default also lights them
+ *   there, and puts back what it changed when the row is SceShell's again.
  * - It takes the row 200 ms after the quick menu opens, as ElevenMPV-A's
  *   plugin about does: the song this one put on the lines at once did not
  *   show (build 2022). While the quick menu stays open it puts back what
- *   SceShell changes: buttons switched off, other text, dimmed icons.
+ *   SceShell changes: buttons switched off, other text, faded icons.
  * - A press is sent without waiting, so a process that stopped reading cannot
  *   hold SceShell up, and the row is given back by itself when no process has
  *   asked for it again in QM_ACTIVE_TIMEOUT_S.
@@ -196,7 +199,13 @@ const int kPipeModeFull = 0x00000001;
 // the song this one put on the lines at once did not (build 2022).
 const SceUInt64 kTakeAfterUs = 200 * 1000;
 
-const paf::math::v4 kWhite(1.0f, 1.0f, 1.0f, 1.0f);
+// No object here may need constructing as the module loads: it has no C
+// runtime to run constructors, so such an object stays all zeros. Build
+// 2023's white was, and set the song's lines transparent. CMake fails the
+// build if the module has any (.init_array).
+paf::math::v4 white() {
+    return paf::math::v4(1.0f, 1.0f, 1.0f, 1.0f);
+}
 
 paf::ui::Widget* g_impose;  // the quick menu's root
 SceUID g_toPlugin = -1, g_fromPlugin = -1;
@@ -245,7 +254,7 @@ const char* ownerName(uint32_t owner) {
 const char* lookName(int look) {
     return look == QM_LOOK_ENABLE_NORMAL ? "Enable(true) and normal state"
          : look == QM_LOOK_AS_ELEVENMPVA ? "Enable(false), as ElevenMPV-A"
-         : look == QM_LOOK_LIT           ? "Enable(true), icons undimmed"
+         : look == QM_LOOK_LIT           ? "Enable(true), normal state, buttons and icons lit"
                                          : "Enable(true)";
 }
 
@@ -286,6 +295,26 @@ struct WidgetPeek : paf::ui::Widget {
 struct ButtonPeek : paf::ui::ButtonBase {
     static int state(paf::ui::ButtonBase* b) {
         return (int)static_cast<ButtonPeek*>(b)->m_btn_state;
+    }
+};
+// What a widget is drawn with (Widget::GetDrawObj, a virtual call): PAF's
+// graph::DrawObj has a colour of its own besides the widget's. Its layout
+// is the headers' if its size reads as its widget's (drawLayoutOk).
+struct DrawPeek : paf::graph::DrawObj {
+    static DrawPeek* of(paf::graph::DrawObj* d) {
+        return static_cast<DrawPeek*>(d);
+    }
+    static uint32_t color(paf::graph::DrawObj* d) {
+        return of(d)->m_color;
+    }
+    static void setColor(paf::graph::DrawObj* d, uint32_t color) {
+        of(d)->m_color = color;
+    }
+    static int visible(paf::graph::DrawObj* d) {
+        return of(d)->m_visible;
+    }
+    static int size(paf::graph::DrawObj* d, int i) {
+        return (int)reinterpret_cast<const float*>(&of(d)->m_size)[i];
     }
 };
 
@@ -379,35 +408,120 @@ int buttonState(paf::ui::ButtonBase* b) {
     return g_layoutOk ? ButtonPeek::state(b) : -1;
 }
 
-// A button or icon at full colour, should SceShell have dimmed it by its
-// colour or its meta alpha (which way, if either, is for the log to tell).
-// One hidden that way is left so. true when it changed anything.
-bool undim(paf::ui::Widget* w, const char* name, int logIt) {
+// ── Lighting the buttons and icons ──────────────────────────────────────────
+// With no music of its own, SceShell draws the row's buttons and their icons
+// faded, its own Music app playing them opaque and white (screenshots, build
+// 2023). Every colour and alpha the widgets have read full either way, so the
+// fade is most likely in their draw objects' colours. The plugin sets the
+// widget's colour first, which PAF may pass on to them, and then, if one is
+// still faded, its colour itself, to kLitColor. What it changed is put back
+// when the row is SceShell's again, as long as that colour is still its.
+// White, but for an alpha of 0xFE nobody would see: kept apart from a white
+// SceShell sets itself.
+const uint32_t kLitColor = 0xFFFFFFFE;
+const int kLitMax = 6;
+
+struct Lit {
+    paf::ui::Widget* w;
+    paf::graph::DrawObj* d;
+    uint32_t was;  // its draw object's colour as SceShell had it
+};
+Lit g_lit[kLitMax];  // what the plugin lit, while it is to be put back
+int g_litCount;
+int g_drawLayoutLogged;
+
+// Whether a draw object's layout is the headers' as far as its colour goes:
+// its size reads as its widget's, which sits just before it.
+bool drawLayoutOk(paf::ui::Widget* w, paf::graph::DrawObj* d) {
+    const paf::math::v4& size = WidgetPeek::size(w);
+    const int dw = DrawPeek::size(d, 0) - coord(size, 0);
+    const int dh = DrawPeek::size(d, 1) - coord(size, 1);
+    return dw >= -1 && dw <= 1 && dh >= -1 && dh <= 1 && coord(size, 0) > 0;
+}
+
+// A faded white or grey: red, green and blue alike, not opaque white, not
+// nearly transparent, and not the plugin's own.
+bool faded(uint32_t c) {
+    const uint32_t r = c >> 24, g = (c >> 16) & 0xFF, b = (c >> 8) & 0xFF, a = c & 0xFF;
+    return r == g && g == b && a >= 0x10 && c != 0xFFFFFFFF && c != kLitColor;
+}
+
+void rememberLit(paf::ui::Widget* w, paf::graph::DrawObj* d, uint32_t was) {
+    for (int i = 0; i < g_litCount; i++)
+        if (g_lit[i].d == d) return;  // what SceShell had is kept already
+    if (g_litCount == kLitMax) return;
+    g_lit[g_litCount].w = w;
+    g_lit[g_litCount].d = d;
+    g_lit[g_litCount].was = was;
+    g_litCount++;
+}
+
+// One button or icon lit, logged if asked; true when it changed anything.
+// A widget hidden by its colour or meta alpha is left so.
+bool light(paf::ui::Widget* w, const char* name, int logIt) {
     if (!w || !g_layoutOk) return false;
     const uint32_t color = w->GetColor32();
     const float meta = w->GetMetaAlpha();
-    const bool dimColor = color != 0xFFFFFFFF && (color & 0xFF) >= 0x10;
-    const bool dimMeta = meta >= 0.05f && meta < 0.99f;
-    if (!dimColor && !dimMeta) return false;
-    if (dimMeta) WidgetPeek::setMetaAlpha(w, 1.0f);
-    // Even with its colour white already: setting it has the widget take up
-    // its alphas as they now are.
-    w->SetColor_core(kWhite);
+    if ((color & 0xFF) < 0x10 || meta < 0.05f) return false;
+    paf::graph::DrawObj* d = w->GetDrawObj(0);
+    const uint32_t drawn = d ? DrawPeek::color(d) : 0;
+    const bool dimWidget = color != 0xFFFFFFFF || meta < 0.99f;
+    const bool dimDrawn = d && faded(drawn);
+    if (!dimWidget && !dimDrawn) return false;
+    if (meta < 0.99f) WidgetPeek::setMetaAlpha(w, 1.0f);
+    const paf::math::v4 c = white();
+    w->SetColor_core(c);
+    const uint32_t passed = d ? DrawPeek::color(d) : 0;
+    // A draw object that was faded is set by hand even if SetColor_core lit
+    // it: kLitColor marks it as the plugin's, to be put back.
+    bool direct = false;
+    if (dimDrawn) {
+        if (drawLayoutOk(w, d)) {
+            rememberLit(w, d, drawn);
+            DrawPeek::setColor(d, kLitColor);
+            direct = true;
+        } else if (g_drawLayoutLogged < 3) {
+            g_drawLayoutLogged++;
+            logLine("row: %s's draw object reads %dx%d against its %dx%d: left faded", name,
+                    DrawPeek::size(d, 0), DrawPeek::size(d, 1), coord(WidgetPeek::size(w), 0),
+                    coord(WidgetPeek::size(w), 1));
+        }
+    }
     if (logIt)
-        logLine("row: %s dimmed (color %08X, meta alpha %d%%): now color %08X, meta alpha %d%%",
-                name, (unsigned)color, percent(meta), (unsigned)w->GetColor32(),
-                percent(w->GetMetaAlpha()));
+        logLine("row: %s lit: color %08X, meta alpha %d%%, drawn %08X; after SetColor_core "
+                "drawn %08X%s",
+                name, (unsigned)color, percent(meta), (unsigned)drawn, (unsigned)passed,
+                direct ? ", then set to FFFFFFFE itself" : "");
     return true;
 }
 
-bool undimAll(int logIt) {
-    bool changed = undim(g_iconRew, "previous's icon", logIt);
-    changed |= undim(g_iconPlay, "play/pause's icon", logIt);
-    changed |= undim(g_iconFf, "next's icon", logIt);
-    changed |= undim(g_rew, "previous", logIt);
-    changed |= undim(g_play, "play/pause", logIt);
-    changed |= undim(g_ff, "next", logIt);
+bool lightAll(int logIt) {
+    bool changed = light(g_iconRew, "previous's icon", logIt);
+    changed |= light(g_iconPlay, "play/pause's icon", logIt);
+    changed |= light(g_iconFf, "next's icon", logIt);
+    changed |= light(g_rew, "previous", logIt);
+    changed |= light(g_play, "play/pause", logIt);
+    changed |= light(g_ff, "next", logIt);
     return changed;
+}
+
+// Puts back the draw objects' colours the plugin changed, where they are still
+// its: under g_lock, the quick menu open and its widgets found (findRow).
+// They must be the widgets lit, so a row SceShell made anew is left alone.
+void unlightAll(const char* why) {
+    if (!g_litCount) return;
+    int back = 0;
+    for (int i = 0; i < g_litCount; i++) {
+        const Lit& l = g_lit[i];
+        paf::ui::Widget* const found[6] = {g_iconRew, g_iconPlay, g_iconFf, g_rew, g_play, g_ff};
+        bool same = false;
+        for (int j = 0; j < 6 && !same; j++) same = found[j] == l.w;
+        if (!same || l.w->GetDrawObj(0) != l.d || DrawPeek::color(l.d) != kLitColor) continue;
+        DrawPeek::setColor(l.d, l.was);
+        back++;
+    }
+    logLine("row: %d of %d faded again as SceShell had them (%s)", back, g_litCount, why);
+    g_litCount = 0;
 }
 
 // Switches a button on the way g_look says, logged before and after if asked.
@@ -420,6 +534,9 @@ void applyLook(paf::ui::Widget* w, const char* name, int logIt) {
         b->Enable(false);
         break;
     case QM_LOOK_ENABLE_NORMAL:
+    case QM_LOOK_LIT:
+        // PlaneButton has a ChangeButtonState of its own, which may also put
+        // the button's normal look on it.
         b->Enable(true);
         b->ChangeButtonState(paf::ui::ButtonBase::ST_BTN_NORMAL);
         break;
@@ -436,7 +553,7 @@ void applyLookToAll(int logIt) {
     applyLook(g_rew, "previous", logIt);
     applyLook(g_play, "play/pause", logIt);
     applyLook(g_ff, "next", logIt);
-    if (g_look == QM_LOOK_LIT) undimAll(logIt);
+    if (g_look == QM_LOOK_LIT) lightAll(logIt);
 }
 
 // While the row is ours and the quick menu open, ten times a second: a button
@@ -451,8 +568,8 @@ bool watchButtons() {
     for (int i = 0; i < 3; i++) {
         paf::ui::ButtonBase* b = static_cast<paf::ui::ButtonBase*>(buttons[i]);
         // State 1 is dimmed; 2 to 4 are a press under way, left alone.
-        if (buttonEnabled(b) == 1 && (g_look != QM_LOOK_ENABLE_NORMAL || buttonState(b) != 1))
-            continue;
+        const bool normalToo = g_look == QM_LOOK_ENABLE_NORMAL || g_look == QM_LOOK_LIT;
+        if (buttonEnabled(b) == 1 && (!normalToo || buttonState(b) != 1)) continue;
         const int logIt = g_revertsLogged < 6;
         if (logIt) {
             g_revertsLogged++;
@@ -473,10 +590,11 @@ void setTexts() {
     bottom += (const wchar_t*)g_album;
     g_topHash = hashText((const uint16_t*)top.c_str());
     g_bottomHash = hashText((const uint16_t*)bottom.c_str());
+    const paf::math::v4 c = white();
     g_textTop->SetString(top);
-    g_textTop->SetColor_core(kWhite);
+    g_textTop->SetColor_core(c);
     g_textBottom->SetString(bottom);
-    g_textBottom->SetColor_core(kWhite);
+    g_textBottom->SetColor_core(c);
 }
 
 // While the row is ours and the quick menu open: the lines as set, should
@@ -531,8 +649,9 @@ void checkLayout(paf::ui::Widget* play) {
 // ten times a second for kTimelineUs. What this plugin changes is logged as
 // it does it and not again here, so these are SceShell's changes: its set-up
 // of the row, and what it puts back of what this plugin did. With the row
-// SceShell's, they are the look it gives the row itself.
-const int kTimelineOpens = 8;
+// SceShell's, they are the look it gives the row itself: faded with no music
+// of its own, lit with its Music app playing.
+const int kTimelineOpens = 12;
 const SceUInt64 kTimelineUs = 3000000;
 const int kSnapMax = 24;
 
@@ -552,6 +671,10 @@ struct Snap {
     int isText;
     uint32_t textHash;
     char text[40];
+    const void* draw;  // its first draw object, and that one's colour, size and visible bit
+    uint32_t drawColor;
+    int drawWidth, drawHeight;
+    int drawVisible;
 };
 Snap g_snaps[kSnapMax], g_next[kSnapMax];
 
@@ -570,6 +693,14 @@ void snapWidget(paf::ui::Widget* w, Snap* s) {
     s->width = coord(WidgetPeek::size(w), 0);
     s->height = coord(WidgetPeek::size(w), 1);
     s->enabled = s->btnState = -1;
+    paf::graph::DrawObj* d = w->GetDrawObj(0);
+    if (d) {
+        s->draw = d;
+        s->drawColor = DrawPeek::color(d);
+        s->drawWidth = DrawPeek::size(d, 0);
+        s->drawHeight = DrawPeek::size(d, 1);
+        s->drawVisible = DrawPeek::visible(d);
+    }
     if (isA(w, paf::ui::Text::TypeName())) {
         paf::wstring str;
         w->GetString(str);
@@ -614,10 +745,15 @@ void logSnap(const char* when, const Snap& s) {
         if (s.disableColor) l.add(", dimmed color %08X", (unsigned)s.disableColor);
     }
     if (s.tex) l.add(", texture %p %dx%d", s.tex, s.texWidth, s.texHeight);
+    if (s.draw)
+        l.add(", drawn %08X%s %dx%d", (unsigned)s.drawColor, s.drawVisible ? "" : " (hidden)",
+              s.drawWidth, s.drawHeight);
     if (s.isText) l.add(", text \"%s\"", s.text);
-    logLine("%s %s 0x%08X: state %u, color %08X, show %d%%/%d%%, meta %d%%/%d%%%s, size %dx%d%s",
-            when, s.type, (unsigned)s.hash, (unsigned)s.state, (unsigned)s.color, s.show,
-            s.showSum, s.meta, s.metaSum, s.activated ? "" : ", off", s.width, s.height, l.buf);
+    logLine("%s %s 0x%08X at %p: state %u, color %08X, show %d%%/%d%%, meta %d%%/%d%%%s, "
+            "size %dx%d%s",
+            when, s.type, (unsigned)s.hash, (void*)s.w, (unsigned)s.state, (unsigned)s.color,
+            s.show, s.showSum, s.meta, s.metaSum, s.activated ? "" : ", off", s.width, s.height,
+            l.buf);
 }
 
 void logChange(int ms, const Snap& was, const Snap& now) {
@@ -637,6 +773,11 @@ void logChange(int ms, const Snap& was, const Snap& now) {
         l.add(", dimmed color %08X", (unsigned)now.disableColor);
     if (was.tex != now.tex || was.texWidth != now.texWidth || was.texHeight != now.texHeight)
         l.add(", texture %p %dx%d", now.tex, now.texWidth, now.texHeight);
+    if (was.draw != now.draw || was.drawColor != now.drawColor ||
+        was.drawVisible != now.drawVisible || was.drawWidth != now.drawWidth ||
+        was.drawHeight != now.drawHeight)
+        l.add(", drawn %08X%s %dx%d", (unsigned)now.drawColor, now.drawVisible ? "" : " (hidden)",
+              now.drawWidth, now.drawHeight);
     if (was.textHash != now.textHash) l.add(", text \"%s\"", now.text);
     if (l.n) logLine("+%d ms %s 0x%08X%s", ms, now.type, (unsigned)now.hash, l.buf);
 }
@@ -663,9 +804,12 @@ void timelineTick(SceUInt64 now) {
         paf::ui::Widget* heading = find(kHashHeading);
         g_headingGroup = heading ? heading->GetParent() : NULL;
         g_snapCount = snapAll(g_snaps);
-        logLine("+%d ms row: %d widgets, %s", ms, g_snapCount,
+        // The groups' places tell whether SceShell keeps the row from one
+        // open to the next or makes it anew.
+        logLine("+%d ms row: %d widgets, %s (groups at %p and %p)", ms, g_snapCount,
                 g_active ? (g_applied ? "the row ours" : "the row to be ours")
-                         : "the row SceShell's");
+                         : "the row SceShell's",
+                (void*)g_headingGroup, (void*)g_rowGroup);
         for (int i = 0; i < g_snapCount; i++) logSnap(" ", g_snaps[i]);
         return;
     }
@@ -695,21 +839,29 @@ void timelineQuiet() {
     if (g_timeline && g_rowGroup) g_snapCount = snapAll(g_snaps);
 }
 
-// Takes the row, the quick menu having been open kTakeAfterUs: under g_lock.
-// true when taken.
-bool takeRow(SceUInt64 now) {
+// The row's widgets, by their ids: under g_lock, the quick menu open. true
+// when its buttons are there; they come a moment after the quick menu.
+bool findRow() {
     g_rew = find(kHashRew);
     g_play = find(kHashPlay);
     g_ff = find(kHashFf);
-    if (!g_rew || !g_play || !g_ff) {
-        if (++g_findTries == 30) logLine("row: its buttons not found in 3 s");
-        return false;
-    }
     g_textTop = find(kHashTextTop);
     g_textBottom = find(kHashTextBottom);
     g_iconRew = find(kHashIconRew);
     g_iconPlay = find(kHashIconPlay);
     g_iconFf = find(kHashIconFf);
+    return g_rew && g_play && g_ff;
+}
+
+// Takes the row, the quick menu having been open kTakeAfterUs: under g_lock.
+// true when taken.
+bool takeRow(SceUInt64 now) {
+    if (!findRow()) {
+        // Another of SceShell's overlays, such as the LiveArea's, reads as the
+        // quick menu open too.
+        if (++g_findTries == 30) logLine("row: its buttons not found in 3 s: not the quick menu");
+        return false;
+    }
     if (!g_layoutChecked) checkLayout(g_play);
     const int logIt = g_takesLogged < 3 || g_lookLogged != g_look;
     if (logIt) {
@@ -741,12 +893,27 @@ bool keepRow() {
     changed |= keepTexts();
     if (g_look == QM_LOOK_LIT) {
         const int logIt = g_dimsLogged < 6;
-        if (undimAll(logIt)) {
+        if (lightAll(logIt)) {
             changed = true;
             if (logIt) g_dimsLogged++;
         }
     }
     return changed;
+}
+
+// The row given back with the quick menu open: it is left as SceShell's own
+// set-up had it with no music of its own (build 2023's log), the lines empty
+// and the buttons off and faded, and kept no longer. Under g_lock.
+void releaseRow(const char* why) {
+    if (!g_applied) return;
+    unlightAll(why);
+    const paf::wstring empty;
+    if (g_textTop) g_textTop->SetString(empty);
+    if (g_textBottom) g_textBottom->SetString(empty);
+    paf::ui::Widget* const buttons[3] = {g_rew, g_play, g_ff};
+    for (int i = 0; i < 3; i++) static_cast<paf::ui::ButtonBase*>(buttons[i])->Enable(false);
+    g_applied = 0;
+    logLine("row: left as SceShell had it: lines empty, buttons off");
 }
 
 int g_openLogged;  // this open's opening was logged
@@ -786,16 +953,25 @@ public:
             if (open) {
                 timelineTick(now);
                 bool changed = false;
-                if (g_active && !g_applied && now - g_openedUs >= kTakeAfterUs)
+                if (g_active && !g_applied && now - g_openedUs >= kTakeAfterUs) {
                     changed = takeRow(now);
-                else if (g_active && g_applied)
+                } else if (g_active && g_applied) {
                     changed = keepRow();
+                } else if (!g_active && g_litCount && findRow()) {
+                    // Lit while the row was ours, and the quick menu closed since.
+                    unlightAll("the row SceShell's");
+                    changed = true;
+                }
                 if (changed) timelineQuiet();
             }
             if (g_active && now - g_activatedUs > QM_ACTIVE_TIMEOUT_S * 1000000ULL) {
                 g_active = 0;
                 logLine("nothing from %s for %d s: row given back", ownerName(g_owner),
                         QM_ACTIVE_TIMEOUT_S);
+                if (g_applied) {
+                    releaseRow("given back");
+                    timelineQuiet();
+                }
             }
             unlock();
             wasOpen = open;
@@ -839,6 +1015,10 @@ private:
         case QM_CMD_DEACTIVATE:
             if (g_active) logLine("row given back by %s", ownerName(g_owner));
             g_active = 0;
+            if (g_applied) {
+                releaseRow("given back");
+                timelineQuiet();
+            }
             break;
         case QM_CMD_SONG: {
             sceClibMemcpy(g_title, m.title, sizeof(g_title));
