@@ -65,12 +65,19 @@
 //   positionMs=<where in it>
 //   repeat=<0 off, 1 the one song, 2 all>
 //   file=<that song as a file the app made ready for the shell, or nothing>
+//   port=<how the player takes the BGM port: one of the four below; the
+//         first when the line is missing>
 //   track=<fields, below>        one a song, in the order they play
 //   end
 //
 // The system clock (sceKernelGetSystemTimeWide) runs on from one process to
 // the next, so a time in a file can be compared with another process's.
 // A queue with no "end" line is not whole, and is not read.
+#define BGPLAYER_PORT_PRIORITY    "0x80"         // at 0x80, ElevenMPV-A's priority while
+                                                 // SceShell decodes
+#define BGPLAYER_PORT_PLAIN       "plain"        // sceAppMgrAcquireBgmPort, no priority
+#define BGPLAYER_PORT_MUSICPLAYER "musicplayer"  // sceAppMgrAcquireBgmPortForMusicPlayer
+#define BGPLAYER_PORT_NONE        "none"         // not taken
 #define BGPLAYER_REPEAT_OFF 0
 #define BGPLAYER_REPEAT_ONE 1
 #define BGPLAYER_REPEAT_ALL 2

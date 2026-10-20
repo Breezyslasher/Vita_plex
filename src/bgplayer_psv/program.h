@@ -22,6 +22,9 @@ extern double g_startedAt;
 
 // Whether the app is running, by the title id the system lists it by.
 int appRunning(void);
+// Seconds since PS was last held, which opens the quick menu; a large number
+// if it has not been (main.c's power callback).
+double quickMenuSince(void);
 // Ends the process, through the system call under sceKernelExitProcess when
 // that has not ended it in 3 s (main.c, quitNow).
 void quitNow(void) __attribute__((noreturn));

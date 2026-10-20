@@ -156,6 +156,11 @@ static int netMain(SceSize args, void* argp) {
 // When PS was last held, which opens the quick menu, on the system clock.
 static volatile double g_psHeldAt;
 
+double quickMenuSince(void) {
+    const double held = g_psHeldAt;
+    return held == 0 ? 1e9 : systemSecs() - held;
+}
+
 static int powerCallback(int notifyId, int notifyCount, int powerInfo, void* common) {
     (void)notifyId;
     (void)notifyCount;
@@ -166,10 +171,11 @@ static int powerCallback(int notifyId, int notifyCount, int powerInfo, void* com
     return 0;
 }
 
-// For half a minute after PS is held: which process the system has holding
-// the BGM port, logged when that changes, beside what the player logs of the
+// For a minute after PS is held: which process the system has holding the
+// BGM port, logged when that changes, beside what the player logs of the
 // shell. The quick menu's Music row stayed dimmed for this player; what the
-// system has for it is the first thing to know. Asked no more once refused.
+// system has for it is the first thing to know. Asked no more once refused,
+// as it was on the console (0x8080201F, log 2114643f).
 static void watchQuickMenu(void) {
     static double lastHeld;
     static int refused;
@@ -177,7 +183,7 @@ static void watchQuickMenu(void) {
     static unsigned lastState;
     const double held = g_psHeldAt;
     const double since = systemSecs() - held;
-    if (held == 0 || refused || since > 30.0) return;
+    if (held == 0 || refused || since > 60.0) return;
     const int fresh = held != lastHeld;
     lastHeld = held;
     SceUID pid[4] = {0, 0, 0, 0};    // room to spare, in case it writes more

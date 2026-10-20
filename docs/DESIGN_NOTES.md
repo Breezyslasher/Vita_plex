@@ -1846,12 +1846,45 @@ Port for VitaPlex's Player (test)", not saved:
   unknown, one 0 passed);
 - not taken.
 
-Each but the first applies whenever mpv plays. For 30 s after PS is held,
-VitaPlex BG and the player log the BGM owner whenever it changes, as
+Each but the first applies whenever mpv plays. For 30 s after PS is held (a
+minute from the next build), VitaPlex BG and the player log the BGM owner
+whenever it changes, as
 `_sceAppMgrGetCurrentBgmState` (SceAppMgr 0x81569A58, `appmgr_bgm_stub.S`)
 gives it, with mpv's state in VitaPlex BG's lines. App events nothing else
 handles are logged with their bytes, so a button on the row that reaches the
 app shows up.
+
+**As a music player, the row shows VitaPlex** (build 2015, logs `9c16c0d6`
+and `2114643f`). With `sceAppMgrAcquireBgmPortForMusicPlayer` (it returned 0)
+and mpv playing, the quick menu's Music row had VitaPlex's icon, in front and
+from the LiveArea. Its buttons were dimmed, and no app event came.
+`_sceAppMgrGetCurrentBgmState` is refused to apps and to the background
+program alike (0x8080201F), as `sceAppMgrGetCurrentBgmState2` was. So the
+call names the music player the row is for. That the row's buttons stay
+dimmed with nothing playing in the shell's music service fits them being that
+service's controls, as they are for the system Music app. They have not yet
+been tried with the shell playing for an app that took the port this way.
+So the picker now applies to the system player tests too, and the queue
+tells the background player how to take the port (`port=` in `bgplayer.h`).
+"0x80" is the default, and "none" leaves it untaken. While PS is held and
+for a minute after:
+
+- VitaPlex BG logs the shell's state beside mpv's.
+- The background player logs every jump in the shell's clock.
+- A stop in that minute is taken as the row's pause: the player does not
+  play the song again every 5 s as it does after the power button, and does
+  not move on after two minutes. It waits for the shell to play again.
+
+**The header took longer than the download** (log `2114643f`). This
+hand-over's first song was OGG, so the player fetched the server's MP3 (6.77
+MB in 7.6 s). Inspecting it and copying it behind a Xing header then took
+9.0 s more. BG Test 10's took about 5 s for 4.6 MB. Both passes went through
+stdio's default buffer, so each read was small. `mp3_info.c` now gives each
+file a 64 KB buffer. On the host, that took one song's reads from 416 to 76
+and its writes from 276 to 36, with the same result and a byte-identical
+file. The player started 0.14 s after VitaPlex BG's last line this time, not
+4.2 s, so that wait varies. The silence was 19.8 s: 7.6 s of download, 9.0 s
+of header, the rest starting up.
 
 **EQVita** (shev0k/EQVita at `1279a7f`) has nothing for any of this. It is a
 kernel plugin that hooks SceAudio's output calls in every process to

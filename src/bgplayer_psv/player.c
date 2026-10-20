@@ -38,10 +38,17 @@
 #include <string.h>
 
 int sceAppMgrAcquireBgmPortWithPriority(int priority);
+int sceAppMgrAcquireBgmPort(void);
 int sceAppMgrReleaseBgmPort(void);
+// sceAppMgrAcquireBgmPortForMusicPlayer, by NID (src/utils/appmgr_bgm_stub.S),
+// whose arguments nobody has written down; one 0 is passed.
+int vitaplexAcquireBgmPortForMusicPlayer(int unknown);
 
 // What ElevenMPV-A asks for while SceShell decodes.
 #define SHELL_PORT_PRIORITY 0x80
+
+// How the queue says to take the BGM port (bgplayer.h); 0x80 unless it says.
+static char g_portHow[16] = BGPLAYER_PORT_PRIORITY;
 
 #define MB (1024 * 1024)
 
@@ -732,7 +739,7 @@ static int loadQueue(int* sameAsBefore) {
     int count = 0, index = 0, repeat = BGPLAYER_REPEAT_OFF, whole = 0;
     unsigned position = 0;
     double written = 0;
-    char file[128] = "";
+    char file[128] = "", port[16] = BGPLAYER_PORT_PRIORITY;
     while (fgets(line, sizeof(line), f)) {
         line[strcspn(line, "\r\n")] = '\0';
         if (strncmp(line, "track=", 6) == 0) {
@@ -747,6 +754,8 @@ static int loadQueue(int* sameAsBefore) {
             repeat = atoi(line + 7);
         } else if (strncmp(line, "file=", 5) == 0) {
             snprintf(file, sizeof(file), "%s", line + 5);
+        } else if (strncmp(line, "port=", 5) == 0) {
+            snprintf(port, sizeof(port), "%s", line + 5);
         } else if (strcmp(line, "end") == 0) {
             whole = 1;
         }
@@ -764,13 +773,15 @@ static int loadQueue(int* sameAsBefore) {
     g_repeat = repeat;
     g_queueWritten = written;
     snprintf(g_readyFile, sizeof(g_readyFile), "%s", file);
+    snprintf(g_portHow, sizeof(g_portHow), "%s", port);
     char at[16];
     mmss(at, sizeof(at), position);
     const Entry* e = &g_queue[g_index];
-    logLine("queue: %d song(s), from song %d (\"%s\" by %s) at %s, repeat %s%s; written %.1f s "
-            "before this",
+    logLine("queue: %d song(s), from song %d (\"%s\" by %s) at %s, repeat %s%s, BGM port %s; "
+            "written %.1f s before this",
             count, g_index + 1, e->title, e->artist, at, repeatName(repeat),
-            file[0] ? ", the app having made that song ready" : "", systemSecs() - written);
+            file[0] ? ", the app having made that song ready" : "", g_portHow,
+            systemSecs() - written);
     return 0;
 }
 
@@ -789,10 +800,24 @@ static int nextIndex(int index) {
 // them). 0 when it took the file.
 static int handOver(const Song* s) {
     char r[3][24];
-    if (!g_portHeld) {
-        const int rc = sceAppMgrAcquireBgmPortWithPriority(SHELL_PORT_PRIORITY);
-        logLine("acquire the BGM port at 0x%X: %s", SHELL_PORT_PRIORITY, result(r[0], 24, rc));
-        g_portHeld = rc >= 0;
+    // The way the queue says, which VitaPlex BG's port test sets (bgplayer.h).
+    // Not taken at all is tried once a time the shell starts.
+    if (!g_portHeld && !(g_shellUp && strcmp(g_portHow, BGPLAYER_PORT_NONE) == 0)) {
+        int rc = 0;
+        if (strcmp(g_portHow, BGPLAYER_PORT_NONE) == 0) {
+            logLine("the BGM port: not taken, as the queue says");
+        } else {
+            if (strcmp(g_portHow, BGPLAYER_PORT_PLAIN) == 0)
+                rc = sceAppMgrAcquireBgmPort();
+            else if (strcmp(g_portHow, BGPLAYER_PORT_MUSICPLAYER) == 0)
+                rc = vitaplexAcquireBgmPortForMusicPlayer(0);
+            else
+                rc = sceAppMgrAcquireBgmPortWithPriority(SHELL_PORT_PRIORITY);
+            logLine("acquire the BGM port %s%s: %s",
+                    strcmp(g_portHow, BGPLAYER_PORT_PRIORITY) == 0 ? "at " : "", g_portHow,
+                    result(r[0], 24, rc));
+            g_portHeld = rc >= 0;
+        }
     }
     if (!g_shellUp) {
         const int rc = sceMusicPlayerServiceInitialize(0);
@@ -970,8 +995,10 @@ static int watchSong(const Song* s) {
     const double t0 = now();
     double lastLine = t0;
     // A song stopped part-way: since when, and for how long in all, which the
-    // time it is given leaves out.
+    // time it is given leaves out; and whether the quick menu was open as it
+    // stopped (byMenu), which leaves it stopped.
     double stoppedSince = 0, stoppedFor = 0, lastPlay = 0;
+    int byMenu = 0;
     for (;;) {
         sceKernelDelayThread(500 * 1000);
         if (g_stopped) return WATCH_STOPPED;
@@ -1014,6 +1041,14 @@ static int watchSong(const Song* s) {
                 otherLogged = 1;
             }
         }
+        // A jump in the clock, which the quick menu's buttons may make.
+        if (started && havePrev && (time + 3000 < prevTime || time > prevTime + 5000)) {
+            char from[16];
+            mmss(from, sizeof(from), prevTime);
+            logLine("song %d of %d: the clock went from %s to %s, state %d%s", s->index + 1,
+                    g_count, from, at, state,
+                    quickMenuSince() < 60.0 ? ", with the quick menu open" : "");
+        }
         prevTime = time;
         havePrev = 1;
         if (started && ++beat % 4 == 0) writeStatus(BGPLAYER_STATE_PLAYING, time, 1);
@@ -1033,15 +1068,25 @@ static int watchSong(const Song* s) {
             }
             // Stopped before its end, as the power button stopped it in log
             // 91252932, where it never went on: play again every 5 s while it
-            // stays so, and move on after two minutes of it.
+            // stays so, and move on after two minutes of it. Not when it
+            // stopped with the quick menu open, where it may be the Music
+            // row's pause: then it stays stopped until the shell plays again.
             if (state != 1) {
-                if (stoppedSince == 0) stoppedSince = t;
-                if (t - stoppedSince > 120.0) {
+                if (stoppedSince == 0) {
+                    stoppedSince = t;
+                    const double menu = quickMenuSince();
+                    byMenu = menu < 60.0;
+                    if (byMenu)
+                        logLine("song %d of %d stopped at %s (state %d), %.0fs after PS was held: "
+                                "taken as the quick menu's pause; not played again",
+                                s->index + 1, g_count, at, state, menu);
+                }
+                if (!byMenu && t - stoppedSince > 120.0) {
                     logLine("song %d of %d stayed stopped at %s for two minutes; moving on",
                             s->index + 1, g_count, at);
                     return WATCH_FAILED;
                 }
-                if (t - lastPlay >= 5.0) {
+                if (!byMenu && t - lastPlay >= 5.0) {
                     logLine("song %d of %d stopped at %s, before its end (state %d); play again: "
                             "%s",
                             s->index + 1, g_count, at, state,
@@ -1050,10 +1095,12 @@ static int watchSong(const Song* s) {
                     lastPlay = t;
                 }
             } else if (stoppedSince > 0) {
-                logLine("song %d of %d plays again at %s, after %.1fs stopped", s->index + 1,
-                        g_count, at, t - stoppedSince);
+                logLine("song %d of %d plays again at %s, after %.1fs stopped%s", s->index + 1,
+                        g_count, at, t - stoppedSince,
+                        byMenu ? ", from a stop with the quick menu open" : "");
                 stoppedFor += t - stoppedSince;
                 stoppedSince = 0;
+                byMenu = 0;
             }
         } else if (t - t0 > 15.0) {
             logLine("song %d of %d: the system player never started it", s->index + 1, g_count);

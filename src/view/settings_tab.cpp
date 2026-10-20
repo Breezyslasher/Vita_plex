@@ -1150,18 +1150,23 @@ brls::Box* SettingsTab::createMusicSection() {
         outsideInfo->setMarginTop(8);
         box->addView(outsideInfo);
 
-        // How VitaPlex's own player takes the system's music port, against
-        // the quick menu's Music row. Not saved: it is for trying each in turn.
-        box->addView(makePickerCell("Music Port for VitaPlex's Player (test)",
+        // How VitaPlex BG takes the system's music port, against the quick
+        // menu's Music row: for its own player, for the system player tests
+        // below and for the background player it hands over to. Not saved: it
+        // is for trying each in turn.
+        box->addView(makePickerCell("Music Port (test)",
             {"At 0x81, as now", "At 0x80", "Plain, no priority", "As a music player",
              "Not taken"},
             bgaudio::ownPortTest(),
             [](int index) { bgaudio::setOwnPortTest(index); }));
 
         auto* portInfo = new brls::Label();
-        portInfo->setText("Play a song, then hold PS: is the quick menu's Music row lit, with "
-                          "VitaPlex's icon? Try its buttons. Then press PS and hold it again "
-                          "from the LiveArea. Then the next choice.");
+        portInfo->setText("Also used by the system player tests below and by the background "
+                          "player. \"As a music player\" shows VitaPlex's icon in the quick "
+                          "menu. To see if its buttons work with the system player playing: "
+                          "pick it, run Test: System Player, Local File, hold PS and try them. "
+                          "Then leave with a song playing and start a game, and try them "
+                          "there.");
         portInfo->setFontSize(14);
         portInfo->setMarginLeft(16);
         portInfo->setMarginTop(8);

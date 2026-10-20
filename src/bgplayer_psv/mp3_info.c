@@ -55,6 +55,11 @@ static unsigned long be32(const unsigned char* p) {
            ((unsigned long)p[2] << 8) | (unsigned long)p[3];
 }
 
+// stdio's own buffer for each file read or written whole, set large: through
+// the default one, VitaPlex BG's player took 9 s to inspect a 6.8 MB song and
+// copy it behind a header (log 2114643f), more than downloading it had.
+#define IO_BUFFER (64 * 1024)
+
 // The file through a small window that only moves forward: the system-mode
 // test app has 3 MB free, and a song is bigger than that.
 typedef struct Reader {
@@ -62,6 +67,7 @@ typedef struct Reader {
     long start;  // file offset of buf[0]
     size_t len;
     unsigned char buf[16 * 1024];
+    char io[IO_BUFFER];
 } Reader;
 
 // n bytes at pos, n no more than the window; NULL past the end of the file.
@@ -93,6 +99,7 @@ int mp3Inspect(const char* path, Mp3Info* out) {
         free(r);
         return -1;
     }
+    setvbuf(r->f, r->io, _IOFBF, sizeof(r->io));
 
     long pos = 0;
     const unsigned char* p = bytesAt(r, 0, 10);
@@ -179,13 +186,21 @@ static void putBe32(unsigned char* p, unsigned long v) {
 
 int mp3WriteWithHeader(const char* in, const Mp3Info* info, const char* out) {
     if (info->header[0] || info->frames <= 0) return -1;
+    // One block: what is copied, then the two files' stdio buffers.
+    char* mem = (char*)malloc(3 * IO_BUFFER);
+    if (!mem) return -1;
     FILE* src = fopen(in, "rb");
-    if (!src) return -1;
+    if (!src) {
+        free(mem);
+        return -1;
+    }
+    setvbuf(src, mem + IO_BUFFER, _IOFBF, IO_BUFFER);
     unsigned char h[4];
     Frame f;
     if (fseek(src, info->firstFrame, SEEK_SET) != 0 || fread(h, 1, 4, src) != 4 ||
         !parseFrame(h, &f)) {
         fclose(src);
+        free(mem);
         return -1;
     }
 
@@ -203,6 +218,7 @@ int mp3WriteWithHeader(const char* in, const Mp3Info* info, const char* out) {
     unsigned char frame[1536];
     if (bi == 15 || len > (int)sizeof(frame)) {
         fclose(src);
+        free(mem);
         return -1;
     }
     memset(frame, 0, (size_t)len);
@@ -217,16 +233,16 @@ int mp3WriteWithHeader(const char* in, const Mp3Info* info, const char* out) {
     putBe32(x + 12, (unsigned long)(len + info->audioBytes));
 
     FILE* dst = fopen(out, "wb");
-    unsigned char* buf = (unsigned char*)malloc(16 * 1024);
-    int ok = dst && buf && fwrite(frame, 1, (size_t)len, dst) == (size_t)len &&
+    if (dst) setvbuf(dst, mem + 2 * IO_BUFFER, _IOFBF, IO_BUFFER);
+    int ok = dst && fwrite(frame, 1, (size_t)len, dst) == (size_t)len &&
              fseek(src, info->firstFrame, SEEK_SET) == 0;
     for (long left = info->audioBytes; ok && left > 0;) {
-        const size_t n = fread(buf, 1, left < 16 * 1024 ? (size_t)left : 16 * 1024, src);
-        ok = n > 0 && fwrite(buf, 1, n, dst) == n;
+        const size_t n = fread(mem, 1, left < IO_BUFFER ? (size_t)left : IO_BUFFER, src);
+        ok = n > 0 && fwrite(mem, 1, n, dst) == n;
         left -= (long)n;
     }
-    free(buf);
     fclose(src);
     if (dst && fclose(dst) != 0) ok = 0;
+    free(mem);   // after both files, whose buffers are in it
     return ok ? 0 : -1;
 }

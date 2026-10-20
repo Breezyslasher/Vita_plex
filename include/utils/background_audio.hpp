@@ -102,11 +102,14 @@ void runHandoffTest(Report done);
 int shellService();
 void setShellService(int service);
 
-// How VitaPlex's own player takes the system's BGM port: 0 at priority 0x81
+// How VitaPlex BG takes the system's BGM port: 0 at priority 0x81 for mpv
 // while background playback is on, as before; 1 at 0x80, 2 with no priority,
-// 3 as a music player, 4 not at all, each whenever mpv plays. The quick
-// menu's Music row once showed VitaPlex's icon, in a build nobody can name;
-// switching between these finds out what does that. Not saved.
+// 3 as a music player, 4 not at all, each whenever mpv plays. The system
+// player tests and the background player (through the queue) take it the
+// same way, except at 0x80 for 0, 1 and 4. "As a music player" put
+// VitaPlex's icon in the quick menu's Music row, its buttons dimmed, with mpv
+// playing (log 9c16c0d6); whether they come alive with the system player
+// playing is what the rest is for. Not saved.
 int ownPortTest();
 void setOwnPortTest(int choice);
 

@@ -215,10 +215,10 @@ std::atomic<SceInt64> g_handedOverAt{0};
 // one is the user leaving, as BG Tests 20 and 21 took it.
 std::atomic<SceInt64> g_psPressUs{0};
 // When PS was last held, which opens the quick menu: for kQuickMenuWatchUs
-// after it the watcher logs the BGM owner and mpv whenever either changes, so
-// what the Music row's buttons did shows in the log.
+// after it the watcher logs the BGM owner, mpv and the shell whenever one of
+// them changes, so what the Music row's buttons did shows in the log.
 std::atomic<SceInt64> g_psHeldUs{0};
-constexpr SceInt64 kQuickMenuWatchUs = 30 * 1000000;
+constexpr SceInt64 kQuickMenuWatchUs = 60 * 1000000;
 // When this process set up the background player's side, on the system
 // clock, which runs on from one process to the next as the notes have it.
 double g_initSecs = 0;
@@ -305,6 +305,29 @@ void holdPortForMpv(const char* why) {
         releasePort(0, why);
 }
 
+// The port a system player test takes, and the background player is told to
+// take: the shell's priority, unless the port test picks a way with none.
+// "As a music player" put VitaPlex's icon in the quick menu's Music row with
+// mpv playing, its buttons dimmed (log 9c16c0d6); whether they come alive
+// with the shell playing is what this is for. The one a test took is
+// g_testPort, so that the end of the test gives back that one.
+int shellTestPort() {
+    const int p = kOwnPort[g_ownPortTest];
+    return p == kPortPlain || p == kPortMusicPlayer ? p : kPortForShell;
+}
+
+int g_testPort = kPortForShell;   // under g_shellMutex
+
+// How the queue tells the background player to take the port (bgplayer.h).
+const char* playerPortName() {
+    switch (kOwnPort[g_ownPortTest]) {
+        case kPortPlain:       return BGPLAYER_PORT_PLAIN;
+        case kPortMusicPlayer: return BGPLAYER_PORT_MUSICPLAYER;
+        case 0:                return BGPLAYER_PORT_NONE;
+        default:               return BGPLAYER_PORT_PRIORITY;
+    }
+}
+
 int portPriority() {
     std::lock_guard<std::mutex> lock(g_portMutex);
     return g_portPriority;
@@ -354,6 +377,8 @@ std::string describeMpv(const MpvPlayer::Snapshot& s) {
 // ", system player …" for the watcher's lines, or empty. Defined with the
 // SceShell tests below; never waits for the shell lock.
 std::string shellStatusLine();
+// The shell's state while VitaPlex has it playing, else -1; the same way.
+int shellStateNow();
 
 // gapUs is how late the tick that read the event was. If the system froze the
 // process the moment the user left, the event is only read on the way back,
@@ -600,8 +625,9 @@ int powerCallback(int, int, int powerInfo, void*) {
     return 0;
 }
 
-// For half a minute after PS is held: the BGM owner and mpv's state, logged
-// when either changes. Only the watcher thread calls it.
+// For a minute after PS is held: the BGM owner, mpv's state and the shell's,
+// logged when any of them changes, so what a button on the Music row did
+// shows up. Only the watcher thread calls it.
 void watchQuickMenu(SceInt64 now) {
     static std::string last;
     static SceInt64 lastHeld = 0;
@@ -613,11 +639,12 @@ void watchQuickMenu(SceInt64 now) {
     }
     const MpvPlayer::Snapshot s = MpvPlayer::getInstance().snapshot();
     const std::string owner = bgmOwner();
-    const std::string key = owner + (s.initialized ? stateName(s.state) : "-");
+    const std::string key = owner + (s.initialized ? stateName(s.state) : "-") + " " +
+                            std::to_string(shellStateNow());
     if (key == last) return;
     last = key;
-    brls::Logger::info("[bgaudio] {:.1f}s after PS was held: {}; {}", (now - held) / 1e6, owner,
-                       describeMpv(s));
+    brls::Logger::info("[bgaudio] {:.1f}s after PS was held: {}; {}{}", (now - held) / 1e6, owner,
+                       describeMpv(s), shellStatusLine());
 }
 
 int watcherMain(SceSize, void*) {
@@ -809,6 +836,12 @@ std::string shellStatusLine() {
     std::snprintf(b, sizeof(b), ", system player state %d at %s (%s)", c.state,
                   mmss(c.timeMs).c_str(), hex(c.rc).c_str());
     return b;
+}
+
+int shellStateNow() {
+    std::unique_lock<std::mutex> lock(g_shellMutex, std::try_to_lock);
+    if (!lock.owns_lock() || !g_shellPlaying) return -1;
+    return shellClock().state;
 }
 
 // Must hold g_shellMutex.
@@ -1452,9 +1485,10 @@ bool writeQueue(std::string& what) {
         0LL, MusicController::getInstance().streamStartOffsetMs() +
                  (position > 0 ? (long long)(position * 1000) : 0));
 
-    char head[160];
-    std::snprintf(head, sizeof(head), "written=%.6f\nindex=%d\npositionMs=%lld\nrepeat=%d\nfile=\n",
-                  systemSecs(), at, positionMs, repeatCode(q.getRepeatMode()));
+    char head[192];
+    std::snprintf(head, sizeof(head),
+                  "written=%.6f\nindex=%d\npositionMs=%lld\nrepeat=%d\nfile=\nport=%s\n",
+                  systemSecs(), at, positionMs, repeatCode(q.getRepeatMode()), playerPortName());
     std::string text = head;
     DownloadsManager& downloads = DownloadsManager::getInstance();
     for (std::size_t i = from; i < order.size() && i - from < BGPLAYER_MAX_TRACKS; i++) {
@@ -1827,9 +1861,11 @@ void setOwnPortTest(int choice) {
     g_ownPortTest = choice;
     startWatcher();   // for the lines after PS is held
     const int priority = kOwnPort[choice];
-    brls::Logger::info("[bgaudio] port test: mpv takes the BGM port {}{}",
+    brls::Logger::info("[bgaudio] port test: mpv takes the BGM port {}{}; system player tests {}; "
+                       "the background player {}",
                        priority != 0 ? portName(priority) : "not at all",
-                       choice == 0 ? ", while background playback is on" : "");
+                       choice == 0 ? ", while background playback is on" : "",
+                       portName(shellTestPort()), playerPortName());
     if (!MpvPlayer::getInstance().isPlaying()) return;
     if (choice != 0 || g_keepPlaying)
         holdPortForMpv("port test changed");
@@ -1858,7 +1894,8 @@ void runShellFileTest(Report done) {
         ShellTry r;
         {
             std::lock_guard<std::mutex> lock(g_shellMutex);
-            holdPort(kPortForShell, "system player test");
+            g_testPort = shellTestPort();
+            holdPort(g_testPort, "system player test");
             r = shellTry("File " + baseName(path), path, true, g_service.load());
         }
         std::string report = "System player (" + service + "), local file\n\n" + r.line + "\n\n";
@@ -1939,7 +1976,8 @@ void runShellStreamTest(Report done) {
         }
 
         std::lock_guard<std::mutex> lock(g_shellMutex);
-        holdPort(kPortForShell, "system player test");
+        g_testPort = shellTestPort();
+        holdPort(g_testPort, "system player test");
         brls::Logger::info("[bgaudio] BGM port before the test: {}", bgmState());
 
         // 1 and 2, on each service: the picked one first (its http link also
@@ -2181,7 +2219,7 @@ void runShellStreamTest(Report done) {
         const bool playingNow = replay.played || replay.maybe;
         if (!playingNow) {
             stopShellLocked("test over, nothing left playing");
-            releasePort(kPortForShell, "system player test over");
+            releasePort(g_testPort, "system player test over");
         }
 
         std::string report = "System player, streaming \"" + title + "\"\n\n";
@@ -2257,8 +2295,9 @@ std::string stopShellTest() {
     if (!lock.owns_lock()) return "A test is still running; stop it once it has reported.";
     if (!g_shellInit) return "The system player is not playing anything from VitaPlex.";
     stopShellLocked("stopped from settings");
+    const int port = g_testPort;
     lock.unlock();
-    releasePort(kPortForShell, "system player test over");
+    releasePort(port, "system player test over");
     return "System player stopped.";
 }
 
