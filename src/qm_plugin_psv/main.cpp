@@ -16,11 +16,13 @@
  * plugin fell short (docs/DESIGN_NOTES.md):
  *
  * - It changes SceShell's widgets on SceShell's own UI thread, through PAF's
- *   main thread call list, as ElevenMPV-A's app does its own. Both plugins
- *   changed them from threads of their own, and the buttons, switched on,
- *   kept their off look (builds 2019 to 2025), though nothing the log could
- *   read of them differed from SceShell's lit row. Its own threads watch the
- *   quick menu, take VitaPlex's messages and write the log.
+ *   main thread call list, as ElevenMPV-A's app does its own. Its own threads
+ *   watch the quick menu, take VitaPlex's messages and write the log.
+ * - The buttons, switched on, kept their off look, with ElevenMPV-A's plugin
+ *   and with this one (builds 2019 to 2026), though nothing the timeline read
+ *   of them differed from SceShell's lit row. Build 2026's byte dumps found
+ *   the icons' own alpha at 0.3, a field the timeline did not read. The
+ *   plugin sets it to 1, and puts it back when the row is SceShell's again.
  * - It takes the row 200 ms after the quick menu opens, as ElevenMPV-A's
  *   plugin about does: the song this one put on the lines at once did not
  *   show (build 2022). While the quick menu stays open it puts back what
@@ -372,6 +374,26 @@ struct WidgetPeek : paf::ui::Widget {
         of(w)->m_meta_alpha = alpha;
         of(w)->m_meta_a_sum = parentSum * alpha;
     }
+    // Its own alpha, between its meta alpha's product and its colour (0x1AC):
+    // an int ScePaf-RE's headers leave unnamed (m_unk_1AC), a float its older
+    // ones call alpha. The row's icons had 0.3 there in build 2026, with all
+    // their other alphas at 1.0, and the buttons and their group 1.0.
+    // ElevenMPV-A's app dims a page behind another with SetAlpha(0.3f).
+    static uint32_t ownAlphaRaw(paf::ui::Widget* w) {
+        return (uint32_t)of(w)->m_unk_1AC;
+    }
+    // As a float, or -1 if it is not one from 0 to 1.
+    static float ownAlpha(paf::ui::Widget* w) {
+        const uint32_t raw = ownAlphaRaw(w);
+        float f;
+        sceClibMemcpy(&f, &raw, sizeof(f));
+        return f >= 0.0f && f <= 1.0f ? f : -1.0f;
+    }
+    static void setOwnAlpha(paf::ui::Widget* w, float f) {
+        uint32_t raw;
+        sceClibMemcpy(&raw, &f, sizeof(raw));
+        of(w)->m_unk_1AC = (int32_t)raw;
+    }
 };
 struct ButtonPeek : paf::ui::ButtonBase {
     static int state(paf::ui::ButtonBase* b) {
@@ -411,12 +433,14 @@ int coord(const paf::math::v4& v, int i) {
     return (int)reinterpret_cast<const float*>(&v)[i];
 }
 
-// A colour as the RGBA bytes GetColor32 gives.
-uint32_t rgba(const paf::math::v4& v) {
+// A colour (red, green, blue, alpha) as the console keeps one in 32 bits,
+// alpha first (kLitColor).
+uint32_t argb(const paf::math::v4& v) {
     const float* f = reinterpret_cast<const float*>(&v);
+    const int order[4] = {3, 0, 1, 2};
     uint32_t c = 0;
     for (int i = 0; i < 4; i++) {
-        const float x = f[i] < 0.0f ? 0.0f : f[i] > 1.0f ? 1.0f : f[i];
+        const float x = f[order[i]] < 0.0f ? 0.0f : f[order[i]] > 1.0f ? 1.0f : f[order[i]];
         c = (c << 8) | (uint32_t)(x * 255.0f + 0.5f);
     }
     return c;
@@ -539,20 +563,25 @@ int buttonState(paf::ui::ButtonBase* b) {
 // ── Lighting the buttons and icons ──────────────────────────────────────────
 // SceShell draws the row's buttons and their icons faded with no music of its
 // own, and opaque and white with its Music app playing (screenshots, build
-// 2023), with every colour, alpha, texture and shader the log reads alike
-// either way (builds 2023 to 2025). Should a colour or alpha still turn up
-// faded, the widget's colour is set (SetColor_core), and a draw object's own
-// colour after it, to kLitColor; what was changed is put back when the row
-// is SceShell's again, as long as that colour is still the plugin's.
-// White, but for an alpha of 0xFE nobody would see: kept apart from a white
-// SceShell sets itself.
+// 2023), with every colour, alpha, texture and shader the timeline reads alike
+// either way (builds 2023 to 2025). Build 2026's byte dumps found the icons'
+// own alpha (WidgetPeek::ownAlpha) at 0.3. A button or icon whose own alpha,
+// meta alpha or colour is faded has its colour set (SetColor_core) and those
+// alphas set to 1; a faded draw object's colour is set to kLitColor. What was
+// changed is put back when the row is SceShell's again, where it is still
+// the plugin's. Colours have their alpha in the top byte on the console,
+// whatever the headers' GetColor says: the quick menu's background reads
+// FF282828, the volume slider 4CCCCCCC as it fades in, the song's lines draw
+// with D8FFFFFF and CCFFFFFF (build 2026). kLitColor is white with a last
+// byte of 0xFE nobody would see: kept apart from a white SceShell sets.
 const uint32_t kLitColor = 0xFFFFFFFE;
 const int kLitMax = 6;
 
 struct Lit {
     paf::ui::Widget* w;
-    paf::graph::DrawObj* d;
-    uint32_t was;  // its draw object's colour as SceShell had it
+    paf::graph::DrawObj* d;  // its draw object, if its colour was set
+    uint32_t was;            // that colour as SceShell had it
+    float alphaWas;          // its own alpha as SceShell had it, -1 if left
 };
 Lit g_lit[kLitMax];  // what the plugin lit, while it is to be put back
 int g_litCount;
@@ -567,45 +596,60 @@ bool drawLayoutOk(paf::ui::Widget* w, paf::graph::DrawObj* d) {
     return dw >= -1 && dw <= 1 && dh >= -1 && dh <= 1 && coord(size, 0) > 0;
 }
 
-// A faded white or grey: red, green and blue alike, not opaque white, not
+// A faded white or grey: its three colours alike, not opaque white, not
 // nearly transparent, and not the plugin's own.
 bool faded(uint32_t c) {
-    const uint32_t r = c >> 24, g = (c >> 16) & 0xFF, b = (c >> 8) & 0xFF, a = c & 0xFF;
-    return r == g && g == b && a >= 0x10 && c != 0xFFFFFFFF && c != kLitColor;
+    const uint32_t a = c >> 24, x = (c >> 16) & 0xFF, y = (c >> 8) & 0xFF, z = c & 0xFF;
+    return x == y && y == z && a >= 0x10 && c != 0xFFFFFFFF && c != kLitColor;
 }
 
-void rememberLit(paf::ui::Widget* w, paf::graph::DrawObj* d, uint32_t was) {
+// The record of a widget the plugin lit, made the first time; NULL if full.
+Lit* litEntry(paf::ui::Widget* w) {
     for (int i = 0; i < g_litCount; i++)
-        if (g_lit[i].d == d) return;  // what SceShell had is kept already
-    if (g_litCount == kLitMax) return;
-    g_lit[g_litCount].w = w;
-    g_lit[g_litCount].d = d;
-    g_lit[g_litCount].was = was;
-    g_litCount++;
+        if (g_lit[i].w == w) return &g_lit[i];
+    if (g_litCount == kLitMax) return NULL;
+    Lit& l = g_lit[g_litCount++];
+    l.w = w;
+    l.d = NULL;
+    l.was = 0;
+    l.alphaWas = -1.0f;
+    return &l;
 }
 
 // One button or icon lit, logged if asked; true when it changed anything.
-// A widget hidden by its colour or meta alpha is left so.
+// A widget hidden by its colour or an alpha is left so.
 bool light(paf::ui::Widget* w, const char* name, int logIt) {
     if (!w || !g_layoutOk) return false;
     const uint32_t color = w->GetColor32();
     const float meta = w->GetMetaAlpha();
-    if ((color & 0xFF) < 0x10 || meta < 0.05f) return false;
+    const float own = WidgetPeek::ownAlpha(w);
+    if ((color >> 24) < 0x10 || meta < 0.05f || (own >= 0.0f && own < 0.05f)) return false;
     paf::graph::DrawObj* d = w->GetDrawObj(0);
     const uint32_t drawn = d ? DrawPeek::color(d) : 0;
     const bool dimWidget = color != 0xFFFFFFFF || meta < 0.99f;
+    const bool dimOwn = own >= 0.0f && own < 0.99f;
     const bool dimDrawn = d && faded(drawn);
-    if (!dimWidget && !dimDrawn) return false;
+    if (!dimWidget && !dimOwn && !dimDrawn) return false;
     if (meta < 0.99f) WidgetPeek::setMetaAlpha(w, 1.0f);
     const paf::math::v4 c = white();
     w->SetColor_core(c);
+    // Its own alpha after SetColor_core, should that call set it too.
+    if (dimOwn) {
+        Lit* l = litEntry(w);
+        if (l && l->alphaWas < 0.0f) l->alphaWas = own;
+        WidgetPeek::setOwnAlpha(w, 1.0f);
+    }
     const uint32_t passed = d ? DrawPeek::color(d) : 0;
     // A draw object that was faded is set by hand even if SetColor_core lit
     // it: kLitColor marks it as the plugin's, to be put back.
     bool direct = false;
     if (dimDrawn) {
-        if (drawLayoutOk(w, d)) {
-            rememberLit(w, d, drawn);
+        Lit* l = drawLayoutOk(w, d) ? litEntry(w) : NULL;
+        if (l) {
+            if (!l->d) {
+                l->d = d;
+                l->was = drawn;
+            }
             DrawPeek::setColor(d, kLitColor);
             direct = true;
         } else if (g_drawLayoutLogged < 3) {
@@ -616,10 +660,11 @@ bool light(paf::ui::Widget* w, const char* name, int logIt) {
         }
     }
     if (logIt)
-        logLine("row: %s lit: color %08X, meta alpha %d%%, drawn %08X; after SetColor_core "
-                "drawn %08X%s",
-                name, (unsigned)color, percent(meta), (unsigned)drawn, (unsigned)passed,
-                direct ? ", then set to FFFFFFFE itself" : "");
+        logLine("row: %s lit: color %08X, meta alpha %d%%, own alpha %d%%, drawn %08X; after "
+                "SetColor_core drawn %08X%s%s",
+                name, (unsigned)color, percent(meta), percent(own), (unsigned)drawn,
+                (unsigned)passed, dimOwn ? ", own alpha set to 100%" : "",
+                direct ? ", drawn set to FFFFFFFE" : "");
     return true;
 }
 
@@ -633,9 +678,10 @@ bool lightAll(int logIt) {
     return changed;
 }
 
-// Puts back the draw objects' colours the plugin changed, where they are still
-// its: with the row's widgets found this tick (findRow). They must be the
-// widgets lit, so a row SceShell made anew is left alone.
+// Puts back the own alphas and draw objects' colours the plugin changed,
+// where they are still its: with the row's widgets found this tick
+// (findRow). They must be the widgets lit, so a row SceShell made anew is
+// left alone.
 void unlightAll(const char* why) {
     if (!g_litCount) return;
     int back = 0;
@@ -644,9 +690,17 @@ void unlightAll(const char* why) {
         paf::ui::Widget* const found[6] = {g_iconRew, g_iconPlay, g_iconFf, g_rew, g_play, g_ff};
         bool same = false;
         for (int j = 0; j < 6 && !same; j++) same = found[j] == l.w;
-        if (!same || l.w->GetDrawObj(0) != l.d || DrawPeek::color(l.d) != kLitColor) continue;
-        DrawPeek::setColor(l.d, l.was);
-        back++;
+        if (!same) continue;
+        bool put = false;
+        if (l.alphaWas >= 0.0f && WidgetPeek::ownAlpha(l.w) >= 0.99f) {
+            WidgetPeek::setOwnAlpha(l.w, l.alphaWas);
+            put = true;
+        }
+        if (l.d && l.w->GetDrawObj(0) == l.d && DrawPeek::color(l.d) == kLitColor) {
+            DrawPeek::setColor(l.d, l.was);
+            put = true;
+        }
+        if (put) back++;
     }
     logLine("row: %d of %d faded again as SceShell had them (%s)", back, g_litCount, why);
     g_litCount = 0;
@@ -929,6 +983,7 @@ struct Snap {
     int width, height;
     int enabled, btnState;  // -1 if not a button
     uint32_t disableColor;  // a button's colour for dimmed, 0 for none
+    uint32_t ownAlpha;      // its own alpha's bits (WidgetPeek::ownAlpha)
     const void* tex;
     int texWidth, texHeight;
     int isText;
@@ -956,6 +1011,7 @@ void snapWidget(paf::ui::Widget* w, Snap* s) {
     s->meta = percent(w->GetMetaAlpha());
     s->metaSum = percent(WidgetPeek::metaSum(w));
     s->activated = WidgetPeek::activated(w);
+    s->ownAlpha = WidgetPeek::ownAlphaRaw(w);
     s->width = coord(WidgetPeek::size(w), 0);
     s->height = coord(WidgetPeek::size(w), 1);
     s->enabled = s->btnState = -1;
@@ -982,7 +1038,7 @@ void snapWidget(paf::ui::Widget* w, Snap* s) {
         s->enabled = b->IsEnable();
         s->btnState = ButtonPeek::state(b);
         const paf::math::v4* dimmed = b->GetDisableColor();
-        s->disableColor = dimmed ? rgba(*dimmed) : 0;
+        s->disableColor = dimmed ? argb(*dimmed) : 0;
     }
     // Planes and app icons by their type's name: Plane::TypeName, which
     // IsInherit would want, is an import the plugin does without.
@@ -1011,8 +1067,18 @@ int snapAll(Snap* out) {
     return n;
 }
 
+// A widget's own alpha for the log, if it is not 1: as a per cent, or its bits
+// if it is not a float from 0 to 1.
+void addOwnAlpha(Line& l, uint32_t raw) {
+    float f;
+    sceClibMemcpy(&f, &raw, sizeof(f));
+    if (f >= 0.0f && f <= 1.0f) l.add(", own alpha %d%%", percent(f));
+    else l.add(", own alpha field %08X", (unsigned)raw);
+}
+
 void logSnap(const char* when, const Snap& s) {
     Line l;
+    if (s.ownAlpha != 0x3F800000) addOwnAlpha(l, s.ownAlpha);
     if (s.enabled >= 0) {
         l.add(", button enabled %d state %d", s.enabled, s.btnState);
         if (s.disableColor) l.add(", dimmed color %08X", (unsigned)s.disableColor);
@@ -1040,6 +1106,7 @@ void logChange(int ms, const Snap& was, const Snap& now) {
         l.add(", show %d%%/%d%%", now.show, now.showSum);
     if (was.meta != now.meta || was.metaSum != now.metaSum)
         l.add(", meta %d%%/%d%%", now.meta, now.metaSum);
+    if (was.ownAlpha != now.ownAlpha) addOwnAlpha(l, now.ownAlpha);
     if (was.activated != now.activated) l.add(", %s", now.activated ? "on" : "off");
     if (was.width != now.width || was.height != now.height)
         l.add(", size %dx%d", now.width, now.height);

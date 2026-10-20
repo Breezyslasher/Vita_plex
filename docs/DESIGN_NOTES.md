@@ -2281,6 +2281,45 @@ Build 2026:
   as are their libraries, `ScePafMisc` and `ScePafGraphics`.
 - **Protocol 5**: pipes `VitaPlexQM5::…`, module `VitaPlexQM5`.
 
+**Build 2026 on the console: the cover shows, the buttons still look off**
+(logs `f9ff7735`, the plugin's, and `5bd97e89`, VitaPlex BG's, and a
+screenshot of the row).
+
+- The cover showed in place of the heading's ♫, at 64x64. VitaPlex BG made it
+  in 116 ms; the plugin loaded it in 51–54 ms on SceShell's UI thread.
+- SceShell's UI thread called the plugin from its first frame, and the
+  plugin took the row there, 204 and 240 ms after the two opens. Every press
+  worked, and ⏸ and ▶ followed them. The buttons and icons still looked
+  off, so the thread was not it.
+- In the byte dumps of the plugin's row, the previous icon's field at 0x1AC
+  read 0.3 (`3E99999A`), with its show and meta alphas and their products at
+  1.0. The button and its group read 1.0 there. ScePaf-RE's headers have
+  that field as an unnamed int (`m_unk_1AC`), between the meta alpha's
+  product and the colour; its older headers call it `alpha`, a float.
+  ElevenMPV-A's app dims a page behind another with `SetAlpha(0.3f)`. The
+  timeline had never read it.
+- The row's parents, up to the quick menu's page: its group (728x70), a box,
+  a scroll view's parent, a scroll view, a plane, the page. Every alpha was
+  100%. The box and the scroll view read colour 00000000, the plane
+  FF282828, the rest FFFFFFFF.
+- Colours keep their alpha in the top byte, whatever the headers' `GetColor`
+  says: the background plane's FF282828 is the quick menu's dark grey, and
+  the volume slider read 4CCCCCCC as the quick menu opened, then FFFFFFFF.
+- The second line, "Dolly Parton / Blue Smoke", was cut at the line's 290
+  pixels.
+- No open had the row SceShell's, so there are no dumps of its off or lit
+  row yet.
+
+Build 2028:
+
+- **The icons' own alpha.** The lit look sets a button's or icon's own alpha
+  (0x1AC) to 1 where it reads below 1, after `SetColor_core`. It puts
+  SceShell's value back when the row is given back, where it still reads 1.
+  The timeline logs each widget's own alpha where it is not 100%, and its
+  changes, so SceShell's off and lit rows show theirs.
+- **Colour bytes.** The plugin reads alpha from a colour's top byte when it
+  looks for faded or hidden widgets.
+
 **The header took longer than the download** (log `2114643f`). This
 hand-over's first song was OGG, so the player fetched the server's MP3 (6.77
 MB in 7.6 s). Inspecting it and copying it behind a Xing header then took

@@ -22,12 +22,13 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
 - **Buttons:** ElevenMPV-A's plugin switches the row's buttons on with
   `ButtonBase::Enable(false)`. Presses got through, but the buttons stayed
   dimmed. They stayed dimmed with `Enable(true)` too: their icons are planes
-  of their own beside them, and SceShell fades buttons and icons in what
-  they are drawn with. By default this one switches the buttons on and
-  lights their draw objects, and puts SceShell's colours back when the row
-  is SceShell's again. VitaPlex BG's settings can pick the other ways
-  (`QM_LOOK_*`), and the log has each button's state and colours before and
-  after.
+  of their own beside them, whose own alpha (a widget's float at 0x1AC,
+  `m_unk_1AC` in ScePaf-RE's headers) SceShell leaves at 0.3 (build 2026).
+  By default this one switches the buttons on and sets any faded own alpha,
+  meta alpha or colour of the buttons and icons to full, and puts
+  SceShell's back when the row is SceShell's again. VitaPlex BG's settings
+  can pick the other ways (`QM_LOOK_*`), and the log has each button's state
+  and colours before and after.
 - **Where:** it changes SceShell's widgets on SceShell's own UI thread,
   through PAF's `common::MainThreadCallList`, as ElevenMPV-A's app changes
   its own (build 2026). ElevenMPV-A's plugin, and this one up to build 2025,
