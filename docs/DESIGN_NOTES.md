@@ -2269,9 +2269,13 @@ Build 2026:
   comes back when the row is given back, when another owner takes it, or if
   a cover will not load.
 - **Byte dumps.** Once a boot each, a second after the quick menu opens, the
-  previous button and its icon, and their draw objects, are logged byte for
-  byte: with SceShell's row off, with it lit, and with the row the plugin's.
-  What lights SceShell's row is in what differs between its two.
+  previous button and its icon, their draw objects, and the button's parent
+  group are logged byte for byte: with SceShell's row off, with it lit, and
+  with the row the plugin's. The button's parents up to the quick menu's
+  root are logged as the timeline logs widgets, since a group's colour or
+  alpha would fade everything in it, and the timeline lists no groups. What
+  lights SceShell's row is in what differs between its two. A dump goes out
+  a part a tick, about 20 lines each, so the log's ring keeps up.
 - **Imports.** `MainThreadCallList::Register`, `LocalFile::Open` and
   `Surface::Load` are new, 23 in all. All three are in ElevenMPV-A's app,
   as are their libraries, `ScePafMisc` and `ScePafGraphics`.

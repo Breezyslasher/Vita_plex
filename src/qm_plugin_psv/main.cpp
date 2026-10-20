@@ -1126,13 +1126,16 @@ void timelineQuiet() {
 
 // ── One button and its icon, byte for byte ──────────────────────────────────
 // Once a boot each, a second after the quick menu opens: the previous button
-// and its icon, the widgets and their draw objects, with SceShell's row off,
-// SceShell's row lit, and the row the plugin's. Nothing the timeline reads
-// differed between SceShell's lit row and the plugin's (build 2025), so what
-// lights SceShell's is in what differs here between its two, and not between
-// its off one and the plugin's. Reading past a widget's end reads only the
-// heap after it.
-int g_dumped[3];      // SceShell's off, SceShell's lit, the plugin's
+// and its icon, the widgets and their draw objects, and the button's parents,
+// with SceShell's row off, SceShell's row lit, and the row the plugin's.
+// Nothing the timeline reads differed between SceShell's lit row and the
+// plugin's (build 2025), so what lights SceShell's is in what differs here
+// between its two, and not between its off one and the plugin's. A part a
+// tick, so the log's ring keeps up. Reading past a widget's end reads only
+// the heap after it.
+int g_dumped[3];      // SceShell's off, SceShell's lit, the plugin's: done
+int g_dumpKind = -1;  // the one under way this open
+int g_dumpPart;       // its next part
 int g_dumpedThisOpen;
 
 void dumpBytes(const char* tag, const char* what, const void* p, int size) {
@@ -1147,21 +1150,52 @@ void dumpBytes(const char* tag, const char* what, const void* p, int size) {
 }
 
 void dumpTick(SceUInt64 now, bool found) {
-    if (!found || g_dumpedThisOpen || !g_layoutOk || !g_iconRew || msOpen(now) < 1000) return;
-    int kind;
-    if (g_applied) kind = 2;
-    else if (!g_active) kind = static_cast<paf::ui::ButtonBase*>(g_play)->IsEnable() ? 1 : 0;
-    else return;
-    if (g_dumped[kind]) return;
-    g_dumped[kind] = 1;
-    g_dumpedThisOpen = 1;
+    if (!found || !g_layoutOk || !g_iconRew) return;
+    if (g_dumpKind < 0) {
+        if (g_dumpedThisOpen || msOpen(now) < 1000) return;
+        int kind;
+        if (g_applied) kind = 2;
+        else if (!g_active) kind = static_cast<paf::ui::ButtonBase*>(g_play)->IsEnable() ? 1 : 0;
+        else return;
+        if (g_dumped[kind]) return;
+        g_dumpedThisOpen = 1;
+        g_dumpKind = kind;
+        g_dumpPart = 0;
+    }
     const char* const tags[3] = {"off", "lit", "ours"};
-    logLine("dump %s: previous button %p, its icon %p", tags[kind], (void*)g_rew,
-            (void*)g_iconRew);
-    dumpBytes(tags[kind], "button", g_rew, 0x2C0);
-    dumpBytes(tags[kind], "button's draw", g_rew->GetDrawObj(0), 0xE0);
-    dumpBytes(tags[kind], "icon", g_iconRew, 0x290);
-    dumpBytes(tags[kind], "icon's draw", g_iconRew->GetDrawObj(0), 0xE0);
+    const char* tag = tags[g_dumpKind];
+    switch (g_dumpPart++) {
+    case 0:
+        logLine("dump %s: previous button %p, its icon %p", tag, (void*)g_rew, (void*)g_iconRew);
+        dumpBytes(tag, "button", g_rew, 0x2C0);
+        break;
+    case 1:
+        dumpBytes(tag, "button's draw", g_rew->GetDrawObj(0), 0xE0);
+        dumpBytes(tag, "icon's draw", g_iconRew->GetDrawObj(0), 0xE0);
+        break;
+    case 2:
+        dumpBytes(tag, "icon", g_iconRew, 0x290);
+        break;
+    case 3:
+        dumpBytes(tag, "button's parent", g_rew->GetParent(), 0x290);
+        break;
+    default: {
+        // Its parents, up to the quick menu's root, which the timeline
+        // leaves out: a colour or alpha of a group's would fade all in it.
+        paf::ui::Widget* parent = g_rew->GetParent();
+        for (int depth = 1; parent && depth <= 8; depth++, parent = parent->GetParent()) {
+            Snap s;
+            snapWidget(parent, &s);
+            char when[32];
+            sceClibSnprintf(when, sizeof(when), "dump %s parent %d:", tag, depth);
+            logSnap(when, s);
+            if (parent == g_impose) break;
+        }
+        g_dumped[g_dumpKind] = 1;
+        g_dumpKind = -1;
+        break;
+    }
+    }
 }
 
 // ── Taking, keeping and giving back the row ─────────────────────────────────
@@ -1262,6 +1296,7 @@ void rowTick(SceUInt64 now) {
         g_snapCount = 0;
         g_timeline = g_timelineDue;
         g_dumpedThisOpen = 0;
+        g_dumpKind = -1;  // a dump the last open cut short starts again
         g_lastTickUs = 0;
     }
     if (!g_open) {
