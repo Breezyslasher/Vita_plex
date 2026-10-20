@@ -22,7 +22,8 @@
  *   and with this one (builds 2019 to 2026), though nothing the timeline read
  *   of them differed from SceShell's lit row. Build 2026's byte dumps found
  *   the icons' own alpha at 0.3, a field the timeline did not read. The
- *   plugin sets it to 1, and puts it back when the row is SceShell's again.
+ *   plugin sets it to 1, which lights them (build 2028), and puts it back
+ *   when the row is SceShell's again.
  * - It takes the row 200 ms after the quick menu opens, as ElevenMPV-A's
  *   plugin about does: the song this one put on the lines at once did not
  *   show (build 2022). While the quick menu stays open it puts back what
@@ -33,9 +34,7 @@
  *   hold SceShell up, and the row is given back by itself when no process has
  *   asked for it again in QM_ACTIVE_TIMEOUT_S.
  * - It logs the row's widgets as the quick menu opens and their changes for
- *   3 s, for the first opens of a boot, whoever has the row; and once a boot
- *   each, one button and its icon byte for byte, with SceShell's row off,
- *   SceShell's row lit, and the row the plugin's.
+ *   3 s, for the first opens of a boot, whoever has the row.
  *
  * Built with vitasdk against the PAF headers scripts/vita/fetch_paf_headers.sh
  * fetches; its PAF imports are in paf_stubs.S. Logs to
@@ -1191,80 +1190,6 @@ void timelineQuiet() {
     if (g_timeline && g_rowGroup) g_snapCount = snapAll(g_snaps);
 }
 
-// ── One button and its icon, byte for byte ──────────────────────────────────
-// Once a boot each, a second after the quick menu opens: the previous button
-// and its icon, the widgets and their draw objects, and the button's parents,
-// with SceShell's row off, SceShell's row lit, and the row the plugin's.
-// Nothing the timeline reads differed between SceShell's lit row and the
-// plugin's (build 2025), so what lights SceShell's is in what differs here
-// between its two, and not between its off one and the plugin's. A part a
-// tick, so the log's ring keeps up. Reading past a widget's end reads only
-// the heap after it.
-int g_dumped[3];      // SceShell's off, SceShell's lit, the plugin's: done
-int g_dumpKind = -1;  // the one under way this open
-int g_dumpPart;       // its next part
-int g_dumpedThisOpen;
-
-void dumpBytes(const char* tag, const char* what, const void* p, int size) {
-    if (!p) return;
-    const uint32_t* w = (const uint32_t*)p;
-    for (int off = 0; off < size; off += 32) {
-        const uint32_t* r = w + off / 4;
-        logLine("dump %s %s +%03X: %08X %08X %08X %08X %08X %08X %08X %08X", tag, what, off,
-                (unsigned)r[0], (unsigned)r[1], (unsigned)r[2], (unsigned)r[3], (unsigned)r[4],
-                (unsigned)r[5], (unsigned)r[6], (unsigned)r[7]);
-    }
-}
-
-void dumpTick(SceUInt64 now, bool found) {
-    if (!found || !g_layoutOk || !g_iconRew) return;
-    if (g_dumpKind < 0) {
-        if (g_dumpedThisOpen || msOpen(now) < 1000) return;
-        int kind;
-        if (g_applied) kind = 2;
-        else if (!g_active) kind = static_cast<paf::ui::ButtonBase*>(g_play)->IsEnable() ? 1 : 0;
-        else return;
-        if (g_dumped[kind]) return;
-        g_dumpedThisOpen = 1;
-        g_dumpKind = kind;
-        g_dumpPart = 0;
-    }
-    const char* const tags[3] = {"off", "lit", "ours"};
-    const char* tag = tags[g_dumpKind];
-    switch (g_dumpPart++) {
-    case 0:
-        logLine("dump %s: previous button %p, its icon %p", tag, (void*)g_rew, (void*)g_iconRew);
-        dumpBytes(tag, "button", g_rew, 0x2C0);
-        break;
-    case 1:
-        dumpBytes(tag, "button's draw", g_rew->GetDrawObj(0), 0xE0);
-        dumpBytes(tag, "icon's draw", g_iconRew->GetDrawObj(0), 0xE0);
-        break;
-    case 2:
-        dumpBytes(tag, "icon", g_iconRew, 0x290);
-        break;
-    case 3:
-        dumpBytes(tag, "button's parent", g_rew->GetParent(), 0x290);
-        break;
-    default: {
-        // Its parents, up to the quick menu's root, which the timeline
-        // leaves out: a colour or alpha of a group's would fade all in it.
-        paf::ui::Widget* parent = g_rew->GetParent();
-        for (int depth = 1; parent && depth <= 8; depth++, parent = parent->GetParent()) {
-            Snap s;
-            snapWidget(parent, &s);
-            char when[32];
-            sceClibSnprintf(when, sizeof(when), "dump %s parent %d:", tag, depth);
-            logSnap(when, s);
-            if (parent == g_impose) break;
-        }
-        g_dumped[g_dumpKind] = 1;
-        g_dumpKind = -1;
-        break;
-    }
-    }
-}
-
 // ── Taking, keeping and giving back the row ─────────────────────────────────
 // Takes the row, the quick menu having been open kTakeAfterUs. true when
 // taken.
@@ -1362,8 +1287,6 @@ void rowTick(SceUInt64 now) {
         g_rowGroup = g_headingGroup = NULL;
         g_snapCount = 0;
         g_timeline = g_timelineDue;
-        g_dumpedThisOpen = 0;
-        g_dumpKind = -1;  // a dump the last open cut short starts again
         g_lastTickUs = 0;
     }
     if (!g_open) {
@@ -1390,7 +1313,6 @@ void rowTick(SceUInt64 now) {
     else if (!g_active && found)
         changed |= restoreRow();
     if (changed) timelineQuiet();
-    dumpTick(now, found);
 }
 
 // PAF's main thread call list's: SceShell's UI thread, each time round its

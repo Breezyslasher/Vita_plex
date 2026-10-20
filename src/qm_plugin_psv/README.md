@@ -25,8 +25,8 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   of their own beside them, whose own alpha (a widget's float at 0x1AC,
   `m_unk_1AC` in ScePaf-RE's headers) SceShell leaves at 0.3 (build 2026).
   By default this one switches the buttons on and sets any faded own alpha,
-  meta alpha or colour of the buttons and icons to full, and puts
-  SceShell's back when the row is SceShell's again. VitaPlex BG's settings
+  meta alpha or colour of the buttons and icons to full, which lights them
+  (build 2028), and puts SceShell's back when the row is SceShell's again. VitaPlex BG's settings
   can pick the other ways (`QM_LOOK_*`), and the log has each button's state
   and colours before and after.
 - **Where:** it changes SceShell's widgets on SceShell's own UI thread,
@@ -57,10 +57,9 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   before in `qm-plugin.prev.log`. For the first 12 opens of a boot it lists
   the widgets of the Music row and its heading, with their textures and draw
   objects, then their changes for 3 s, whoever has the row. Opens with the
-  row SceShell's go on being logged until its own row has been seen lit.
-  Once a boot each, it dumps the previous button and its icon byte for byte,
-  with SceShell's row off, with it lit, and with the row the plugin's. It
-  also logs the BGM port as SceShell reads it.
+  row SceShell's go on being logged until its own row has been seen lit,
+  each widget with its own alpha where that is not 100%. It also logs the
+  BGM port as SceShell reads it.
 - **No static constructors:** there is no C runtime to run them, so a global
   object that needs one stays all zeros. The build fails if it has any.
 

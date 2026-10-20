@@ -2320,6 +2320,23 @@ Build 2028:
 - **Colour bytes.** The plugin reads alpha from a colour's top byte when it
   looks for faded or hidden widgets.
 
+**Build 2028 on the console: the buttons light** (logs `e1fa293a`, the
+plugin's, and `50d172f7`, VitaPlex BG's, and a screenshot of the row).
+
+- As SceShell set the row up, all four icons' own alpha read 30%, the
+  pause icon's too. The plugin set the three it lights to 100% as it took
+  the row, and the screenshot has ⏮ ⏸ ⏭ white, with the cover, the title,
+  and "Various Artists / FIFA 14".
+- SceShell uses that field itself. The volume slider opened at own alpha
+  30% and colour 4CCCCCCC, and SceShell set both to full 108 ms later. The
+  song lines' own alpha read 58% and 46%, then 0% at that time, until the
+  plugin put the song on them. "There are no songs." read 0%: that is why it
+  never shows, though every other alpha of it read 100%.
+
+So the quick menu's Music row works for VitaPlex: the song, its cover, ⏸ and
+▶ as it plays, and buttons that look and work as SceShell's own. Build 2029
+drops the byte dumps; the timeline stays.
+
 **The header took longer than the download** (log `2114643f`). This
 hand-over's first song was OGG, so the player fetched the server's MP3 (6.77
 MB in 7.6 s). Inspecting it and copying it behind a Xing header then took
