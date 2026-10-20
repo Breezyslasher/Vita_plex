@@ -2591,6 +2591,104 @@ std::string stopShellTest() {
     return "System player stopped.";
 }
 
+// ── SceShell playing a file itself ───────────────────────────────────────
+//
+// The background player plays through the shell's music service from a
+// process of its own, which the system ends as a game with extended memory
+// starts, and the queue stops after the song then playing. SceShell is never
+// ended: the first step of moving the queue into it is whether VitaPlex's
+// quick menu plugin, inside SceShell, can drive the same service
+// (QM_CMD_MUSIC_TEST). The port is held as for the tests above, as the
+// background player holds it. The plugin plays for QM_MUSIC_TEST_S at most
+// and logs as it goes; its lines are read back from its log.
+
+// The plugin's "music test:" lines written past `from` bytes, and whether
+// the last of them says it is done.
+std::string pluginTestLines(long from, bool* finished) {
+    std::string out;
+    FILE* f = std::fopen(QM_PLUGIN_LOG, "rb");
+    if (!f) return out;
+    std::fseek(f, from, SEEK_SET);
+    char line[512];
+    while (std::fgets(line, sizeof(line), f)) {
+        if (!std::strstr(line, "music test:")) continue;
+        out += line;
+        if (std::strstr(line, "music test: done")) *finished = true;
+    }
+    std::fclose(f);
+    return out;
+}
+
+long fileLength(const char* path) {
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return 0;
+    std::fseek(f, 0, SEEK_END);
+    const long n = std::ftell(f);
+    std::fclose(f);
+    return n > 0 ? n : 0;
+}
+
+void runPluginMusicTest(Report done) {
+    if (g_shellBusy.exchange(true)) {
+        done("A system player test is already running.");
+        return;
+    }
+    startWatcher();
+    const std::string path = pickLocalFile();
+    if (path.empty()) {
+        g_shellBusy = false;
+        done("No file to try. Download a track that is MP3, M4A, AAC or WAV, or put a "
+             "test.mp3 in " + platformPath("") + ", then run this again.");
+        return;
+    }
+    pauseMpvForShell();
+    platform::launchThread([done, path]() {
+        const std::string title = "SceShell plays a file itself (an experiment)\n\n" +
+                                  baseName(path) + "\n\n";
+        int port;
+        {
+            std::lock_guard<std::mutex> lock(g_shellMutex);
+            holdPortForTest();
+            port = g_testPort;
+        }
+        char what[320] = "";
+        int rc = 0;
+        if (!qmIsOpen()) {
+            rc = qmOpen(what, sizeof(what));
+            brls::Logger::info("[bgaudio] SceShell music test: {} ({})", what, hex(rc));
+        }
+        if (rc < 0 || !qmIsOwn()) {
+            if (port != 0) releasePort(port, "SceShell music test not run");
+            finishTest(done, title + "VitaPlex's quick menu plugin is not in SceShell" +
+                                 (what[0] ? std::string(": ") + what : std::string(".")));
+            return;
+        }
+        const long from = fileLength(QM_PLUGIN_LOG);
+        rc = qmMusicTest(path.c_str());
+        brls::Logger::info("[bgaudio] SceShell music test: {} sent to the plugin, the BGM port "
+                           "held {}: {}",
+                           path, port != 0 ? portName(port) : "by nothing of VitaPlex's",
+                           hex(rc));
+        std::string lines;
+        bool finished = false;
+        for (int i = 0; rc >= 0 && i < (QM_MUSIC_TEST_S + 15) * 2 && !finished; i++) {
+            sceKernelDelayThread(500 * 1000);
+            lines = pluginTestLines(from, &finished);
+        }
+        if (port != 0) releasePort(port, "SceShell music test over");
+        brls::Logger::info("[bgaudio] SceShell music test, the plugin's lines:\n{}", lines);
+        std::string report = title;
+        if (rc < 0)
+            report += "The plugin could not be asked: " + hex(rc);
+        else
+            report += lines.empty() ? std::string("Nothing from the plugin.") : lines;
+        if (rc >= 0 && !finished)
+            report += "\n\nThe plugin has not said it is done: its last line is the step it "
+                      "stopped at.";
+        finishTest(done, report);
+    });
+}
+
 // ── BG Test 11 ───────────────────────────────────────────────────────────
 //
 // BG Test 10 showed a small system-mode app downloading songs from the server

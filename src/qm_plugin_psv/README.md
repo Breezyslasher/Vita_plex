@@ -50,6 +50,16 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   `Surface::Load`) into power_manage_plugin's texture pool, and the icon
   keeps the only reference to it. The icon gets its ♫ back when the row is
   given back or a cover will not load.
+- **Playing from inside SceShell (a test, build 2032):** given a song's path
+  (`QM_CMD_MUSIC_TEST`), a thread of its own, created on the first test,
+  drives SceShell's music service
+  as the background player does through libShellAudio. It plays the song for
+  up to 30 s, and logs every call's code under "music test:". It finds the
+  service's client (`sceShellSvcGetSvcObj`) at run time with taiHEN's
+  `taiGetModuleExportFunc` (`taihen_stub.S`), and loads
+  `vs0:sys/external/libshellsvc.suprx` into SceShell if no module there
+  has it. That is the first step of moving the background music into
+  SceShell (docs/DESIGN_NOTES.md, build 2032).
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system

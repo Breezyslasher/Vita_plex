@@ -2381,6 +2381,68 @@ kernel plugin that hooks SceAudio's output calls in every process to
 equalize them, and an app whose Music Preview decodes a file itself onto the
 BGM port (`sceAppMgrAcquireBgmPort`) until stopped or closed.
 
+Build 2032: **SceShell plays a file itself (an experiment).** The background
+player is a process of its own. The system ends it as an app with extended
+memory starts (35 of the 213 apps installed here), and as VitaPlex BG opens.
+SceShell is never ended, and the quick menu plugin is already in it. So the
+music could move there, in two steps:
+
+1. The plugin plays the queue's songs that are already on the memory card,
+   and goes on to the next song itself. The player and VitaPlex BG download
+   ahead of it.
+2. If Sony's HTTP library reaches the server from inside SceShell, the
+   plugin downloads too, and the player goes.
+
+Before either, code in SceShell has to drive the shell's music service. The
+background player calls that service from outside, through libShellAudio
+(`lib/libshellaudio`). Settings > "Test: SceShell Plays a File Itself" tries
+it from inside, with a downloaded song:
+
+- VitaPlex BG holds the BGM port, as for its system player tests (the BGM
+  port test picker decides how). It loads the plugin if it is not in
+  SceShell yet, and sends the song's path (`QM_CMD_MUSIC_TEST`, protocol 6,
+  pipes `VitaPlexQM6::*`).
+- The plugin's music thread, created the first time a test is asked for,
+  finds `sceShellSvcGetSvcObj` (library
+  `0x773242C7`, NID `0xB31E7F1C`) with taiHEN's `taiGetModuleExportFunc`,
+  in a module of SceShell's named SceShellSvc or SceShellUtil. If neither
+  has it, it loads `vs0:sys/external/libshellsvc.suprx` into SceShell and
+  looks again.
+- It then makes libShellAudio's calls, as the background player makes them,
+  through the client's `invokeSyncMethod` (slot `0x14`):
+  - start the music player service of type 0 (`0x30000`);
+  - stop, open the file and play (`0x30006`, `0x30004`);
+  - read the status four times a second (`0x30007`).
+  If the clock runs on by 2 s within 8 s, it lets the song play until 30 s
+  after the play call (`QM_MUSIC_TEST_S`). Only small steps between
+  readings count, not a jump to where an earlier song left off. Then it
+  stops and ends the service (`0x30001`).
+- Every step's code goes to `qm-plugin.log` under "music test:".
+  VitaPlex BG waits up to 45 s for "music test: done", then puts the lines
+  in its report and its log.
+
+The plugin's imports are not weak: a library or NID that SceShell does not
+have keeps the whole plugin out. So this adds no library.
+`sceShellSvcGetSvcObj` is looked up at run time. `taiGetModuleExportFunc` is
+in taiHEN's own library, which the plugin already imports; it has been
+there since taiHEN v0.9. The port stays with VitaPlex BG, since
+`sceAppMgrAcquireBgmPortWithPriority` is in SceAppMgr. ElevenMPV-A's
+plugin, the only one known to load in SceShell, does not import that
+library, nor SceModulemgr, so the module is found by name.
+`sceKernelLoadStartModule` is in SceLibKernel, which the plugin already
+imports.
+
+What the log can show:
+
+- whether SceShell already has the client library, or will load it;
+- whether a call from SceShell into its own service comes back;
+- whether the service opens and plays a file for it, with VitaPlex BG
+  holding the port.
+
+If a call never comes back, only the test's thread waits. VitaPlex BG then
+reports that the plugin never said it was done, and the last line is the
+step it stopped at.
+
 
 ### PS4: the popup, and nothing to hang progress on
 

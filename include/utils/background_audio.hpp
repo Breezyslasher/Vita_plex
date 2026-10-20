@@ -89,6 +89,11 @@ void runShellFileTest(Report done);
 void runShellStreamTest(Report done);
 // Stops whatever the tests left playing. Returns what happened.
 std::string stopShellTest();
+// SceShell playing a file itself: VitaPlex's quick menu plugin drives the
+// shell's music service from inside SceShell (qm_protocol.h,
+// QM_CMD_MUSIC_TEST), the first step of moving the background music there.
+// The report has the plugin's own lines, read back from its log.
+void runPluginMusicTest(Report done);
 
 // BG Test 11: pauses the song VitaPlex is playing, writes it, where it was
 // paused and the queue's next song for VPLXBGT11, and starts that app, which
@@ -140,6 +145,7 @@ inline void onAudioPlayback(bool) {}
 inline void onTrackLoad() {}
 inline void onPlayerShutdown() {}
 inline void runShellFileTest(Report) {}
+inline void runPluginMusicTest(Report) {}
 inline void runShellStreamTest(Report) {}
 inline std::string stopShellTest() { return {}; }
 inline void runHandoffTest(Report) {}

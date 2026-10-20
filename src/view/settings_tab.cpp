@@ -1243,6 +1243,17 @@ brls::Box* SettingsTab::createMusicSection() {
         });
         box->addView(streamTest);
 
+        auto* sceShellTest = new brls::DetailCell();
+        sceShellTest->setText("Test: SceShell Plays a File Itself");
+        sceShellTest->setDetailText("Through the quick menu plugin, for background music");
+        sceShellTest->registerClickAction([](brls::View*) {
+            brls::Application::notify("Asking SceShell to play a download itself: up to 45 s. "
+                                      "Stay in VitaPlex until the report shows.");
+            bgaudio::runPluginMusicTest(showTestReport);
+            return true;
+        });
+        box->addView(sceShellTest);
+
         auto* stopTest = new brls::DetailCell();
         stopTest->setText("Stop System Player Test");
         stopTest->registerClickAction([](brls::View*) {

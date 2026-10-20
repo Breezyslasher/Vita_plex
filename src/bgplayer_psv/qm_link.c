@@ -363,6 +363,19 @@ int qmSetSong(const char* title, const char* artist, const char* album) {
     return rc;
 }
 
+int qmMusicTest(const char* path) {
+    lock();
+    int rc = -1;
+    if (g_own) {
+        memset(&g_message, 0, sizeof(g_message));
+        g_message.own.cmd = QM_CMD_MUSIC_TEST;
+        toUtf16(path, g_message.own.title, 256);
+        rc = sendLocked();
+    }
+    unlock();
+    return rc;
+}
+
 int qmPoll(void) {
     lock();
     int press = QM_NONE;

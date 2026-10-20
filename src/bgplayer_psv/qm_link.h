@@ -73,6 +73,9 @@ int qmSetLook(int look);
 // The song's cover, written to QM_ART_PATH_FMT under this serial first; 0
 // for none. VitaPlex's plugin only.
 int qmSetArt(uint32_t serial);
+// A test: VitaPlex's plugin plays the file at path itself, from inside
+// SceShell (QM_CMD_MUSIC_TEST). -1 with ElevenMPV-A's plugin.
+int qmMusicTest(const char* path);
 
 // A press waiting on the row, or QM_NONE. Never waits.
 int qmPoll(void);

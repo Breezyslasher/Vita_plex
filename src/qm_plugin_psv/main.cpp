@@ -73,6 +73,8 @@ typedef struct TaiHookUser {
     void* old;
 } TaiHookUser;
 extern "C" SceUID vitaplexQmHookFunctionImport(TaiHookRef* hook, TaiHookArgs* args);
+extern "C" int vitaplexQmGetModuleExportFunc(const char* module, uint32_t libnid,
+                                             uint32_t funcnid, uintptr_t* func);
 
 // No C runtime here: what the compiler may call for it, from the kernel's.
 // new and delete are PAF's (built with -fno-sized-deallocation, so delete is
@@ -95,7 +97,7 @@ namespace {
 // Lines are put together where they happen, SceShell's UI thread included,
 // and kept in a ring; the watch thread writes them to the card, so that no
 // line waits for the card on a thread SceShell draws with.
-const char* const kLogPath = "ux0:data/VitaPlex/qm-plugin.log";
+const char* const kLogPath = QM_PLUGIN_LOG;
 const char* const kLogPrevPath = "ux0:data/VitaPlex/qm-plugin.prev.log";
 const int kLogMax = 512 * 1024;
 const int kRingLines = 128;
@@ -1328,6 +1330,250 @@ void mainTick(void* data) {
     unlock();
 }
 
+// ── Playing from inside SceShell (a test) ───────────────────────────────────
+// The background player plays through SceShell's music service from a process
+// of its own, which the system ends as a game with extended memory starts.
+// Whether code inside SceShell can drive the same service, so that the queue
+// could move here, is what QM_CMD_MUSIC_TEST tries (docs/DESIGN_NOTES.md):
+// the service's client library (SceShellSvc), found in SceShell or loaded
+// into it; its client object (sceShellSvcGetSvcObj), found with taiHEN so
+// that the plugin does not import it and loads whatever SceShell has; then
+// libShellAudio's calls (lib/libshellaudio), as the background player makes
+// them. The BGM port is VitaPlex BG's to hold for it, as for its own system
+// player tests: the libraries that take it (SceAppMgr) and that name a module
+// (SceModulemgr) are ones no plugin known to load in SceShell imports, and
+// one SceShell refused would keep the whole plugin out. On a thread of its
+// own, never SceShell's UI thread, which may be the one to answer the calls;
+// every code logged, each line with "music test:" in it.
+const uint32_t kShellSvcLibrary = 0x773242C7;  // SceShellSvc (src/utils's shellsvc_stub.S)
+const uint32_t kGetSvcObj = 0xB31E7F1C;        // sceShellSvcGetSvcObj
+const char* const kShellSvcPath = "vs0:sys/external/libshellsvc.suprx";
+
+typedef void* (*GetSvcObj)(void);
+// A method's arguments, in and out (libShellAudio's SceShellSvcAudioCustomParams).
+struct SvcParams {
+    const void* p[4][2];  // pointer, size
+};
+// The client's invokeSyncMethod, at 0x14 in its vtable.
+typedef int (*SvcInvoke)(void* obj, int method, SvcParams* in, int inCount, int* res,
+                         SvcParams* out, int outCount);
+// Who the service is talking to: for the music player service of type 0,
+// as the background player starts it, 1 and 8.
+struct SvcTracking {
+    int unk;
+    int t1, t2;
+};
+
+GetSvcObj g_getSvcObj;
+SceUID g_musicSema = -1;
+char g_musicPath[256];   // the file the test plays; under g_lock
+int g_musicBusy;         // a test runs
+int g_musicThread;       // its thread started
+
+void setArg(SvcParams* a, int i, const void* p, uint32_t size) {
+    a->p[i][0] = p;
+    a->p[i][1] = (const void*)(uintptr_t)size;
+}
+
+// A method of SceShell's music service, as libShellAudio calls it. The call's
+// code if it failed, else the service's answer.
+int svcCall(int method, SvcParams* in, int inCount, SvcParams* out, int outCount) {
+    void* obj = g_getSvcObj ? g_getSvcObj() : NULL;
+    if (!obj) return -1;
+    SvcInvoke invoke = (*(SvcInvoke* const*)obj)[5];
+    int res = 0;
+    const int ret = invoke(obj, method, in, inCount, &res, out, outCount);
+    return ret != 0 ? ret : res;
+}
+
+const SvcTracking kMusicPlayer = {0, 1, 8};
+
+int musicEvent(int event) {
+    const int command[2] = {event, 0};
+    SvcParams in;
+    sceClibMemset(&in, 0, sizeof(in));
+    setArg(&in, 0, command, sizeof(command));
+    setArg(&in, 1, &kMusicPlayer, sizeof(kMusicPlayer));
+    return svcCall(0x30006, &in, 2, NULL, 0);
+}
+
+int musicOpen(const char* path) {
+    char opt[16];
+    sceClibMemset(opt, 0, sizeof(opt));
+    SvcParams in;
+    sceClibMemset(&in, 0, sizeof(in));
+    setArg(&in, 0, &kMusicPlayer, sizeof(kMusicPlayer));
+    setArg(&in, 1, path, (uint32_t)sceClibStrnlen(path, 0x401));
+    setArg(&in, 2, opt, sizeof(opt));
+    return svcCall(0x30004, &in, 3, NULL, 0);
+}
+
+// Its tracking alone: the service's start (0x30000) and end (0x30001).
+int musicTracked(int method) {
+    SvcParams in;
+    sceClibMemset(&in, 0, sizeof(in));
+    setArg(&in, 0, &kMusicPlayer, sizeof(kMusicPlayer));
+    return svcCall(method, &in, 1, NULL, 0);
+}
+
+// The play status (0x30007): the state at 0x10, the clock in ms at 0x2C.
+int musicStatus(int* state, unsigned* timeMs) {
+    uint32_t buf[0x70 / 4];
+    sceClibMemset(buf, 0, sizeof(buf));
+    SvcParams in, out;
+    sceClibMemset(&in, 0, sizeof(in));
+    sceClibMemset(&out, 0, sizeof(out));
+    setArg(&in, 0, &kMusicPlayer, sizeof(kMusicPlayer));
+    setArg(&out, 0, buf, sizeof(buf));
+    const int rc = svcCall(0x30007, &in, 1, &out, 1);
+    *state = (int)buf[0x10 / 4];
+    *timeMs = buf[0x2C / 4];
+    return rc;
+}
+
+// sceShellSvcGetSvcObj in a module of SceShell's by the name of either library
+// libshellsvc.suprx exports. 0 when found.
+int findGetSvcObj(uintptr_t* fn, const char** found) {
+    const char* const names[2] = {"SceShellSvc", "SceShellUtil"};
+    int rc = -1;
+    for (int i = 0; i < 2 && rc < 0; i++) {
+        rc = vitaplexQmGetModuleExportFunc(names[i], kShellSvcLibrary, kGetSvcObj, fn);
+        *found = names[i];
+    }
+    return rc;
+}
+
+// The client object's maker, from SceShell's own SceShellSvc, else from the
+// library loaded into SceShell now. true when found.
+bool findSvcObj() {
+    if (g_getSvcObj) return true;
+    uintptr_t fn = 0;
+    const char* name = "";
+    int rc = findGetSvcObj(&fn, &name);
+    logLine("music test: sceShellSvcGetSvcObj in SceShell already: 0x%08X%s%s", (unsigned)rc,
+            rc >= 0 ? ", in module " : "", rc >= 0 ? name : "");
+    if (rc < 0) {
+        int status = 0;
+        const SceUID mod = sceKernelLoadStartModule(kShellSvcPath, 0, NULL, 0, NULL, &status);
+        logLine("music test: %s loaded into SceShell: 0x%08X, its start 0x%08X", kShellSvcPath,
+                (unsigned)mod, (unsigned)status);
+        if (mod < 0) return false;
+        rc = findGetSvcObj(&fn, &name);
+        logLine("music test: sceShellSvcGetSvcObj in it: 0x%08X%s%s", (unsigned)rc,
+                rc >= 0 ? ", in module " : " (not under either library's name)",
+                rc >= 0 ? name : "");
+        if (rc < 0) return false;
+    }
+    g_getSvcObj = (GetSvcObj)fn;
+    return true;
+}
+
+// Watches the service's clock for `seconds`, logging what changes. true when
+// it ran on by 2 s or more, counting only the small steps between readings,
+// not a jump to where an earlier song left it; with `untilMoving`, it stops
+// watching then.
+bool watchMusic(int seconds, bool untilMoving) {
+    int lastState = -1000, havePrev = 0;
+    unsigned prev = 0, ran = 0, lastSecond = 0xFFFFFFFF;
+    bool moved = false;
+    for (int i = 0; i < seconds * 4; i++) {
+        int state = 0;
+        unsigned timeMs = 0;
+        const int rc = musicStatus(&state, &timeMs);
+        if (rc < 0) {
+            logLine("music test: status: 0x%08X", (unsigned)rc);
+        } else {
+            if (havePrev && timeMs > prev && timeMs - prev < 1000) ran += timeMs - prev;
+            prev = timeMs;
+            havePrev = 1;
+            if (state != lastState || timeMs / 1000 != lastSecond)
+                logLine("music test: state %d, at %u.%u s", state, timeMs / 1000,
+                        (timeMs % 1000) / 100);
+            lastState = state;
+            lastSecond = timeMs / 1000;
+            if (ran >= 2000) moved = true;
+        }
+        if (untilMoving && moved) break;
+        sceKernelDelayThread(250 * 1000);
+    }
+    return moved;
+}
+
+void musicTest(const char* path) {
+    logLine("music test: %s, from inside SceShell", path);
+    if (!findSvcObj()) {
+        logLine("music test: done: no client for SceShell's music service");
+        return;
+    }
+    void* obj = g_getSvcObj();
+    logLine("music test: client object %p, its methods at %p", obj,
+            obj ? *(void* const*)obj : NULL);
+    if (!obj) {
+        logLine("music test: done: no client object");
+        return;
+    }
+    const int rcStart = musicTracked(0x30000);
+    logLine("music test: start the music player service (type 0): 0x%08X", (unsigned)rcStart);
+    if (rcStart < 0) {
+        logLine("music test: done: the service would not start");
+        return;
+    }
+    const int rcStop = musicEvent(2), rcOpen = musicOpen(path), rcPlay = musicEvent(1);
+    const SceUInt64 playAt = sceKernelGetSystemTimeWide();
+    logLine("music test: stop 0x%08X, open 0x%08X, play 0x%08X", (unsigned)rcStop,
+            (unsigned)rcOpen, (unsigned)rcPlay);
+    const bool played = watchMusic(8, true);
+    if (played) {
+        const int left =
+            QM_MUSIC_TEST_S - (int)((sceKernelGetSystemTimeWide() - playAt) / 1000000);
+        logLine("music test: playing; on for %d s more", left);
+        watchMusic(left, false);
+    }
+    const int rcEnd = musicEvent(2), rcFinish = musicTracked(0x30001);
+    logLine("music test: stop 0x%08X, end the service 0x%08X", (unsigned)rcEnd,
+            (unsigned)rcFinish);
+    logLine("music test: done: %s", played ? "SceShell played it" : "its clock never moved");
+}
+
+class MusicThread : public paf::thread::Thread {
+public:
+    using paf::thread::Thread::Thread;
+
+    void EntryFunction() override {
+        while (!IsCanceled()) {
+            if (sceKernelWaitSema(g_musicSema, 1, NULL) < 0) {
+                paf::thread::Sleep(1000);
+                continue;
+            }
+            char path[sizeof(g_musicPath)];
+            lock();
+            sceClibMemcpy(path, g_musicPath, sizeof(path));
+            unlock();
+            musicTest(path);
+            lock();
+            g_musicBusy = 0;
+            unlock();
+        }
+    }
+};
+
+// The test's thread, made the first time a test is asked for, so that a boot
+// with none has no stack for it in SceShell. true when there is one.
+bool startMusicThread() {
+    if (g_musicThread) return true;
+    if (g_musicSema < 0) {
+        g_musicSema = sceKernelCreateSema("VitaPlexQM::Music", 0, 0, 1, NULL);
+        if (g_musicSema < 0) {
+            logLine("music test: its semaphore: 0x%08X", (unsigned)g_musicSema);
+            return false;
+        }
+    }
+    const int rc = (new MusicThread(kThreadPriority, 0x8000, "VitaPlexQM::Music"))->Start();
+    logLine("music test: its thread started: 0x%08X", (unsigned)rc);
+    g_musicThread = rc >= 0;
+    return g_musicThread;
+}
+
 // ── Threads ─────────────────────────────────────────────────────────────────
 // Watches the quick menu open and close, as ElevenMPV-A's plugin does, gives
 // the row back when its owner has gone quiet, and writes the log.
@@ -1449,6 +1695,16 @@ private:
                 else logLine("art: none");
             }
             g_artSerial = m.arg;
+            break;
+        case QM_CMD_MUSIC_TEST:
+            if (g_musicBusy || !startMusicThread()) {
+                logLine("music test: done: %s", g_musicBusy ? "one runs already" : "no thread for it");
+                break;
+            }
+            // VitaPlex's paths are ASCII: its data folder and a song's rating key.
+            toLog(m.title, g_musicPath, sizeof(g_musicPath));
+            g_musicBusy = 1;
+            sceKernelSignalSema(g_musicSema, 1);
             break;
         default:
             logLine("unknown command %u", (unsigned)m.cmd);

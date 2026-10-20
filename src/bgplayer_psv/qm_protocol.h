@@ -18,9 +18,10 @@
 // which version 2's set transparent; version 4's shows ⏸ while VitaPlex
 // plays (QM_CMD_PLAYING) and logs each icon's textures; version 5's changes
 // the row on SceShell's own UI thread, and shows the song's cover on the
-// Music heading's icon (QM_CMD_ART).
-#define QM_PIPE_TO_PLUGIN   "VitaPlexQM5::ToPlugin"
-#define QM_PIPE_FROM_PLUGIN "VitaPlexQM5::FromPlugin"
+// Music heading's icon (QM_CMD_ART); version 6's plays a file itself, from
+// inside SceShell, for a test (QM_CMD_MUSIC_TEST).
+#define QM_PIPE_TO_PLUGIN   "VitaPlexQM6::ToPlugin"
+#define QM_PIPE_FROM_PLUGIN "VitaPlexQM6::FromPlugin"
 
 // To the plugin, a whole QmMessage each time.
 enum {
@@ -37,7 +38,14 @@ enum {
     // it is sent; 0 for none, the heading's own icon. A cover is its
     // sender's: the plugin forgets it when the row is given back or another
     // owner takes it.
-    QM_CMD_ART
+    QM_CMD_ART,
+    // A test: the plugin plays the file at the path in title (UTF-16)
+    // through SceShell's music service itself, from inside SceShell, for
+    // QM_MUSIC_TEST_S at most, and logs each step to qm-plugin.log, each
+    // line with "music test:" in it and the last with "music test: done".
+    // Whether this works decides whether the background music can move into
+    // SceShell, where no game ends it (docs/DESIGN_NOTES.md).
+    QM_CMD_MUSIC_TEST
 };
 enum { QM_OWNER_APP = 1, QM_OWNER_PLAYER = 2 };
 // The row's buttons stay dimmed with ElevenMPV-A's way, ButtonBase::Enable(false),
@@ -54,6 +62,11 @@ enum {
     QM_LOOK_COUNT
 };
 #define QM_ACTIVE_TIMEOUT_S 5
+#define QM_MUSIC_TEST_S     30
+
+// The plugin's log, one file a boot; VitaPlex BG reads a test's lines back
+// from it.
+#define QM_PLUGIN_LOG "ux0:data/VitaPlex/qm-plugin.log"
 
 // The cover: a PNG, QM_ART_SIZE square, at this path with the lowest bit of
 // its serial (0 or 1) in it. One serial after another goes to the other
