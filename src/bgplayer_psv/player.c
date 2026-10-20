@@ -22,6 +22,7 @@
 #include "bgplayer.h"
 #include "mp3_info.h"
 #include "program.h"
+#include "qm_link.h"
 
 #include "ShellAudio.h"
 
@@ -59,6 +60,7 @@ typedef struct Entry {
     char local[112];   // a download of it, or ""
     char title[64];
     char artist[48];
+    char album[48];    // for the quick menu's row
 } Entry;
 
 // A song made ready for the shell.
@@ -112,6 +114,16 @@ static volatile int g_pausedIndex, g_pauseWasPlaying;
 static volatile unsigned g_pausedAtMs;
 // The download running is not wanted any more.
 static volatile int g_cancel;
+
+// The quick menu's Music row through ElevenMPV-A's plugin (qm_link.h), when
+// the queue says so: the player's while a song of the queue is with the
+// shell, and the system's again as the music stops (stopShell).
+static int g_qmEnabled;           // the queue's qm=1
+static volatile int g_qmActive;   // the plugin has the row for this player
+// A press on the row, from main.c's watcher, for watchSong to act on; and
+// whether the row's play/pause stopped the shell, which then stays stopped.
+static volatile int g_menuPress;
+static volatile int g_menuPaused;
 
 // The next song, downloading on a thread of its own while one plays.
 static Song g_next;
@@ -715,6 +727,7 @@ static void parseTrack(const char* p, Entry* e) {
     field(&p, skip, sizeof(skip));   // the thumb
     field(&p, e->title, sizeof(e->title));
     field(&p, e->artist, sizeof(e->artist));
+    field(&p, e->album, sizeof(e->album));
 }
 
 static const char* repeatName(int r) {
@@ -740,6 +753,7 @@ static int loadQueue(int* sameAsBefore) {
     unsigned position = 0;
     double written = 0;
     char file[128] = "", port[16] = BGPLAYER_PORT_PRIORITY;
+    int qm = 0;
     while (fgets(line, sizeof(line), f)) {
         line[strcspn(line, "\r\n")] = '\0';
         if (strncmp(line, "track=", 6) == 0) {
@@ -756,6 +770,8 @@ static int loadQueue(int* sameAsBefore) {
             snprintf(file, sizeof(file), "%s", line + 5);
         } else if (strncmp(line, "port=", 5) == 0) {
             snprintf(port, sizeof(port), "%s", line + 5);
+        } else if (strncmp(line, "qm=", 3) == 0) {
+            qm = atoi(line + 3) == 1;
         } else if (strcmp(line, "end") == 0) {
             whole = 1;
         }
@@ -774,14 +790,15 @@ static int loadQueue(int* sameAsBefore) {
     g_queueWritten = written;
     snprintf(g_readyFile, sizeof(g_readyFile), "%s", file);
     snprintf(g_portHow, sizeof(g_portHow), "%s", port);
+    g_qmEnabled = qm;
     char at[16];
     mmss(at, sizeof(at), position);
     const Entry* e = &g_queue[g_index];
-    logLine("queue: %d song(s), from song %d (\"%s\" by %s) at %s, repeat %s%s, BGM port %s; "
-            "written %.1f s before this",
+    logLine("queue: %d song(s), from song %d (\"%s\" by %s) at %s, repeat %s%s, BGM port %s, "
+            "quick menu %s; written %.1f s before this",
             count, g_index + 1, e->title, e->artist, at, repeatName(repeat),
             file[0] ? ", the app having made that song ready" : "", g_portHow,
-            systemSecs() - written);
+            qm ? "on" : "off", systemSecs() - written);
     return 0;
 }
 
@@ -980,7 +997,14 @@ void playerPowerEvent(int powerInfo) {
             result(r, sizeof(r), sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0)));
 }
 
-enum { WATCH_FAILED = 0, WATCH_ENDED = 1, WATCH_PAUSED = -1, WATCH_STOPPED = -2 };
+enum {
+    WATCH_FAILED = 0,
+    WATCH_ENDED = 1,
+    WATCH_NEXT = 2,       // the quick menu's next
+    WATCH_PREVIOUS = 3,   // its previous, in the first seconds of a song
+    WATCH_PAUSED = -1,
+    WATCH_STOPPED = -2
+};
 
 // Watches s play until it ends: its clock moving with a new song loaded
 // (shellHasNewSong), then either going back after the last 10 s or the state
@@ -1017,6 +1041,43 @@ static int watchSong(const Song* s) {
             logLine("song %d of %d: system player state %d at %s (%s)", s->index + 1, g_count,
                     state, at, result(r, sizeof(r), rc));
             lastState = state;
+        }
+        // A press on the quick menu's row (playerQuickMenuTick). Play/pause
+        // stops the shell and plays it again, as ElevenMPV-A pauses a song the
+        // shell plays: the shell keeps its place through a stop (log
+        // 7d5ae5e7). Previous goes back to the start past a song's first
+        // 3 s, and to the song before within them.
+        const int press = g_menuPress;
+        if (press != QM_NONE) {
+            g_menuPress = QM_NONE;
+            if (press == QM_NEXT) {
+                logLine("song %d of %d: next, from the quick menu", s->index + 1, g_count);
+                return WATCH_NEXT;
+            }
+            if (press == QM_PREVIOUS && !(started && time >= 3000)) {
+                logLine("song %d of %d: previous, from the quick menu", s->index + 1, g_count);
+                return WATCH_PREVIOUS;
+            }
+            if (press == QM_PREVIOUS) {
+                logLine("song %d of %d: back to its start from %s, from the quick menu",
+                        s->index + 1, g_count, at);
+                g_menuPaused = 0;
+                seekFrom(s, 0, time);
+                maxTime = 0;
+                havePrev = 0;
+                continue;
+            }
+            if (g_menuPaused || state != 1) {
+                g_menuPaused = 0;
+                logLine("song %d of %d: play at %s, from the quick menu: %s", s->index + 1, g_count,
+                        at, result(r, sizeof(r), sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0)));
+            } else {
+                g_menuPaused = 1;
+                logLine("song %d of %d: paused at %s, from the quick menu: %s", s->index + 1,
+                        g_count, at,
+                        result(r, sizeof(r), sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_STOP, 0)));
+            }
+            continue;
         }
         if (!started && state == 1 && havePrev && time > prevTime) {
             static SceMusicPlayerServiceTrackInfo info;
@@ -1061,7 +1122,8 @@ static int watchSong(const Song* s) {
             durMs > 0 ? durMs : (unsigned)(g_lastShellLenMs > 0 ? g_lastShellLenMs : 0);
         if (started) {
             if (time > maxTime) maxTime = time;
-            if (maxTime + 10000 >= lenMs && (time + 5000 < maxTime || state != 1)) {
+            if (maxTime + 10000 >= lenMs && (time + 5000 < maxTime || state != 1) &&
+                !g_menuPaused) {
                 mmss(at, sizeof(at), maxTime);
                 logLine("song %d of %d ended (it got to %s of %s)", s->index + 1, g_count, at, dur);
                 return WATCH_ENDED;
@@ -1075,8 +1137,8 @@ static int watchSong(const Song* s) {
                 if (stoppedSince == 0) {
                     stoppedSince = t;
                     const double menu = quickMenuSince();
-                    byMenu = menu < 60.0;
-                    if (byMenu)
+                    byMenu = g_menuPaused || menu < 60.0;
+                    if (byMenu && !g_menuPaused)
                         logLine("song %d of %d stopped at %s (state %d), %.0fs after PS was held: "
                                 "taken as the quick menu's pause; not played again",
                                 s->index + 1, g_count, at, state, menu);
@@ -1101,6 +1163,7 @@ static int watchSong(const Song* s) {
                 stoppedFor += t - stoppedSince;
                 stoppedSince = 0;
                 byMenu = 0;
+                g_menuPaused = 0;
             }
         } else if (t - t0 > 15.0) {
             logLine("song %d of %d: the system player never started it", s->index + 1, g_count);
@@ -1130,6 +1193,62 @@ static void stopShell(const char* why) {
         logLine("release the BGM port: %s", result(a, 24, sceAppMgrReleaseBgmPort()));
     }
     g_handedOver = 0;
+    // The row goes back to the system with the music: left on, the plugin
+    // would put presses into a pipe nobody reads, and SceShell waits once
+    // that is full.
+    if (__atomic_exchange_n(&g_qmActive, 0, __ATOMIC_SEQ_CST))
+        logLine("quick menu: row given back (%s): %s", why, result(a, 24, qmDeactivate()));
+    g_menuPress = QM_NONE;
+    g_menuPaused = 0;
+}
+
+// The row, from main.c's watcher: the plugin opened the first time a song is
+// with the shell (and again at most every 30 s while that fails), the row
+// taken while the queue plays and the song sent as it changes, and presses
+// passed to watchSong.
+void playerQuickMenuTick(void) {
+    static double lastTry;
+    static int sentIndex = -2;
+    char r[24];
+    if (!(g_qmEnabled && g_handedOver && g_shellUp && !g_paused && !g_stopped)) {
+        if (__atomic_exchange_n(&g_qmActive, 0, __ATOMIC_SEQ_CST))
+            logLine("quick menu: row given back, nothing playing: %s",
+                    result(r, sizeof(r), qmDeactivate()));
+        sentIndex = -2;
+        return;
+    }
+    if (!qmIsOpen()) {
+        if (lastTry != 0 && now() - lastTry < 30.0) return;
+        lastTry = now();
+        char what[192];
+        const int rc = qmOpen(what, sizeof(what));
+        logLine("quick menu: %s (%s)", what, result(r, sizeof(r), rc));
+        if (rc < 0) return;
+    }
+    if (!g_qmActive) {
+        // A press left from whoever had the row before is not one for this.
+        for (int stale; (stale = qmPoll()) != QM_NONE;)
+            logLine("quick menu: an earlier press (%d) dropped", stale);
+        const int rc = qmActivate();
+        logLine("quick menu: row taken: %s", result(r, sizeof(r), rc));
+        if (rc < 0) return;
+        g_qmActive = 1;
+        sentIndex = -2;
+    }
+    lockStatus();
+    const int index = g_now.index;
+    unlockStatus();
+    if (index != sentIndex && index >= 0 && index < g_count) {
+        const Entry* e = &g_queue[index];
+        const int rc = qmSetSong(e->title, e->artist, e->album);
+        logLine("quick menu: \"%s\" by %s: %s", e->title, e->artist, result(r, sizeof(r), rc));
+        if (rc >= 0) sentIndex = index;
+    }
+    for (int press; (press = qmPoll()) != QM_NONE;) {
+        logLine("quick menu: %s pressed",
+                press == QM_NEXT ? "next" : press == QM_PREVIOUS ? "previous" : "play/pause");
+        g_menuPress = press;
+    }
 }
 
 // ── Requests from the app ────────────────────────────────────────────────
@@ -1363,6 +1482,27 @@ static int playQueue(void) {
         if (watched == WATCH_STOPPED || watched == WATCH_PAUSED) {
             takePrefetch(-1, NULL);
             return watched == WATCH_STOPPED ? QUEUE_STOPPED : QUEUE_LEFT;
+        }
+        if (watched == WATCH_NEXT || watched == WATCH_PREVIOUS) {
+            // The quick menu's next or previous: the song stops at once, not
+            // once the other is ready, and is not marked played. Next goes on
+            // past repeat one; previous stays on the first song unless the
+            // queue repeats.
+            char r[24];
+            logLine("system player stop: %s",
+                    result(r, sizeof(r), sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_STOP, 0)));
+            failedInARow = 0;
+            const int to = watched == WATCH_NEXT
+                ? (g_index + 1 < g_count ? g_index + 1 : g_repeat == BGPLAYER_REPEAT_ALL ? 0 : -1)
+                : (g_index > 0 ? g_index - 1 : g_repeat == BGPLAYER_REPEAT_ALL ? g_count - 1 : 0);
+            if (to < 0) {
+                takePrefetch(-1, NULL);
+                logLine("next on the last song: the queue is over");
+                return QUEUE_OVER;
+            }
+            g_index = to;
+            g_startMs = 0;
+            continue;
         }
         if (watched == WATCH_ENDED) {
             failedInARow = 0;

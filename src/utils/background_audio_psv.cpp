@@ -19,6 +19,7 @@
 #include "platform/platform.hpp"
 #include "player/mpv_player.hpp"
 #include "utils/http_client.hpp"
+#include "utils/now_playing.hpp"
 #include "utils/vita_install.hpp"
 
 #include <borealis.hpp>
@@ -31,6 +32,7 @@
 #include <psp2/sysmodule.h>
 
 #include "bgplayer.h"
+#include "qm_link.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -223,6 +225,33 @@ constexpr SceInt64 kQuickMenuWatchUs = 60 * 1000000;
 // clock, which runs on from one process to the next as the notes have it.
 double g_initSecs = 0;
 bool handOver(const char* why);
+
+// ── The quick menu's Music row (qm_link.h) ───────────────────────────────
+// What MusicController publishes, which now_playing.cpp hands here on the
+// Vita, for the watcher to put on the row through ElevenMPV-A's plugin. The
+// row is this process's while it has music to show; it goes to the
+// background player with the queue, and back to the system as the app goes.
+std::atomic<bool> g_qmEnabled{false};   // the setting
+std::atomic<bool> g_qmActive{false};    // the plugin has the row for this process
+std::atomic<bool> g_qmGone{false};      // handed over or quitting: not taken again
+std::mutex g_qmMutex;
+struct QmSong {
+    std::string title, artist, album;
+    bool playing = false;
+    bool wanted = false;   // published and not cleared since
+    unsigned serial = 0;   // one more each time there is new text to send
+};
+QmSong g_qmSong;   // under g_qmMutex
+
+// Gives the row back to the system for good, from any thread: the music
+// handed to the background player, which takes the row itself as it plays,
+// or the app going. The plugin, left on, would keep putting presses into a
+// pipe no process reads, and SceShell waits once that pipe is full.
+void quickMenuRelease(const char* why) {
+    g_qmGone = true;
+    if (!g_qmActive.exchange(false)) return;
+    brls::Logger::info("[bgaudio] quick menu: row given back ({}): {}", why, hex(qmDeactivate()));
+}
 
 // ── The BGM port ─────────────────────────────────────────────────────────
 // Held at one priority at a time: the app's while mpv plays, the shell's
@@ -496,6 +525,7 @@ void onRequestQuit(SceInt64 now, const AppEvent& ev) {
     }
     brls::Logger::info("[bgaudio] the system asked the app to quit (app {}, then {}); quitting",
                        hex(ev.appId), param);
+    quickMenuRelease("the app is going");
     // A file the system player was given would otherwise play on after the app
     // is gone, with nothing left to stop it. Not waited for if a test is mid-run
     // (see shellStatusLine); the process is going either way.
@@ -659,6 +689,64 @@ void watchQuickMenu(SceInt64 now) {
                        describeMpv(s), shellStatusLine());
 }
 
+// The quick menu's row, from the watcher alone (but for quickMenuRelease):
+// the plugin loaded and its pipes opened the first time there is music to
+// show, tried again at most every 30 s while that fails; the row taken while
+// MusicController has music published and given back once it clears it; the
+// song sent as it changes; and the row's presses passed to MusicController
+// the way the OS media controls' are (now_playing.hpp).
+void quickMenuTick(SceInt64 now) {
+    static SceInt64 lastTry = 0;
+    static unsigned sentSerial = 0;
+    if (!g_qmEnabled || g_qmGone) return;
+    QmSong song;
+    {
+        std::lock_guard<std::mutex> lock(g_qmMutex);
+        song = g_qmSong;
+    }
+    const bool wanted = song.wanted && g_handedOverAt == 0;
+    if (!qmIsOpen()) {
+        if (!wanted || (lastTry != 0 && now - lastTry < 30 * 1000000LL)) return;
+        lastTry = now;
+        char what[192];
+        const int rc = qmOpen(what, sizeof(what));
+        brls::Logger::info("[bgaudio] quick menu: {} ({})", what, hex(rc));
+        if (rc < 0) return;
+    }
+    if (wanted && !g_qmActive) {
+        // A press left from whoever had the row before is not one for this.
+        for (int stale; (stale = qmPoll()) != QM_NONE;)
+            brls::Logger::info("[bgaudio] quick menu: an earlier press ({}) dropped", stale);
+        const int rc = qmActivate();
+        brls::Logger::info("[bgaudio] quick menu: row taken: {}", hex(rc));
+        if (rc < 0) return;
+        g_qmActive = true;
+        sentSerial = song.serial - 1;   // so the song goes again
+    } else if (!wanted && g_qmActive) {
+        g_qmActive = false;
+        brls::Logger::info("[bgaudio] quick menu: row given back, nothing published: {}",
+                           hex(qmDeactivate()));
+        return;
+    }
+    if (!g_qmActive) return;
+    if (song.serial != sentSerial) {
+        const int rc = qmSetSong(song.title.c_str(), song.artist.c_str(), song.album.c_str());
+        brls::Logger::info("[bgaudio] quick menu: \"{}\" by {}: {}", song.title, song.artist,
+                           hex(rc));
+        if (rc >= 0) sentSerial = song.serial;
+    }
+    for (int press; (press = qmPoll()) != QM_NONE;) {
+        const nowplaying::Transport t = press == QM_NEXT       ? nowplaying::Transport::Next
+                                        : press == QM_PREVIOUS ? nowplaying::Transport::Previous
+                                                               : nowplaying::Transport::Toggle;
+        brls::Logger::info("[bgaudio] quick menu: {} pressed",
+                           press == QM_NEXT       ? "next"
+                           : press == QM_PREVIOUS ? "previous"
+                                                  : "play/pause");
+        brls::sync([t]() { nowplaying::dispatchTransport(t); });
+    }
+}
+
 int watcherMain(SceSize, void*) {
     const SceUID cb = sceKernelCreateCallback("VitaPlexBgAudioPower", 0, powerCallback, nullptr);
     const int rcCb = cb >= 0 ? scePowerRegisterCallback(cb) : cb;
@@ -706,6 +794,7 @@ int watcherMain(SceSize, void*) {
         }
         if (!watching) continue;
         watchQuickMenu(now);
+        quickMenuTick(now);
         // A game is sent neither event, so without this nothing would say,
         // on the way back, that it was held.
         if (held && !g_away && !focusEvent) reportHold(gap);
@@ -1499,8 +1588,9 @@ bool writeQueue(std::string& what) {
 
     char head[192];
     std::snprintf(head, sizeof(head),
-                  "written=%.6f\nindex=%d\npositionMs=%lld\nrepeat=%d\nfile=\nport=%s\n",
-                  systemSecs(), at, positionMs, repeatCode(q.getRepeatMode()), playerPortName());
+                  "written=%.6f\nindex=%d\npositionMs=%lld\nrepeat=%d\nfile=\nport=%s\nqm=%d\n",
+                  systemSecs(), at, positionMs, repeatCode(q.getRepeatMode()), playerPortName(),
+                  g_qmEnabled ? 1 : 0);
     std::string text = head;
     DownloadsManager& downloads = DownloadsManager::getInstance();
     for (std::size_t i = from; i < order.size() && i - from < BGPLAYER_MAX_TRACKS; i++) {
@@ -1581,6 +1671,7 @@ bool handOver(const char* why) {
     MusicController::getInstance().playPause(false);
     releasePort(0, "handed to the background player");
     g_handedOverAt = sceKernelGetSystemTimeWide();
+    quickMenuRelease("handed to the background player");
     brls::Logger::info("[bgaudio] background player: {}: handed over {}", why, what);
     return true;
 }
@@ -1809,6 +1900,7 @@ void init(int outsideMusic) {
     g_outsideMusic = outsideMusic;
     g_keepPlaying = outsideMusic != kOutsideStops;
     g_initSecs = systemSecs();
+    qmInit();
     brls::Logger::info("[bgaudio] running as {}; music after leaving: {}",
                        available() ? "VitaPlex BG" : "VitaPlex",
                        outsideMusic == kOutsidePlaysOn     ? "plays on, then the background player"
@@ -1884,6 +1976,39 @@ void setOwnPortTest(int choice) {
         holdPortForMpv("port test changed");
     else
         releasePort(0, "port test changed");
+}
+
+void setQuickMenuControls(bool on) {
+    if (!available()) return;
+    g_qmEnabled = on;
+    brls::Logger::info("[bgaudio] quick menu controls {}",
+                       on ? "on, through ElevenMPV-A's plugin" : "off");
+    if (on) {
+        startWatcher();
+    } else if (g_qmActive.exchange(false)) {
+        brls::Logger::info("[bgaudio] quick menu: row given back, turned off: {}",
+                           hex(qmDeactivate()));
+    }
+}
+
+void quickMenuNowPlaying(const std::string& title, const std::string& artist,
+                         const std::string& album, bool playing) {
+    if (!available()) return;
+    std::lock_guard<std::mutex> lock(g_qmMutex);
+    if (!g_qmSong.wanted || title != g_qmSong.title || artist != g_qmSong.artist ||
+        album != g_qmSong.album)
+        g_qmSong.serial++;
+    g_qmSong.title = title;
+    g_qmSong.artist = artist;
+    g_qmSong.album = album;
+    g_qmSong.playing = playing;
+    g_qmSong.wanted = true;
+}
+
+void quickMenuNowPlayingCleared() {
+    if (!available()) return;
+    std::lock_guard<std::mutex> lock(g_qmMutex);
+    g_qmSong.wanted = false;
 }
 
 void runShellFileTest(Report done) {

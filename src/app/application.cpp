@@ -618,6 +618,7 @@ bool Application::loadSettings() {
         const int outside = extractInt("vitaOutsideMusic");
         if (outside >= 0 && outside <= 2) m_settings.vitaOutsideMusic = outside;
     }
+    m_settings.vitaQuickMenuControls = extractBool("vitaQuickMenuControls", true);
     m_settings.musicShuffleDefault = extractBool("musicShuffleDefault", false);
 
     // Live TV / DVR settings
@@ -770,6 +771,7 @@ bool Application::saveSettings() {
     json += "  \"audioPassthrough\": " + b(m_settings.audioPassthrough) + ",\n";
     json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + ",\n";
     json += "  \"vitaOutsideMusic\": " + std::to_string(m_settings.vitaOutsideMusic) + ",\n";
+    json += "  \"vitaQuickMenuControls\": " + b(m_settings.vitaQuickMenuControls) + ",\n";
     json += "  \"musicShuffleDefault\": " + b(m_settings.musicShuffleDefault) + ",\n";
     json += "  \"defaultDvrShowSectionId\": \"" + esc(m_settings.defaultDvrShowSectionId) + "\",\n";
     json += "  \"defaultDvrShowSectionTitle\": \"" + esc(m_settings.defaultDvrShowSectionTitle) + "\",\n";

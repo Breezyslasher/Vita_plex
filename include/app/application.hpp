@@ -230,6 +230,10 @@ struct AppSettings {
     // player when the system closes the app for a game; 2 hands it to that
     // player at once. See utils/background_audio.hpp.
     int vitaOutsideMusic = 1;
+    // VitaPlex BG only: the song and its buttons in the quick menu's Music
+    // row, through ElevenMPV-A's shell plugin, which needs ElevenMPV-A
+    // installed (bgaudio::setQuickMenuControls).
+    bool vitaQuickMenuControls = true;
     // Turn shuffle on whenever a new music queue starts. Mainly for remote
     // controllers: the framework MediaSession this app uses has no
     // onSetShuffleMode callback, so clients like Android Auto head units and

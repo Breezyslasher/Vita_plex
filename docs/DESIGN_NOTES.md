@@ -1889,6 +1889,68 @@ shell playing with no port taken at all, as it may then take the port
 itself, as it does for the Music app. "Not taken" now means no port for the
 system player tests too, as it does for mpv and the background player.
 
+**The row through ElevenMPV-A's plugin.** No app-side call lit the row's
+buttons, so VitaPlex BG uses the plugin ElevenMPV-A lights them with
+(`qm_link.c`). The ElevenMPV-A app (GPL-3.0, GrapheneCt/ElevenMPV-A at
+`ae6583e`) works like this:
+
+- It loads `module/shell_plugin.suprx` from its own install into SceShell
+  (`taiLoadStartModuleForPid` on `NPXS19999`), unless the plugin's pipe
+  `ElevenMPVA::ShellIPC_RX` is there already.
+- It sends whole `IpcDataRX` messages (1548 bytes) down that pipe: APP_START
+  as it starts, ACTIVATE while it plays, INFO with the title, artist and
+  album in UTF-16. The row's top line is the title, the bottom one
+  "artist / album".
+- It reads PLAY, FF and REW back from `ElevenMPVA::ShellIPC_TX`.
+
+VitaPlex BG loads the same file from ElevenMPV-A's install,
+`ux0:app/GRVA00008/module/shell_plugin.suprx`, rather than ship it, since
+VitaPlex is Apache-2.0. Three calls the SDK leaves out come through
+`qm_link_stub.S`:
+
+- `sceKernelOpenMsgPipe` and `sceKernelCloseMsgPipe`, from SceThreadmgr in
+  vita-headers' db.
+- `taiLoadStartModuleForPidForUser`, taihenUnsafe 0xB2B67326 and 0xE853ABCB,
+  as `libtaihen_stub.a` has them in vitasdk's taihen package and in taiHEN
+  v0.11 alike. The library is for unsafe homebrew, which both of VitaPlex's
+  programs already are.
+
+A whole message goes or none does with the pipe mode 0x1 (Vita3K's
+`SCE_KERNEL_MSG_PIPE_MODE_FULL`). Each send waits 200 ms at most.
+
+The plugin's buttons send a press with no time limit from SceShell's own
+thread, into a pipe of one message's size. So a process that left the row
+on and stopped reading would freeze the quick menu at the press after the
+pipe filled. Whoever has the row therefore reads it four times a second, and
+gives it back as the music leaves it:
+
+- The app gives it back as it hands the queue over and as it is asked to
+  quit.
+- The player gives it back whenever it stops the shell.
+- A press left in the pipe from before is dropped when the row is taken.
+
+Not covered: the player ended by the system while it has the row, which an
+app with extended memory may do. That has not been seen yet.
+
+In VitaPlex BG, MusicController's now-playing bridge (`now_playing.hpp`)
+feeds the row, as it feeds Android's media session, and the row's presses
+come back through `dispatchTransport`. The queue tells the background
+player (`qm=1`):
+
+- **Play/pause** is the shell's STOP and PLAY, as ElevenMPV-A pauses songs
+  the shell plays. The shell keeps its place through a stop, and the player
+  leaves such a stop alone.
+- **Next** stops the song at once, without marking it played, and goes on to
+  the next, past repeat one.
+- **Previous** goes back to the song's start after its first 3 s, and to the
+  song before within them.
+
+A host run of the player covered these three as well (23 cases), and a host
+test of `qm_link.c` checked the messages byte by byte: the commands, the
+UTF-16 text with a surrogate pair and a stray byte, a long title cut to fit,
+and the presses. "Quick Menu Music Controls" in VitaPlex BG's settings turns
+it off; it is on by default.
+
 **The header took longer than the download** (log `2114643f`). This
 hand-over's first song was OGG, so the player fetched the server's MP3 (6.77
 MB in 7.6 s). Inspecting it and copying it behind a Xing header then took

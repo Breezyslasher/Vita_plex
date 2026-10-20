@@ -15,6 +15,9 @@
 #include <SDL2/SDL.h>
 #include <jni.h>
 #endif
+#ifdef __vita__
+#include "utils/background_audio.hpp"
+#endif
 
 namespace vitaplex {
 namespace nowplaying {
@@ -267,6 +270,16 @@ void smtcClear();
 }
 void update(const Info& info) { detail::smtcUpdate(info); }
 void clear() { detail::smtcClear(); }
+void setQueue(const std::vector<QueueEntry>&, int64_t) {}
+
+#elif defined(__vita__)  // ---- PS Vita: the quick menu's Music row, VitaPlex BG only ----
+
+// background_audio_psv.cpp puts it on the row through ElevenMPV-A's shell
+// plugin, and sends the row's presses back through dispatchTransport.
+void update(const Info& info) {
+    bgaudio::quickMenuNowPlaying(info.title, info.artist, info.album, info.playing);
+}
+void clear() { bgaudio::quickMenuNowPlayingCleared(); }
 void setQueue(const std::vector<QueueEntry>&, int64_t) {}
 
 #else  // ---- other platforms: no OS media session ----

@@ -67,6 +67,8 @@
 //   file=<that song as a file the app made ready for the shell, or nothing>
 //   port=<how the player takes the BGM port: one of the four below; the
 //         first when the line is missing>
+//   qm=<1: the song and its buttons in the quick menu's Music row, through
+//       ElevenMPV-A's plugin (qm_link.h); 0 or missing, not>
 //   track=<fields, below>        one a song, in the order they play
 //   end
 //

@@ -15,6 +15,7 @@
 
 #include "bgplayer.h"
 #include "program.h"
+#include "qm_link.h"
 
 #include <psp2/appmgr.h>
 #include <psp2/io/fcntl.h>
@@ -272,6 +273,7 @@ static int watcherMain(SceSize args, void* argp) {
         }
 
         watchQuickMenu();
+        playerQuickMenuTick();
 
         int count = 0;
         if (sceAppMgrReceiveEventNum(&count) < 0) continue;
@@ -337,6 +339,7 @@ int main(void) {
     else
         logLine("memory budget: %s", result(r, sizeof(r), rcBudget));
 
+    qmInit();
     SceUID t = sceKernelCreateThread("BgPlayerWatcher", watcherMain, 0x10000100, 0x10000, 0, 0, NULL);
     if (t >= 0) sceKernelStartThread(t, 0, NULL);
     t = sceKernelCreateThread("BgPlayerNet", netMain, 0x10000100 + 10, 0x10000, 0, 0, NULL);

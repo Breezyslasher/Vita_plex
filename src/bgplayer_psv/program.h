@@ -41,6 +41,9 @@ void playerStop(const char* why);
 // The power callback's argument: the power button stops the shell's music,
 // and this plays it again, as ElevenMPV-A does.
 void playerPowerEvent(int powerInfo);
+// From the watcher, four times a second: the quick menu's Music row through
+// ElevenMPV-A's plugin, while the queue says so and a song plays.
+void playerQuickMenuTick(void);
 
 // apps.c: which other apps run beside the player, and which of them have
 // extended memory, logged as that changes, on a thread of its own.
