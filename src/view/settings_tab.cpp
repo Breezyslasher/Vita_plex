@@ -1163,10 +1163,10 @@ brls::Box* SettingsTab::createMusicSection() {
         auto* portInfo = new brls::Label();
         portInfo->setText("Also used by the system player tests below and by the background "
                           "player. \"As a music player\" shows VitaPlex's icon in the quick "
-                          "menu. To see if its buttons work with the system player playing: "
-                          "pick it, run Test: System Player, Local File, hold PS and try them. "
-                          "Then leave with a song playing and start a game, and try them "
-                          "there.");
+                          "menu, but the system player will not play with it. To try the "
+                          "system player with no port taken: pick \"Not taken\", run Test: "
+                          "System Player, Local File, hold PS and try the buttons. Then leave "
+                          "with a song playing, start a game, and try them there.");
         portInfo->setFontSize(14);
         portInfo->setMarginLeft(16);
         portInfo->setMarginTop(8);

@@ -1875,6 +1875,20 @@ for a minute after:
   play the song again every 5 s as it does after the power button, and does
   not move on after two minutes. It waits for the shell to play again.
 
+**As a music player, the shell will not play** (build 2016, log
+`dbd9b556`). With the port held that way, and mpv paused for the system
+player test, the shell took the file (`Open` returned 0, and its track info
+then had the file's length) but stayed at state 10, with no sound for 12 s.
+The tests before, with the port at 0x80, went to state 1 and played. The
+Music row's buttons stayed dimmed with mpv playing and with the shell held
+like that. So the call makes the system show VitaPlex as the music player,
+and keeps the shell's own player from playing for it. ElevenMPV-A, whose
+author knows SceShell best, never makes the call. It takes 0x81 or 0x80, and
+lights the row's buttons from a SceShell plugin. The one case left is the
+shell playing with no port taken at all, as it may then take the port
+itself, as it does for the Music app. "Not taken" now means no port for the
+system player tests too, as it does for mpv and the background player.
+
 **The header took longer than the download** (log `2114643f`). This
 hand-over's first song was OGG, so the player fetched the server's MP3 (6.77
 MB in 7.6 s). Inspecting it and copying it behind a Xing header then took

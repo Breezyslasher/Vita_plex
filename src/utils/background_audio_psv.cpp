@@ -306,17 +306,29 @@ void holdPortForMpv(const char* why) {
 }
 
 // The port a system player test takes, and the background player is told to
-// take: the shell's priority, unless the port test picks a way with none.
-// "As a music player" put VitaPlex's icon in the quick menu's Music row with
-// mpv playing, its buttons dimmed (log 9c16c0d6); whether they come alive
-// with the shell playing is what this is for. The one a test took is
-// g_testPort, so that the end of the test gives back that one.
+// take: the shell's priority, unless the port test picks a way with none, or
+// none at all (0). "As a music player" put VitaPlex's icon in the quick
+// menu's Music row with mpv playing, its buttons dimmed (log 9c16c0d6), and
+// with it held the shell would not play a file: state 10, no sound (log
+// dbd9b556). The shell playing with no port taken is what is left to try.
+// The one a test took is g_testPort, so that the end of the test gives back
+// that one.
 int shellTestPort() {
     const int p = kOwnPort[g_ownPortTest];
-    return p == kPortPlain || p == kPortMusicPlayer ? p : kPortForShell;
+    return p == kPortPlain || p == kPortMusicPlayer || p == 0 ? p : kPortForShell;
 }
 
 int g_testPort = kPortForShell;   // under g_shellMutex
+
+// For a system player test, under g_shellMutex: the port the picker says, or
+// none held at all.
+void holdPortForTest() {
+    g_testPort = shellTestPort();
+    if (g_testPort != 0)
+        holdPort(g_testPort, "system player test");
+    else
+        releasePort(0, "system player test, with no port taken");
+}
 
 // How the queue tells the background player to take the port (bgplayer.h).
 const char* playerPortName() {
@@ -1861,11 +1873,12 @@ void setOwnPortTest(int choice) {
     g_ownPortTest = choice;
     startWatcher();   // for the lines after PS is held
     const int priority = kOwnPort[choice];
+    const int test = shellTestPort();
     brls::Logger::info("[bgaudio] port test: mpv takes the BGM port {}{}; system player tests {}; "
                        "the background player {}",
                        priority != 0 ? portName(priority) : "not at all",
                        choice == 0 ? ", while background playback is on" : "",
-                       portName(shellTestPort()), playerPortName());
+                       test != 0 ? portName(test) : "none", playerPortName());
     if (!MpvPlayer::getInstance().isPlaying()) return;
     if (choice != 0 || g_keepPlaying)
         holdPortForMpv("port test changed");
@@ -1894,8 +1907,7 @@ void runShellFileTest(Report done) {
         ShellTry r;
         {
             std::lock_guard<std::mutex> lock(g_shellMutex);
-            g_testPort = shellTestPort();
-            holdPort(g_testPort, "system player test");
+            holdPortForTest();
             r = shellTry("File " + baseName(path), path, true, g_service.load());
         }
         std::string report = "System player (" + service + "), local file\n\n" + r.line + "\n\n";
@@ -1976,8 +1988,7 @@ void runShellStreamTest(Report done) {
         }
 
         std::lock_guard<std::mutex> lock(g_shellMutex);
-        g_testPort = shellTestPort();
-        holdPort(g_testPort, "system player test");
+        holdPortForTest();
         brls::Logger::info("[bgaudio] BGM port before the test: {}", bgmState());
 
         // 1 and 2, on each service: the picked one first (its http link also
@@ -2219,7 +2230,7 @@ void runShellStreamTest(Report done) {
         const bool playingNow = replay.played || replay.maybe;
         if (!playingNow) {
             stopShellLocked("test over, nothing left playing");
-            releasePort(g_testPort, "system player test over");
+            if (g_testPort != 0) releasePort(g_testPort, "system player test over");
         }
 
         std::string report = "System player, streaming \"" + title + "\"\n\n";
@@ -2297,7 +2308,7 @@ std::string stopShellTest() {
     stopShellLocked("stopped from settings");
     const int port = g_testPort;
     lock.unlock();
-    releasePort(port, "system player test over");
+    if (port != 0) releasePort(port, "system player test over");
     return "System player stopped.";
 }
 

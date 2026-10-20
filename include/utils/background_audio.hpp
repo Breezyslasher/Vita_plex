@@ -106,10 +106,10 @@ void setShellService(int service);
 // while background playback is on, as before; 1 at 0x80, 2 with no priority,
 // 3 as a music player, 4 not at all, each whenever mpv plays. The system
 // player tests and the background player (through the queue) take it the
-// same way, except at 0x80 for 0, 1 and 4. "As a music player" put
-// VitaPlex's icon in the quick menu's Music row, its buttons dimmed, with mpv
-// playing (log 9c16c0d6); whether they come alive with the system player
-// playing is what the rest is for. Not saved.
+// same way, except at 0x80 for 0 and 1. "As a music player" put VitaPlex's
+// icon in the quick menu's Music row, its buttons dimmed, with mpv playing
+// (log 9c16c0d6), and the system player would not play with it held (log
+// dbd9b556). Not saved.
 int ownPortTest();
 void setOwnPortTest(int choice);
 
