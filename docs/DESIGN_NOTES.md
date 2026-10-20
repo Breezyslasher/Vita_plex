@@ -2056,6 +2056,69 @@ VitaPlex falls back to ElevenMPV-A's plugin when its own is missing, will
 not load, or opens no pipes. The plugin is GPL-3.0 like the one it is based
 on; VitaPlexBG.vpk carries its licence and a note of where its source is.
 
+**Build 2022 on the console: the plugin works, the row still looks dimmed**
+(logs `4db8baa2`, the plugin's, `a334ea6b`, VitaPlex BG's, and `f68246cc`,
+the player's).
+
+- VitaPlex BG loaded its own plugin. ElevenMPV-A's was in SceShell too,
+  from earlier that boot, and was asked to give the row back.
+- The layout check passed: the play button, found by its id, was among its
+  parent's 10 children.
+- Each time the quick menu opened, the plugin took the row at once. The
+  buttons went from enabled 0, state 1, to enabled 1, state 0 (normal).
+- All three buttons worked, for VitaPlex BG and then for the background
+  player, which got the row with the queue.
+- With the player, SceShell switched the buttons off again 110 ms after the
+  plugin had switched them on, and the plugin switched them back on.
+- On the screen the buttons still looked dimmed. The song did not show when
+  the quick menu opened, only after a song change while it stayed open.
+- The hand-over was silent for about 6 s. The player fetched 5.31 MB in
+  3.1 s and played 0.8 s after it handed the file to the system player.
+
+What the plugin's list of the row says:
+
+- Each button has a 64x64 plane at its place: previous `0xD639AB27`, play
+  `0xE057A7D0`, next `0x6FA104CC`. A fourth, `0xB26E4562`, of size 0x0, is
+  also at play's place. Each is listed just before its button, so they are
+  most likely the icons. A button's state does not reach a plane beside it,
+  which fits buttons that work and still look dimmed.
+- They all read colour FFFFFFFF. PAF's headers give a widget's total alpha
+  as its colour's alpha times two products of its own alphas and its
+  parents': show and meta (`GetTotalAlpha`). "Active" in the list meant a
+  show alpha of at least 95%. The meta alpha was not read.
+- A third line, `0x5608C548`, "There are no songs.", is at the title's place.
+- 390 ms after the open, the title line still held the title as set. So
+  either SceShell hid it some other way, or text set that early was not
+  drawn. ElevenMPV-A's plugin waits 100 ms after it sees the quick menu open
+  before it looks for the buttons and sets the lines, and its lines showed
+  (build 2019).
+
+Build 2023:
+
+- **Later, and kept.** The plugin takes the row 200 ms after it sees the
+  quick menu open. While it stays open, ten times a second, it puts back
+  what SceShell changed: buttons switched off, other text or colour on the
+  lines, dimmed icons.
+- **Icons undimmed.** A new look, "Enabled, icons undimmed", is the default.
+  It switches the buttons on, and sets the icons and buttons back to white
+  and full meta alpha wherever either was lowered. The plugin writes the
+  meta alpha into the widget itself, as `SetMetaAlpha_core` would.
+  ScePaf-RE has that export only from a prototype's debug data, and a NID
+  the console lacks would keep the whole plugin from loading. It imports the
+  same 22 NIDs as build 2022.
+- **A timeline.** For the first 8 opens of a boot, the plugin logs the
+  widgets of the row and its heading as the quick menu opens. It then logs
+  each change to them for 3 s. Each line has the widget's state, colour,
+  both alphas (its own and the product with its parents'), size, and
+  texture with its size; a button's state and dimmed colour; a line's text.
+  The plugin logs its own changes as it makes them, so the timeline shows
+  SceShell's. It logs opens where the row is SceShell's too, so the system
+  Music app playing gives the lit look to compare.
+- **The BGM port as SceShell reads it**, its first 40 changes in a boot.
+- **Protocol 2.** The pipes are `VitaPlexQM2::…` and the module
+  `VitaPlexQM2`, so a build-2022 plugin still loaded that boot is left
+  alone, and the new one loads beside it.
+
 **The header took longer than the download** (log `2114643f`). This
 hand-over's first song was OGG, so the player fetched the server's MP3 (6.77
 MB in 7.6 s). Inspecting it and copying it behind a Xing header then took

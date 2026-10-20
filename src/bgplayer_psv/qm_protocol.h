@@ -12,9 +12,10 @@
 // The pipes' names carry the protocol's version. A plugin loaded stays until
 // the Vita restarts, so a VitaPlex with another version finds no pipes of
 // its version and loads its own plugin beside the older one, which nothing
-// then asks for the row.
-#define QM_PIPE_TO_PLUGIN   "VitaPlexQM1::ToPlugin"
-#define QM_PIPE_FROM_PLUGIN "VitaPlexQM1::FromPlugin"
+// then asks for the row. Version 2's plugin waits before it takes the row,
+// keeps it as set while the quick menu is open, and can undim its icons.
+#define QM_PIPE_TO_PLUGIN   "VitaPlexQM2::ToPlugin"
+#define QM_PIPE_FROM_PLUGIN "VitaPlexQM2::FromPlugin"
 
 // To the plugin, a whole QmMessage each time.
 enum {
@@ -30,12 +31,15 @@ enum {
 };
 enum { QM_OWNER_APP = 1, QM_OWNER_PLAYER = 2 };
 // The row's buttons stay dimmed with ElevenMPV-A's way, ButtonBase::Enable(false),
-// though presses get through (screenshot, build 2019). Which of the others
-// lights them is for the console to say.
+// though presses get through (screenshot, build 2019), and with
+// Enable(true) as well (build 2022), the buttons then in their normal state:
+// their icons are planes of their own. Which look lights them is for the
+// console to say.
 enum {
-    QM_LOOK_ENABLE = 0,         // ButtonBase::Enable(true), the default
+    QM_LOOK_ENABLE = 0,         // ButtonBase::Enable(true)
     QM_LOOK_ENABLE_NORMAL,      // that, then ChangeButtonState(normal)
     QM_LOOK_AS_ELEVENMPVA,      // ButtonBase::Enable(false)
+    QM_LOOK_LIT,                // Enable(true), and the icons undimmed: the default
     QM_LOOK_COUNT
 };
 #define QM_ACTIVE_TIMEOUT_S 5

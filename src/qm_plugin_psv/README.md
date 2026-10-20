@@ -20,16 +20,22 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
 
 - **Buttons:** ElevenMPV-A's plugin switches the row's buttons on with
   `ButtonBase::Enable(false)`. Presses got through, but the buttons stayed
-  dimmed. This one uses `Enable(true)` by default. VitaPlex BG's settings can
-  pick the other ways (`QM_LOOK_*`), and the log has each button's state
-  before and after.
+  dimmed. They stayed dimmed with `Enable(true)` too: their icons are planes
+  of their own beside them. By default this one switches the buttons on and
+  sets the icons back to full colour and meta alpha if they were lowered.
+  VitaPlex BG's settings can pick the other ways (`QM_LOOK_*`), and the log
+  has each button's state before and after.
+- **When:** it takes the row 200 ms after the quick menu opens, as
+  ElevenMPV-A's plugin about does. A song set at once did not show. While
+  the quick menu stays open, it puts back what SceShell changes.
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system
   ends cannot hold the quick menu up.
 - **A log:** `ux0:data/VitaPlex/qm-plugin.log`, one file a boot, the boot
-  before in `qm-plugin.prev.log`. Once a boot it lists the Music row's
-  widgets, for the artwork and play/pause icon still to come.
+  before in `qm-plugin.prev.log`. For the first 8 opens of a boot it lists
+  the widgets of the Music row and its heading, then their changes for 3 s,
+  whoever has the row. It also logs the BGM port as SceShell reads it.
 
 ## Building
 
@@ -68,3 +74,7 @@ missing one refuses the module, and VitaPlex falls back.
 - `_sceAppMgrGetAppState(&state, 0x80, 0x03570000)`, the quick menu being open
   at offset 8 (`isSystemUiOverlaid`).
 - Pipes made with type `0x40` and attributes `0x81`; threads at priority 191.
+
+From its own list of the row (build 2022): the icons' ids, previous
+`0xD639AB27`, play `0xE057A7D0` and next `0x6FA104CC`, and the heading's,
+"Music", `0x90E6251E`.

@@ -233,7 +233,7 @@ bool handOver(const char* why);
 // show; it goes to the background player with the queue, and back to the
 // system as the app goes.
 std::atomic<bool> g_qmEnabled{false};   // the setting
-std::atomic<int> g_qmLook{QM_LOOK_ENABLE};   // the test picker
+std::atomic<int> g_qmLook{QM_LOOK_LIT};   // the test picker
 std::atomic<bool> g_qmActive{false};    // the plugin has the row for this process
 std::atomic<bool> g_qmGone{false};      // handed over or quitting: not taken again
 std::mutex g_qmMutex;
