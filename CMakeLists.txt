@@ -1519,11 +1519,18 @@ if(PLATFORM_PSV)
             SceKernelThreadMgr_stub
             SceRtc_stub
             gcc)
+        # vita_create_self appends CONFIG and STRIPPED to VITA_ELF_CREATE_FLAGS
+        # in this scope, as it does its own to VITA_MAKE_FSELF_FLAGS: both
+        # start from nothing and are put back, or every SELF made after this
+        # one gets the plugin's exports (build 2021).
         set(_qm_saved_fself "${VITA_MAKE_FSELF_FLAGS}")
+        set(_qm_saved_elf "${VITA_ELF_CREATE_FLAGS}")
         set(VITA_MAKE_FSELF_FLAGS "")
+        set(VITA_ELF_CREATE_FLAGS "")
         vita_create_self(vitaplex_qm.suprx vitaplex_qm
             CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/src/qm_plugin_psv/exports.yml UNSAFE STRIPPED)
         set(VITA_MAKE_FSELF_FLAGS "${_qm_saved_fself}")
+        set(VITA_ELF_CREATE_FLAGS "${_qm_saved_elf}")
         # Beside it in the package: its licence, and where its source is.
         set(VITAPLEX_QM_PLUGIN
             FILE ${CMAKE_BINARY_DIR}/vitaplex_qm.suprx               module/vitaplex_qm.suprx
