@@ -88,17 +88,19 @@
 #define BGPLAYER_MAX_TRACKS 1000
 
 // A track line's fields, separated by '|', which the app leaves out of them.
-// The player reads the first three; the app all of them, to set its queue up
-// again without asking the server.
+// The player reads all but the rating; the app all of them, to set its queue
+// up again without asking the server. A line with fewer, from an older app,
+// has the rest empty.
 enum {
     BGPLAYER_TRACK_KEY,       // the ratingKey
     BGPLAYER_TRACK_DURATION,  // ms, as the server gives it
     BGPLAYER_TRACK_LOCAL,     // a download of it on the memory card, or nothing
     BGPLAYER_TRACK_RATING,    // the user's rating, 0 to 10
-    BGPLAYER_TRACK_THUMB,
+    BGPLAYER_TRACK_THUMB,     // its cover on the server (a path), or nothing
     BGPLAYER_TRACK_TITLE,
     BGPLAYER_TRACK_ARTIST,
     BGPLAYER_TRACK_ALBUM,
+    BGPLAYER_TRACK_COVER,     // the download's copy of its cover, or nothing
     BGPLAYER_TRACK_FIELDS
 };
 

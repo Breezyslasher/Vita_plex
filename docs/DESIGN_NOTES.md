@@ -2337,6 +2337,19 @@ So the quick menu's Music row works for VitaPlex: the song, its cover, ⏸ and
 ▶ as it plays, and buttons that look and work as SceShell's own. Build 2029
 drops the byte dumps; the timeline stays.
 
+Build 2030: **the background player's covers.** With the queue handed over,
+the row showed the ♫, as only VitaPlex BG made covers. The decoding, square
+and PNG writing are now one C file both programs build
+(`src/bgplayer_psv/qm_cover.c`); its output is byte for byte what build
+2028's C++ wrote, on the host. The player reads each song's cover from the
+queue: the server's thumb, which it already carried, and a new last field
+with a download's copy (`BGPLAYER_TRACK_COVER`), which an older app's queue
+leaves empty. A thread of its own makes the cover as the song changes: the
+copy if there is one and it reads, else the server's photo transcoder at
+128x128, as VitaPlex BG asks for it. The songs of an album share one. The
+player has no borealis, so it builds stb_image itself, JPEG and PNG only
+(`stb_image_impl.c`).
+
 **The header took longer than the download** (log `2114643f`). This
 hand-over's first song was OGG, so the player fetched the server's MP3 (6.77
 MB in 7.6 s). Inspecting it and copying it behind a Xing header then took

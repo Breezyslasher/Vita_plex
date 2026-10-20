@@ -22,6 +22,7 @@
 #include "bgplayer.h"
 #include "mp3_info.h"
 #include "program.h"
+#include "qm_cover.h"
 #include "qm_link.h"
 
 #include "ShellAudio.h"
@@ -61,6 +62,8 @@ typedef struct Entry {
     char title[64];
     char artist[48];
     char album[48];    // for the quick menu's row
+    char thumb[80];    // its cover on the server, or "" (bgplayer.h)
+    char cover[112];   // the download's copy of its cover, or ""
 } Entry;
 
 // A song made ready for the shell.
@@ -716,6 +719,14 @@ static void field(const char** p, char* out, size_t size) {
     *p += n + ((*p)[n] == '|');
 }
 
+// The same, but out left empty if the field does not fit: a path is never cut.
+static void wholeField(const char** p, char* out, size_t size) {
+    const size_t n = strcspn(*p, "|");
+    if (n < size) snprintf(out, size, "%.*s", (int)n, *p);
+    else out[0] = '\0';
+    *p += n + ((*p)[n] == '|');
+}
+
 static void parseTrack(const char* p, Entry* e) {
     char num[16], skip[8];
     memset(e, 0, sizeof(*e));
@@ -724,10 +735,11 @@ static void parseTrack(const char* p, Entry* e) {
     e->durationMs = atoi(num);
     field(&p, e->local, sizeof(e->local));
     field(&p, skip, sizeof(skip));   // the rating
-    field(&p, skip, sizeof(skip));   // the thumb
+    wholeField(&p, e->thumb, sizeof(e->thumb));
     field(&p, e->title, sizeof(e->title));
     field(&p, e->artist, sizeof(e->artist));
     field(&p, e->album, sizeof(e->album));
+    wholeField(&p, e->cover, sizeof(e->cover));
 }
 
 static const char* repeatName(int r) {
@@ -1202,13 +1214,137 @@ static void stopShell(const char* why) {
     g_menuPaused = 0;
 }
 
+// ── The song's cover on the row ──────────────────────────────────────────
+// Made by a thread of its own, as playerQuickMenuTick asks for it, the way
+// VitaPlex BG makes its own (qm_cover.h): from the download's copy of the
+// song's cover, else from the server's photo transcoder at twice the size
+// the row shows. One at a time; the songs of an album share theirs.
+static SceUID g_coverLock = -1, g_coverSema = -1;
+static char g_coverWant[128];      // the cover asked for: the copy's path, else the server's
+static char g_coverWantThumb[80];  // ... and the server's, should the copy not read
+static char g_coverMade[128];      // the last one made, or that failed ...
+static uint32_t g_coverSerial;     // ... and its serial, 0 if it failed
+
+// A file whole into *b, at most as much as a response's body (toBody). 0
+// when read.
+static int readWhole(const char* path, Body* b) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return -1;
+    char buf[16384];
+    size_t n;
+    int rc = 0;
+    while (rc == 0 && (n = fread(buf, 1, sizeof(buf), f)) > 0)
+        if (toBody(buf, 1, n, b) != n) rc = -1;
+    if (ferror(f)) rc = -1;
+    fclose(f);
+    return rc == 0 && b->len > 0 ? 0 : -1;
+}
+
+// The server's cover at thumb, through its photo transcoder, into *b. The
+// HTTP status, or -1.
+static int fetchCover(const char* thumb, Body* b) {
+    char* url = curl_easy_escape(NULL, thumb, 0);
+    char* token = curl_easy_escape(NULL, g_token, 0);
+    char path[512];
+    snprintf(path, sizeof(path),
+             "/photo/:/transcode?url=%s&width=%d&height=%d&minSize=1&upscale=1%s%s",
+             url ? url : "", QM_ART_SIZE * 2, QM_ART_SIZE * 2,
+             token && token[0] ? "&X-Plex-Token=" : "", token ? token : "");
+    curl_free(url);
+    curl_free(token);
+    return getBody(path, NULL, b);
+}
+
+static int coverMain(SceSize args, void* argp) {
+    (void)args;
+    (void)argp;
+    uint32_t last = 0;  // the serial of the last cover made
+    for (;;) {
+        sceKernelWaitSema(g_coverSema, 1, NULL);
+        char want[sizeof(g_coverWant)], thumb[sizeof(g_coverWantThumb)];
+        sceKernelLockMutex(g_coverLock, 1, NULL);
+        snprintf(want, sizeof(want), "%s", g_coverWant);
+        snprintf(thumb, sizeof(thumb), "%s", g_coverWantThumb);
+        const int made = strcmp(want, g_coverMade) == 0;
+        sceKernelUnlockMutex(g_coverLock, 1);
+        if (made) continue;
+        const SceUInt64 start = sceKernelGetSystemTimeWide();
+        uint32_t serial = qmCoverNextSerial(last, start);
+        char why[160] = "";
+        const char* from = "the download's copy";
+        Body b = {0};
+        int got = strcmp(want, thumb) != 0 && readWhole(want, &b) == 0;
+        if (!got && thumb[0]) {
+            free(b.data);
+            memset(&b, 0, sizeof(b));
+            from = "the server";
+            const int status = fetchCover(thumb, &b);
+            got = status == 200;
+            if (!got) snprintf(why, sizeof(why), "not fetched: HTTP %d", status);
+        } else if (!got) {
+            snprintf(why, sizeof(why), "the download's copy would not read");
+        }
+        if (got && qmCoverWrite(b.data, b.len, serial, why, sizeof(why)) == 0) {
+            last = serial;
+            logLine("quick menu: cover %u made from %s in %u ms", (unsigned)serial, from,
+                    (unsigned)((sceKernelGetSystemTimeWide() - start) / 1000));
+        } else {
+            logLine("quick menu: cover %s", why);
+            serial = 0;
+        }
+        free(b.data);
+        sceKernelLockMutex(g_coverLock, 1, NULL);
+        snprintf(g_coverMade, sizeof(g_coverMade), "%s", want);
+        g_coverSerial = serial;
+        sceKernelUnlockMutex(g_coverLock, 1);
+    }
+    return 0;
+}
+
+// From the quick menu's tick: the cover for e, made by now or asked for. 1
+// with its serial (0 for none) once made; 0 while it is being made.
+static int coverFor(const Entry* e, uint32_t* serial) {
+    const char* want = e->cover[0] ? e->cover : e->thumb;
+    *serial = 0;
+    if (!want[0]) return 1;
+    static int started;
+    if (!started) {
+        started = 1;
+        g_coverLock = sceKernelCreateMutex("BgPlayerCoverLock", 0, 0, NULL);
+        g_coverSema = sceKernelCreateSema("BgPlayerCover", 0, 0, 1, NULL);
+        SceUID t = g_coverLock >= 0 && g_coverSema >= 0
+                       ? sceKernelCreateThread("BgPlayerCover", coverMain, 0x10000100 + 20,
+                                               128 * 1024, 0, 0, NULL)
+                       : -1;
+        const int rc = t >= 0 ? sceKernelStartThread(t, 0, NULL) : t;
+        if (rc < 0) {
+            char r[24];
+            logLine("quick menu: no thread for covers: %s", result(r, sizeof(r), rc));
+            g_coverSema = -1;
+        }
+    }
+    if (g_coverSema < 0) return 1;
+    sceKernelLockMutex(g_coverLock, 1, NULL);
+    const int made = strcmp(want, g_coverMade) == 0;
+    const int asked = strcmp(want, g_coverWant) == 0;
+    if (made) *serial = g_coverSerial;
+    if (!made && !asked) {
+        snprintf(g_coverWant, sizeof(g_coverWant), "%s", want);
+        snprintf(g_coverWantThumb, sizeof(g_coverWantThumb), "%s", e->thumb);
+    }
+    sceKernelUnlockMutex(g_coverLock, 1);
+    if (!made && !asked) sceKernelSignalSema(g_coverSema, 1);
+    return made;
+}
+
 // The row, from main.c's watcher: the plugin opened the first time a song is
 // with the shell (and again at most every 30 s while that fails), the row
-// taken while the queue plays and the song sent as it changes, and presses
-// passed to watchSong.
+// taken while the queue plays and the song and its cover sent as they
+// change, and presses passed to watchSong.
 void playerQuickMenuTick(void) {
     static double lastTry, lastBeat;
     static int sentIndex = -2, sentPlaying = -1;
+    static int64_t sentArt = -1;  // the cover's serial sent, -1 for none yet
     char r[24];
     if (!(g_qmEnabled && g_handedOver && g_shellUp && !g_paused && !g_stopped)) {
         if (__atomic_exchange_n(&g_qmActive, 0, __ATOMIC_SEQ_CST))
@@ -1235,6 +1371,7 @@ void playerQuickMenuTick(void) {
         g_qmActive = 1;
         sentIndex = -2;
         sentPlaying = -1;
+        sentArt = -1;
         lastBeat = now();
     }
     // VitaPlex's plugin gives the row back by itself once these stop, as when
@@ -1254,6 +1391,14 @@ void playerQuickMenuTick(void) {
     }
     const int playing = !g_menuPaused;
     if (playing != sentPlaying && qmSetPlaying(playing) >= 0) sentPlaying = playing;
+    // The cover: the last one stays on the row while the next is made.
+    uint32_t art;
+    if (index >= 0 && index < g_count && qmIsOwn() && coverFor(&g_queue[index], &art) &&
+        (int64_t)art != sentArt) {
+        const int rc = qmSetArt(art);
+        logLine("quick menu: cover %u sent: %s", (unsigned)art, result(r, sizeof(r), rc));
+        if (rc >= 0) sentArt = art;
+    }
     for (int press; (press = qmPoll()) != QM_NONE;) {
         logLine("quick menu: %s pressed",
                 press == QM_NEXT ? "next" : press == QM_PREVIOUS ? "previous" : "play/pause");

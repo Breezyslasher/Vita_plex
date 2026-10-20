@@ -18,14 +18,11 @@
 #include "platform/paths.hpp"
 #include "platform/platform.hpp"
 #include "player/mpv_player.hpp"
-#include "utils/cover_png.hpp"
 #include "utils/http_client.hpp"
 #include "utils/now_playing.hpp"
 #include "utils/vita_install.hpp"
 
 #include <borealis.hpp>
-// The decoder nanovg builds into borealis (nanovg.c), declared only.
-#include <borealis/extern/nanovg/stb_image.h>
 
 #include <psp2/io/dirent.h>
 #include <psp2/kernel/processmgr.h>
@@ -35,6 +32,7 @@
 #include <psp2/sysmodule.h>
 
 #include "bgplayer.h"
+#include "qm_cover.h"
 #include "qm_link.h"
 
 #include <arpa/inet.h>
@@ -252,9 +250,8 @@ QmSong g_qmSong;   // under g_qmMutex
 // ── The song's cover on the row (QM_CMD_ART) ─────────────────────────────
 // Made by a thread of its own, as the watcher asks for it: Plex's thumbnail
 // through its transcoder at twice the size the row shows, or a download's
-// local copy, decoded with the stb_image borealis builds, its middle square
-// scaled to QM_ART_SIZE and written as a PNG (cover_png.hpp), which PAF's
-// decoder in SceShell reads. The watcher sends its serial once written.
+// local copy, made into the PNG the plugin loads (qm_cover.h, which the
+// background player shares). The watcher sends its serial once written.
 std::mutex g_qmArtMutex;
 std::string g_qmArtWanted;     // the cover asked for, "" for none
 std::string g_qmArtDone;       // the last one made, or that failed ...
@@ -293,30 +290,12 @@ std::string makeQmArt(const std::string& source, uint32_t serial) {
         for (size_t n; (n = std::fread(buf, 1, sizeof(buf), f)) > 0;) bytes.append(buf, n);
         std::fclose(f);
     }
-    int width = 0, height = 0, channels = 0;
-    stbi_uc* px = stbi_load_from_memory((const stbi_uc*)bytes.data(), (int)bytes.size(), &width,
-                                        &height, &channels, 3);
-    if (!px) {
-        const char* why = stbi_failure_reason();
-        return "not decoded (" + std::to_string(bytes.size()) + " bytes): " + (why ? why : "?");
-    }
-    const std::string png =
-        cover::pngRgb(cover::squareRgb(px, width, height, QM_ART_SIZE), QM_ART_SIZE);
-    stbi_image_free(px);
-    char path[64];
-    std::snprintf(path, sizeof(path), QM_ART_PATH_FMT, (unsigned)(serial & 1));
-    FILE* out = std::fopen(path, "wb");
-    if (!out) return std::string("not written: ") + path + " would not open";
-    const bool wrote = std::fwrite(png.data(), 1, png.size(), out) == png.size();
-    if (std::fclose(out) != 0 || !wrote) return std::string("not written to ") + path;
-    return "";
+    char why[160];
+    return qmCoverWrite(bytes.data(), bytes.size(), serial, why, sizeof(why)) == 0 ? "" : why;
 }
 
 int qmArtMain(SceSize, void*) {
-    // Serials only grow in a boot, process to process, and one after another
-    // goes to the other file (qm_protocol.h): the milliseconds since it, past
-    // the last, with the other lowest bit.
-    uint32_t last = 0;
+    uint32_t last = 0;   // the serial of the last cover made
     for (;;) {
         sceKernelWaitSema(g_qmArtSema, 1, nullptr);
         std::string source;
@@ -328,9 +307,7 @@ int qmArtMain(SceSize, void*) {
         uint32_t serial = 0;
         if (!source.empty()) {
             const SceUInt64 start = sceKernelGetSystemTimeWide();
-            serial = std::max(last + 1, (uint32_t)(start / 1000));
-            if (last != 0 && (serial & 1) == (last & 1)) serial++;
-            if (serial == 0) serial = 1;
+            serial = qmCoverNextSerial(last, start);
             const std::string failed = makeQmArt(source, serial);
             if (failed.empty()) {
                 last = serial;
@@ -1760,16 +1737,18 @@ bool writeQueue(std::string& what) {
     DownloadsManager& downloads = DownloadsManager::getInstance();
     for (std::size_t i = from; i < order.size() && i - from < BGPLAYER_MAX_TRACKS; i++) {
         const QueueItem& t = items[(std::size_t)order[i]];
-        std::string local;
+        std::string local, cover;
         DownloadItem dl;
-        if (downloads.getDownloadCopy(t.ratingKey, dl) && dl.state == DownloadState::COMPLETED)
+        if (downloads.getDownloadCopy(t.ratingKey, dl) && dl.state == DownloadState::COMPLETED) {
             local = dl.localPath;
+            cover = dl.thumbPath;   // as MusicController takes it for the row
+        }
         char rating[16];
         std::snprintf(rating, sizeof(rating), "%.1f", t.userRating);
         text += "track=" + trackField(t.ratingKey) + "|" + std::to_string(t.duration * 1000) +
                 "|" + trackField(local) + "|" + rating + "|" + trackField(t.thumb) + "|" +
                 trackField(t.title) + "|" + trackField(t.artist) + "|" + trackField(t.album) +
-                "\n";
+                "|" + trackField(cover) + "\n";
     }
     text += "end\n";
     if (!writeWhole(BGPLAYER_QUEUE, text)) return false;

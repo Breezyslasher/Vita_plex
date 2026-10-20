@@ -836,11 +836,12 @@ int main() {
     # SDK leaves out come from appmgr_bgm_stub.S. The quick menu's Music row
     # goes through ElevenMPV-A's shell plugin (qm_link.c), which VitaPlexBG.vpk
     # carries, with the pipe and taiHEN calls the SDK leaves out in
-    # qm_link_stub.S.
+    # qm_link_stub.S, and the song's cover through qm_cover.c, which decodes
+    # with the stb_image borealis's nanovg builds.
     enable_language(ASM)
     target_sources(${PROJECT_NAME} PRIVATE
         src/utils/background_audio_psv.cpp
-        src/utils/cover_png.cpp
+        src/bgplayer_psv/qm_cover.c
         src/utils/appmgr_bgm_stub.S
         src/bgplayer_psv/qm_link.c
         src/bgplayer_psv/qm_link_stub.S
@@ -1456,14 +1457,19 @@ if(PLATFORM_PSV)
         src/bgplayer_psv/player.c
         src/bgplayer_psv/apps.c
         src/bgplayer_psv/mp3_info.c
+        src/bgplayer_psv/qm_cover.c
         src/bgplayer_psv/qm_link.c
         src/bgplayer_psv/qm_link_stub.S
         src/bgplayer_psv/raw_exit.S
+        src/bgplayer_psv/stb_image_impl.c
         src/utils/appmgr_bgm_stub.S
         lib/libshellaudio/ShellAudio.c
         lib/libshellaudio/shellsvc_stub.S)
+    # stb_image.h, for the covers on the quick menu's row (qm_cover.c), from
+    # where VitaPlex BG gets it with borealis's nanovg.
     target_include_directories(vitaplex_bgplayer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/borealis/library/include/borealis/extern/nanovg)
     target_compile_definitions(vitaplex_bgplayer PRIVATE
         BGPLAYER_TITLEID=\"${VITA_BG_PLAYER_TITLEID}\"
         BGPLAYER_APP_TITLEID=\"${VITA_BG_TITLEID}\")

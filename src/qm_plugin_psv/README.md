@@ -44,7 +44,8 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   icon's texture (`0xB26E4562`, a second icon at play's place, sized 0x0),
   as SceShell's own row shows ⏸ while its Music app plays.
 - **The cover:** the Music heading's icon (`0xE219E0DE`) shows the song's
-  cover, a 64x64 PNG VitaPlex BG writes (`QM_ART_PATH_FMT`, `QM_CMD_ART`).
+  cover, a 64x64 PNG that VitaPlex BG or its background player writes
+  (`src/bgplayer_psv/qm_cover.c`, `QM_ART_PATH_FMT`, `QM_CMD_ART`).
   The plugin loads it with PAF's own decoder (`LocalFile::Open`,
   `Surface::Load`) into power_manage_plugin's texture pool, and the icon
   keeps the only reference to it. The icon gets its ♫ back when the row is
