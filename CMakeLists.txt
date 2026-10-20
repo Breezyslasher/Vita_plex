@@ -1495,7 +1495,9 @@ if(PLATFORM_PSV)
     # vitasdk-paf-component's samples build: wchar_t is PAF's 16 bits, and
     # the headers' __declspec(dllimport) goes. Always -O2, whatever the build
     # type: what it imports (paf_stubs.S) is what the compiler leaves out of
-    # line, and at -O0 that is more.
+    # line, and at -O0 that is more. GCC 15 rejects template bodies in PAF's
+    # headers that nothing here instantiates; -Wno-template-body leaves those
+    # to instantiation, as older compilers did.
     set(VITAPLEX_PAF_INCLUDE_DIR "" CACHE PATH
         "PAF headers for the Vita quick menu plugin (scripts/vita/fetch_paf_headers.sh)")
     set(VITAPLEX_QM_PLUGIN "")
@@ -1508,7 +1510,7 @@ if(PLATFORM_PSV)
             ${VITAPLEX_PAF_INCLUDE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/bgplayer_psv)
         target_compile_options(vitaplex_qm PRIVATE
-            "$<$<COMPILE_LANGUAGE:CXX>:-O2;-fno-rtti;-fno-exceptions;-fno-builtin;-fshort-wchar;-fno-threadsafe-statics;-fno-sized-deallocation;-Wno-unused-function;-Wno-sign-compare;-D__declspec(x)=>")
+            "$<$<COMPILE_LANGUAGE:CXX>:-O2;-fno-rtti;-fno-exceptions;-fno-builtin;-fshort-wchar;-fno-threadsafe-statics;-fno-sized-deallocation;-Wno-unused-function;-Wno-sign-compare;-Wno-template-body;-D__declspec(x)=>")
         target_link_options(vitaplex_qm PRIVATE -nostartfiles -nostdlib)
         target_link_libraries(vitaplex_qm
             SceLibKernel_stub

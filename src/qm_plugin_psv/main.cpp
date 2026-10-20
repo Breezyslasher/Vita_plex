@@ -36,6 +36,7 @@
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/rtc.h>
 
+#include <limits>  // before PAF's headers: their vector uses it without including it
 #include <stdarg.h>
 #include <stdint.h>
 

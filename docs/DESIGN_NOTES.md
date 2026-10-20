@@ -2012,10 +2012,15 @@ with Sony's SDK. Its replacement builds with vitasdk:
   `scripts/vita/fetch_paf_headers.sh` fetches both at pinned commits, since
   ScePaf-RE has no licence file; its install would also replace the SDK's
   own PAF stubs, so it is not used.
-- **Imports.** `paf_stubs.S` has the 21 PAF imports the plugin needs, written
+- **Imports.** `paf_stubs.S` has the 22 PAF imports the plugin needs, written
   by `scripts/vita/gen_paf_stubs.py` from ScePaf-RE's NID table. Each NID is
   its name's hash with PAF's key. 18 of them are ones ElevenMPV-A's binary
-  imports.
+  imports. They cover the plugin built at -O0 as well as -O2, so a compiler
+  that inlines less finds them all. Build 2020 failed on CI's GCC 15 (the
+  local check was GCC 10): ScePaf-RE's vector uses `std::numeric_limits`
+  without `<limits>`, which GCC 15 now finds in template bodies nothing
+  instantiates. The plugin includes `<limits>` first and builds with
+  `-Wno-template-body`.
 - **Checked against ElevenMPV-A's binary**, unpacked and disassembled:
   - its virtual calls for colour and text go through slots `0x98` and
     `0x11C`, ScePaf-RE's `SetColor_core` and `SetString`;

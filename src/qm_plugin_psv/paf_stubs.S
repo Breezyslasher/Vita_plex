@@ -6,6 +6,17 @@
 
 	.arch armv7a
 
+	.section .vitalink.fstubs.ScePafCommon,"ax",%progbits
+
+	.align 4
+	.global _ZN3paf15common_internal8on_errorEv
+	.type _ZN3paf15common_internal8on_errorEv, %function
+_ZN3paf15common_internal8on_errorEv:
+	.word 0x00000000
+	.word 0x3C1965CD
+	.word 0x6A687A77
+	.align 4
+
 	.section .vitalink.fstubs.ScePafStdc,"ax",%progbits
 
 	.align 4

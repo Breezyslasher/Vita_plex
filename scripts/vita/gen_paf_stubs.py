@@ -10,7 +10,10 @@ at the commits scripts/vita/fetch_paf_headers.sh pins. The stubs are not weak:
 a module importing a NID the firmware lacks fails to load, and VitaPlex then
 falls back to ElevenMPV-A's plugin, rather than jumping through an empty stub.
 
-usage: gen_paf_stubs.py ScePaf.yml main.o > src/qm_plugin_psv/paf_stubs.S
+Given the plugin's object built at -O0 as well as -O2, the stubs cover what
+a compiler that inlines less than this one leaves out of line.
+
+usage: gen_paf_stubs.py ScePaf.yml main.o [main-O0.o ...] > src/qm_plugin_psv/paf_stubs.S
        (arm-vita-eabi-nm must be on PATH)
 """
 
@@ -42,17 +45,20 @@ def read_table(path):
     return table
 
 
-def undefined(obj):
-    out = subprocess.run(["arm-vita-eabi-nm", "-u", obj], check=True, capture_output=True,
-                         text=True).stdout
-    return sorted({line.split()[-1] for line in out.splitlines() if line.strip()})
+def undefined(objs):
+    syms = set()
+    for obj in objs:
+        out = subprocess.run(["arm-vita-eabi-nm", "-u", obj], check=True, capture_output=True,
+                             text=True).stdout
+        syms |= {line.split()[-1] for line in out.splitlines() if line.strip()}
+    return sorted(syms)
 
 
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) < 3:
         sys.exit(__doc__)
     table = read_table(sys.argv[1])
-    wanted = [s for s in undefined(sys.argv[2]) if s in table]
+    wanted = [s for s in undefined(sys.argv[2:]) if s in table]
     by_section = {}
     for sym in wanted:
         kind, library, library_nid, nid = table[sym]

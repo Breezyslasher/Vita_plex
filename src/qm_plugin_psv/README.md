@@ -48,10 +48,11 @@ writes from ScePaf-RE's NID table:
 
 1. Build vitasdk-paf-component's `libpaf/emd2yml` and run it next to the
    patched ScePaf-RE to get `ScePaf.yml`.
-2. Compile `main.cpp` with the flags in CMakeLists.txt.
-3. Run `gen_paf_stubs.py ScePaf.yml main.o > paf_stubs.S`.
+2. Compile `main.cpp` with the flags in CMakeLists.txt, once at -O2 and once
+   at -O0, so the stubs also cover a compiler that inlines less.
+3. Run `gen_paf_stubs.py ScePaf.yml main.o main-O0.o > paf_stubs.S`.
 
-Every NID in it is the hash of its name with PAF's key, and 18 of the 21 are
+Every NID in it is the hash of its name with PAF's key, and 18 of the 22 are
 ones ElevenMPV-A's plugin imports. The stubs are not weak, so a firmware
 missing one refuses the module, and VitaPlex falls back.
 
