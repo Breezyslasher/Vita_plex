@@ -1903,9 +1903,29 @@ buttons, so VitaPlex BG uses the plugin ElevenMPV-A lights them with
   "artist / album".
 - It reads PLAY, FF and REW back from `ElevenMPVA::ShellIPC_TX`.
 
-VitaPlex BG loads the same file from ElevenMPV-A's install,
-`ux0:app/GRVA00008/module/shell_plugin.suprx`, rather than ship it, since
-VitaPlex is Apache-2.0. Three calls the SDK leaves out come through
+Build 2018 loaded the same file from ElevenMPV-A's install,
+`ux0:app/GRVA00008/module/shell_plugin.suprx`, so ElevenMPV-A had to be
+installed as well. From build 2019 VitaPlexBG.vpk carries it, as the v7.10
+release has it, in the same place in its own folder:
+`ux0:app/VPLEX0002/module/shell_plugin.suprx`. That copy is loaded first, and
+ElevenMPV-A's is only tried after it.
+
+- The plugin is GPL-3.0, VitaPlex Apache-2.0. The plugin is a program of its
+  own that VitaPlex only talks to through pipes, so the package is an
+  aggregate of the two, and each keeps its own licence.
+- Shipping it means giving its licence and its source with it.
+  `third_party/elevenmpva-shell-plugin` has the file, ElevenMPV-A's licence
+  and the plugin's source from the v7.10 tag, each file the same git blob as
+  upstream's.
+- The package puts the licence and a note of where that source is beside
+  the plugin (`module/shell_plugin.LICENSE.txt` and
+  `module/shell_plugin.NOTICE.txt`).
+- The release file's bytes are the ones committed at that tag, beside the
+  source. The plugin builds only with Sony's SDK, so it is shipped as
+  released, not built.
+
+Whichever of VitaPlex BG and ElevenMPV-A loads it first, the other uses that
+copy through the pipes. Three calls the SDK leaves out come through
 `qm_link_stub.S`:
 
 - `sceKernelOpenMsgPipe` and `sceKernelCloseMsgPipe`, from SceThreadmgr in

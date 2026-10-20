@@ -109,9 +109,15 @@ int qmOpen(char* what, size_t size) {
         n = snprintf(what, size, "ElevenMPV-A's plugin was in SceShell already");
     } else {
         SceIoStat st;
-        if (sceIoGetstat(QM_PLUGIN_PATH, &st) < 0) {
-            snprintf(what, size, "no ElevenMPV-A plugin at %s: is ElevenMPV-A installed?",
-                     QM_PLUGIN_PATH);
+        const char* path = QM_PLUGIN_PATH;
+        const char* whose = "VitaPlex BG's copy of ElevenMPV-A's plugin";
+        if (sceIoGetstat(path, &st) < 0) {
+            path = QM_PLUGIN_PATH_EMPVA;
+            whose = "ElevenMPV-A's own plugin";
+        }
+        if (sceIoGetstat(path, &st) < 0) {
+            snprintf(what, size, "ElevenMPV-A's plugin is at neither %s nor %s",
+                     QM_PLUGIN_PATH, QM_PLUGIN_PATH_EMPVA);
             unlock();
             return to;
         }
@@ -126,15 +132,15 @@ int qmOpen(char* what, size_t size) {
         memset(&args, 0, sizeof(args));
         args.size = sizeof(args);
         args.pid = shell;
-        const SceUID module = vitaplexTaiLoadStartModuleForPidForUser(QM_PLUGIN_PATH, &args);
+        const SceUID module = vitaplexTaiLoadStartModuleForPidForUser(path, &args);
         if (module < 0) {
-            snprintf(what, size, "loading ElevenMPV-A's plugin into SceShell: 0x%08X",
+            snprintf(what, size, "loading %s (%s) into SceShell: 0x%08X", whose, path,
                      (unsigned)module);
             unlock();
             return module;
         }
         to = vitaplexOpenMsgPipe(PIPE_TO_PLUGIN);
-        n = snprintf(what, size, "loaded ElevenMPV-A's plugin into SceShell (module 0x%08X)",
+        n = snprintf(what, size, "loaded %s (%s) into SceShell (module 0x%08X)", whose, path,
                      (unsigned)module);
     }
     const SceUID from = vitaplexOpenMsgPipe(PIPE_FROM_PLUGIN);

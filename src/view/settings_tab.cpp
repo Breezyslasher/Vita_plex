@@ -1163,9 +1163,9 @@ brls::Box* SettingsTab::createMusicSection() {
         auto* quickMenuInfo = new brls::Label();
         quickMenuInfo->setText("Shows the song in the Music row of the quick menu (hold PS) and "
                                "makes its play/pause, next and previous buttons work, here and "
-                               "for the background player. Needs ElevenMPV-A installed: its "
-                               "quick menu plugin is used, and stays loaded until the Vita "
-                               "restarts.");
+                               "for the background player. Uses ElevenMPV-A's quick menu "
+                               "plugin, which VitaPlex BG comes with (GPL-3.0, by GrapheneCt); "
+                               "it stays loaded until the Vita restarts.");
         quickMenuInfo->setFontSize(14);
         quickMenuInfo->setMarginLeft(16);
         quickMenuInfo->setMarginTop(8);

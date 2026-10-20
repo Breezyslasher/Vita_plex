@@ -18,3 +18,10 @@ Version 2.0.
 This product dynamically links libmpv (https://mpv.io), licensed under the GNU
 Lesser General Public License, version 2.1 or later, and bundles or links
 further third-party libraries under their respective licenses.
+
+The PS Vita's VitaPlex BG package (VitaPlexBG.vpk) also carries, unchanged,
+the quick menu plugin of ElevenMPV-A (https://github.com/GrapheneCt/ElevenMPV-A)
+by GrapheneCt. It is a separate program, licensed under the GNU General
+Public License, version 3, which VitaPlex BG loads into the system shell and
+talks to through message pipes. Its licence and source are in
+third_party/elevenmpva-shell-plugin.

@@ -834,8 +834,9 @@ int main() {
     # through the files bgplayer.h lays out, and ends through the system call
     # under sceKernelExitProcess once it has (raw_exit.S). Two BGM calls the
     # SDK leaves out come from appmgr_bgm_stub.S. The quick menu's Music row
-    # goes through ElevenMPV-A's shell plugin (qm_link.c), with the pipe and
-    # taiHEN calls the SDK leaves out in qm_link_stub.S.
+    # goes through ElevenMPV-A's shell plugin (qm_link.c), which VitaPlexBG.vpk
+    # carries, with the pipe and taiHEN calls the SDK leaves out in
+    # qm_link_stub.S.
     enable_language(ASM)
     target_sources(${PROJECT_NAME} PRIVATE
         src/utils/background_audio_psv.cpp
@@ -1520,7 +1521,14 @@ if(PLATFORM_PSV)
         NAME    "VitaPlex BG"
         ${VITA_MAIN_VPK_FILES}
         FILE ${CMAKE_BINARY_DIR}/vitaplex_bgplayer.self eboot2.bin
-        FILE ${_bgp_param2} sce_sys/param2.sfo)
+        FILE ${_bgp_param2} sce_sys/param2.sfo
+        # ElevenMPV-A's quick menu plugin as its release has it, a GPL-3.0
+        # program of its own that the app and its player load into SceShell
+        # (qm_link.c), with its licence and a note of where its source is
+        # beside it (third_party/elevenmpva-shell-plugin/README.md).
+        FILE third_party/elevenmpva-shell-plugin/shell_plugin.suprx module/shell_plugin.suprx
+        FILE third_party/elevenmpva-shell-plugin/LICENSE            module/shell_plugin.LICENSE.txt
+        FILE third_party/elevenmpva-shell-plugin/NOTICE.txt         module/shell_plugin.NOTICE.txt)
     set(VITA_MKSFOEX_FLAGS "${_bg_saved_sfo}")
     set(VITA_PACK_VPK_FLAGS "${_bg_saved_pack}")
     set(resources "${_bg_saved_resources}")
