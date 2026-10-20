@@ -1798,6 +1798,66 @@ length and is left alone. The request to quit is now logged with the event's
 bytes, since the app cannot yet tell a game started over it from its
 LiveArea closed: both hand the music over.
 
+**Build 2014 on the console** (logs `24755753`, the player's, and `c0ea1fd8`,
+VitaPlex BG's, from one session). VitaShell was opened over VitaPlex BG
+playing, with the setting at "plays on":
+
+- The player took the 15 songs over at 0:25 of the first. The seek took
+  0.3 s, the shell had the song's length as the server has it (6:21), and the
+  next song downloaded in 3.7 s while it played.
+- VitaShell is `gd` with `ATTRIBUTE2` 0, an app without extended memory, as
+  the paragraph above supposed. 32 of the 209 apps installed have it set.
+- The silence: the request to quit came at 21:10:45.030, and the app had
+  handed over by .886 (copying the CA bundle took 0.54 s of that). Its last
+  line was at 21:10:47.110 and the player's first at 21:10:51.292. The song
+  was not on the card, since the app streamed it, so the player downloaded
+  it whole: 5.7 MB in 6.8 s. Music again at 21:11:02.6, 17.5 s after the
+  request. The 4.2 s between the app's end and the player's start are the
+  system's. The download is not: the app had been away 18 s before the
+  request, time enough to have saved the song for the player.
+
+**The quick menu's Music row** (log `c0ea1fd8`). All five music player client
+types and the application-BGM service played a downloaded MP3. The user held
+PS (power callback bit 0x10000000) during each, and the row stayed dimmed
+for every one. The shell's track info for the file had its length and an
+empty title.
+
+The user remembers the row lit once, with VitaPlex's icon, in a build they
+cannot name. What the builds in these notes did with the BGM port:
+
+- mpv: 0x81, ElevenMPV-A's priority for its own decoders, and only with
+  background playback on.
+- The shell tests: 0x80, ElevenMPV-A's priority while the shell decodes,
+  held from the first test until mpv plays again or the test is stopped.
+- The released VitaPlex: never. mpv's Vita output opens a BGM port below
+  48 kHz and the MAIN port at 48 (commit `ea50798`).
+
+ElevenMPV-A's shell plugin caps the priority SceShell reads
+(`sceAppMgrGetCurrentBgmState2`, SceAppMgrUser 0x62BEBD65) at 0x80, so a
+priority over 0x80 is the likely reason the row is dimmed for an app. mpv
+playing while a shell test still held 0x80 is one way an older build could
+have put VitaPlex's icon there. VitaPlex BG now has a picker for it, "Music
+Port for VitaPlex's Player (test)", not saved:
+
+- 0x81, as before;
+- 0x80;
+- `sceAppMgrAcquireBgmPort`, with no priority, as EQVita's preview takes it;
+- `sceAppMgrAcquireBgmPortForMusicPlayer` (SceAppMgr 0x44EC36FA, arguments
+  unknown, one 0 passed);
+- not taken.
+
+Each but the first applies whenever mpv plays. For 30 s after PS is held,
+VitaPlex BG and the player log the BGM owner whenever it changes, as
+`_sceAppMgrGetCurrentBgmState` (SceAppMgr 0x81569A58, `appmgr_bgm_stub.S`)
+gives it, with mpv's state in VitaPlex BG's lines. App events nothing else
+handles are logged with their bytes, so a button on the row that reaches the
+app shows up.
+
+**EQVita** (shev0k/EQVita at `1279a7f`) has nothing for any of this. It is a
+kernel plugin that hooks SceAudio's output calls in every process to
+equalize them, and an app whose Music Preview decodes a file itself onto the
+BGM port (`sceAppMgrAcquireBgmPort`) until stopped or closed.
+
 
 ### PS4: the popup, and nothing to hang progress on
 

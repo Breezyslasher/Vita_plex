@@ -832,10 +832,12 @@ int main() {
     # import stub vitasdk has no library for (lib/libshellaudio/README.md).
     # VitaPlex BG starts its background player with SceBgAppUtil, talks to it
     # through the files bgplayer.h lays out, and ends through the system call
-    # under sceKernelExitProcess once it has (raw_exit.S).
+    # under sceKernelExitProcess once it has (raw_exit.S). Two BGM calls the
+    # SDK leaves out come from appmgr_bgm_stub.S.
     enable_language(ASM)
     target_sources(${PROJECT_NAME} PRIVATE
         src/utils/background_audio_psv.cpp
+        src/utils/appmgr_bgm_stub.S
         src/bgplayer_psv/raw_exit.S
         lib/libshellaudio/ShellAudio.c
         lib/libshellaudio/shellsvc_stub.S)
@@ -1449,6 +1451,7 @@ if(PLATFORM_PSV)
         src/bgplayer_psv/apps.c
         src/bgplayer_psv/mp3_info.c
         src/bgplayer_psv/raw_exit.S
+        src/utils/appmgr_bgm_stub.S
         lib/libshellaudio/ShellAudio.c
         lib/libshellaudio/shellsvc_stub.S)
     target_include_directories(vitaplex_bgplayer PRIVATE

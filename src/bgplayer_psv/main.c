@@ -44,6 +44,9 @@ int sceAppMgrReceiveEvent(void* event);
 // _sceKernelExitProcessForUser, the system call that sceKernelExitProcess
 // ends with (raw_exit.S).
 int vitaplexRawExit(int status);
+// _sceAppMgrGetCurrentBgmState: which process the system has holding the BGM
+// port, and in what state (src/utils/appmgr_bgm_stub.S).
+int vitaplexGetCurrentBgmState(SceUID* processId, unsigned* state);
 
 #define EVENT_REQUEST_QUIT 0x20000001
 #define MB (1024 * 1024)
@@ -150,13 +153,47 @@ static int netMain(SceSize args, void* argp) {
 
 // ── The watcher ──────────────────────────────────────────────────────────
 
+// When PS was last held, which opens the quick menu, on the system clock.
+static volatile double g_psHeldAt;
+
 static int powerCallback(int notifyId, int notifyCount, int powerInfo, void* common) {
     (void)notifyId;
     (void)notifyCount;
     (void)common;
     logLine("power callback 0x%08X", (unsigned)powerInfo);
+    if ((unsigned)powerInfo & SCE_POWER_CB_BUTTON_PS_HOLD) g_psHeldAt = systemSecs();
     playerPowerEvent(powerInfo);
     return 0;
+}
+
+// For half a minute after PS is held: which process the system has holding
+// the BGM port, logged when that changes, beside what the player logs of the
+// shell. The quick menu's Music row stayed dimmed for this player; what the
+// system has for it is the first thing to know. Asked no more once refused.
+static void watchQuickMenu(void) {
+    static double lastHeld;
+    static int refused;
+    static SceUID lastPid;
+    static unsigned lastState;
+    const double held = g_psHeldAt;
+    const double since = systemSecs() - held;
+    if (held == 0 || refused || since > 30.0) return;
+    const int fresh = held != lastHeld;
+    lastHeld = held;
+    SceUID pid[4] = {0, 0, 0, 0};    // room to spare, in case it writes more
+    unsigned state[4] = {0, 0, 0, 0};
+    char r[24];
+    const int rc = vitaplexGetCurrentBgmState(pid, state);
+    if (rc < 0) {
+        refused = 1;
+        logLine("%.1fs after PS was held: BGM owner %s", since, result(r, sizeof(r), rc));
+        return;
+    }
+    if (!fresh && pid[0] == lastPid && state[0] == lastState) return;
+    lastPid = pid[0];
+    lastState = state[0];
+    logLine("%.1fs after PS was held: BGM owner process 0x%08X%s, state 0x%X", since,
+            (unsigned)pid[0], pid[0] == sceKernelGetProcessId() ? " (this player)" : "", state[0]);
 }
 
 // The request at path: 1 with why, left in place until it has been acted on,
@@ -227,6 +264,8 @@ static int watcherMain(SceSize args, void* argp) {
             playerPlay(why);
             remove(BGPLAYER_ASK_PLAY);
         }
+
+        watchQuickMenu();
 
         int count = 0;
         if (sceAppMgrReceiveEventNum(&count) < 0) continue;

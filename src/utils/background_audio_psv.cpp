@@ -62,7 +62,13 @@ extern "C" {
 int sceAppMgrReceiveEventNum(int* eventNum);
 int sceAppMgrReceiveEvent(void* event);
 int sceAppMgrAcquireBgmPortWithPriority(int priority);
+int sceAppMgrAcquireBgmPort(void);
 int sceAppMgrReleaseBgmPort(void);
+// SceAppMgr's own, by NID (appmgr_bgm_stub.S): which process the system has
+// holding the BGM port and in what state, and the port taken as a music
+// player takes it, whose arguments nobody has written down.
+int vitaplexGetCurrentBgmState(SceUID* processId, unsigned* state);
+int vitaplexAcquireBgmPortForMusicPlayer(int unknown);
 int sceAppMgrAppParamGetString(int pid, int param, char* string, SceSize length);
 int sceAppMgrGetIdByName(SceUID* pid, const char* name);
 // SceBgAppUtil (psp2/bgapputil.h): starts the package's eboot2.bin. vitasdk's
@@ -97,6 +103,11 @@ constexpr int kEventRequestQuit = 0x20000001;
 // process, 0x80 while SceShell does the decoding.
 constexpr int kPortForApp   = 0x81;
 constexpr int kPortForShell = 0x80;
+// The two ways of taking it with no priority, for the test that tries each
+// for mpv (setOwnPortTest). Out of a priority's range, so that
+// g_portPriority holds them as it holds a priority.
+constexpr int kPortPlain       = 0x100;  // sceAppMgrAcquireBgmPort
+constexpr int kPortMusicPlayer = 0x101;  // sceAppMgrAcquireBgmPortForMusicPlayer
 
 constexpr SceUInt kTickUs      = 250 * 1000;
 constexpr int     kBeatTicks   = 16;           // a heartbeat line every 4 s away
@@ -203,6 +214,11 @@ std::atomic<SceInt64> g_handedOverAt{0};
 // The last press of PS (the power callback): a deactivation within 2 s of
 // one is the user leaving, as BG Tests 20 and 21 took it.
 std::atomic<SceInt64> g_psPressUs{0};
+// When PS was last held, which opens the quick menu: for kQuickMenuWatchUs
+// after it the watcher logs the BGM owner and mpv whenever either changes, so
+// what the Music row's buttons did shows in the log.
+std::atomic<SceInt64> g_psHeldUs{0};
+constexpr SceInt64 kQuickMenuWatchUs = 30 * 1000000;
 // When this process set up the background player's side, on the system
 // clock, which runs on from one process to the next as the notes have it.
 double g_initSecs = 0;
@@ -214,16 +230,52 @@ bool handOver(const char* why);
 std::mutex g_portMutex;
 int g_portPriority = 0;
 
+std::string portName(int priority) {
+    if (priority == kPortPlain) return "plain";
+    if (priority == kPortMusicPlayer) return "as a music player";
+    char b[16];
+    std::snprintf(b, sizeof(b), "%#x", (unsigned)priority);
+    return b;
+}
+
+// Which process the system has holding the BGM port, and its state: what the
+// quick menu's Music row goes by, as far as ElevenMPV-A's plugin shows (it
+// changes what SceShell reads of it). Asked no more once refused.
+std::atomic<bool> g_bgmOwnerRefused{false};
+
+std::string bgmOwner() {
+    if (g_bgmOwnerRefused) return "BGM owner: not asked, refused before";
+    // Room to spare, in case the system writes more than the header says.
+    SceUID pid[4] = {0, 0, 0, 0};
+    unsigned state[4] = {0, 0, 0, 0};
+    const int rc = vitaplexGetCurrentBgmState(pid, state);
+    if (rc < 0) {
+        g_bgmOwnerRefused = true;
+        return "BGM owner: " + hex(rc);
+    }
+    char b[96];
+    std::snprintf(b, sizeof(b), "BGM owner: process 0x%08X%s, state 0x%X", (unsigned)pid[0],
+                  pid[0] == sceKernelGetProcessId() ? " (VitaPlex)" : "", state[0]);
+    return b;
+}
+
+int acquirePort(int priority) {
+    if (priority == kPortPlain) return sceAppMgrAcquireBgmPort();
+    if (priority == kPortMusicPlayer) return vitaplexAcquireBgmPortForMusicPlayer(0);
+    return sceAppMgrAcquireBgmPortWithPriority(priority);
+}
+
 void holdPort(int priority, const char* why) {
     std::lock_guard<std::mutex> lock(g_portMutex);
     if (g_portPriority == priority) return;
     if (g_portPriority != 0) {
         const int rc = sceAppMgrReleaseBgmPort();
-        brls::Logger::info("[bgaudio] BGM port: release {:#x} to change priority: {}",
-                           g_portPriority, hex(rc));
+        brls::Logger::info("[bgaudio] BGM port: release {} to change priority: {}",
+                           portName(g_portPriority), hex(rc));
     }
-    const int rc = sceAppMgrAcquireBgmPortWithPriority(priority);
-    brls::Logger::info("[bgaudio] BGM port: acquire at {:#x} for {}: {}", priority, why, hex(rc));
+    const int rc = acquirePort(priority);
+    brls::Logger::info("[bgaudio] BGM port: acquire {} for {}: {}; {}", portName(priority), why,
+                       hex(rc), bgmOwner());
     g_portPriority = rc >= 0 ? priority : 0;
 }
 
@@ -232,8 +284,25 @@ void releasePort(int priority, const char* why) {
     std::lock_guard<std::mutex> lock(g_portMutex);
     if (g_portPriority == 0 || (priority != 0 && g_portPriority != priority)) return;
     const int rc = sceAppMgrReleaseBgmPort();
-    brls::Logger::info("[bgaudio] BGM port: release {:#x} ({}): {}", g_portPriority, why, hex(rc));
+    brls::Logger::info("[bgaudio] BGM port: release {} ({}): {}", portName(g_portPriority), why,
+                       hex(rc));
     g_portPriority = 0;
+}
+
+// How mpv takes the port, by the test picker in settings: 0 at kPortForApp
+// and only while background playback is on, as ElevenMPV-A does for its own
+// decoders; the others whenever mpv plays, to see which, if any, lights the
+// quick menu's Music row for VitaPlex. Not saved.
+const int kOwnPort[] = {kPortForApp, kPortForShell, kPortPlain, kPortMusicPlayer, 0};
+constexpr int kOwnPortChoices = (int)(sizeof(kOwnPort) / sizeof(kOwnPort[0]));
+std::atomic<int> g_ownPortTest{0};
+
+void holdPortForMpv(const char* why) {
+    const int priority = kOwnPort[g_ownPortTest];
+    if (priority != 0)
+        holdPort(priority, why);
+    else
+        releasePort(0, why);
 }
 
 int portPriority() {
@@ -301,10 +370,12 @@ void onDeactivate(SceInt64 now, SceInt64 gapUs) {
                                       s.state == MpvPlayerState::BUFFERING);
     g_awayPos = s.position;
     g_awayLoads = g_loads.load();
+    const int port = portPriority();
     brls::Logger::info("[bgaudio] deactivated (left for the LiveArea or another app){}: {}, "
-                       "BGM port {:#x}, keep playing {}{}",
+                       "BGM port {}, keep playing {}{}",
                        heldFirst ? ", read only after the process was held" : "",
-                       describeMpv(s), portPriority(), g_keepPlaying.load(), shellStatusLine());
+                       describeMpv(s), port != 0 ? portName(port) : "0x0",
+                       g_keepPlaying.load(), shellStatusLine());
 
     // Left with PS, by the setting: the background player takes the queue
     // over and VitaPlex BG goes, so that a game started next finds nothing
@@ -437,9 +508,18 @@ bool drainAppEvents(SceInt64 now, SceInt64 gapUs, bool quitOnly) {
             case kEventActivate:    onActivate(now); focus = true; break;
             case kEventResume:      brls::Logger::info("[bgaudio] app event: resume"); break;
             case kEventRequestQuit: onRequestQuit(now, ev); break;
-            default:
-                brls::Logger::info("[bgaudio] app event {}", hex(ev.event));
+            default: {
+                // In full: one the quick menu's Music row sends would be new.
+                std::string param;
+                for (int b = 0; b < 24; b++) {
+                    char h[4];
+                    std::snprintf(h, sizeof(h), "%02X", (unsigned char)ev.param[b]);
+                    param += h;
+                }
+                brls::Logger::info("[bgaudio] app event {} (app {}, then {})", hex(ev.event),
+                                   hex(ev.appId), param);
                 break;
+            }
         }
     }
     return focus;
@@ -500,6 +580,7 @@ int powerCallback(int, int, int powerInfo, void*) {
         {SCE_POWER_CB_SYSTEM_SUSPEND, "system suspend"},
         {SCE_POWER_CB_SYSTEM_RESUME, "system resume"},
         {SCE_POWER_CB_BUTTON_PS_PRESS, "PS button"},
+        {SCE_POWER_CB_BUTTON_PS_HOLD, "PS held (quick menu)"},
         {SCE_POWER_CB_BUTTON_POWER_PRESS, "power button"},
     };
     for (const auto& k : kBits) {
@@ -515,7 +596,28 @@ int powerCallback(int, int, int powerInfo, void*) {
         g_haveAtPs = true;
         g_psPressUs = sceKernelGetSystemTimeWide();
     }
+    if ((unsigned)powerInfo & SCE_POWER_CB_BUTTON_PS_HOLD) g_psHeldUs = sceKernelGetSystemTimeWide();
     return 0;
+}
+
+// For half a minute after PS is held: the BGM owner and mpv's state, logged
+// when either changes. Only the watcher thread calls it.
+void watchQuickMenu(SceInt64 now) {
+    static std::string last;
+    static SceInt64 lastHeld = 0;
+    const SceInt64 held = g_psHeldUs;
+    if (held == 0 || now - held > kQuickMenuWatchUs) return;
+    if (held != lastHeld) {   // held again: start over
+        lastHeld = held;
+        last.clear();
+    }
+    const MpvPlayer::Snapshot s = MpvPlayer::getInstance().snapshot();
+    const std::string owner = bgmOwner();
+    const std::string key = owner + (s.initialized ? stateName(s.state) : "-");
+    if (key == last) return;
+    last = key;
+    brls::Logger::info("[bgaudio] {:.1f}s after PS was held: {}; {}", (now - held) / 1e6, owner,
+                       describeMpv(s));
 }
 
 int watcherMain(SceSize, void*) {
@@ -564,6 +666,7 @@ int watcherMain(SceSize, void*) {
             exitProcess(0);
         }
         if (!watching) continue;
+        watchQuickMenu(now);
         // A game is sent neither event, so without this nothing would say,
         // on the way back, that it was held.
         if (held && !g_away && !focusEvent) reportHold(gap);
@@ -1687,8 +1790,8 @@ void setOutsideMusic(int mode) {
     brls::Logger::info("[bgaudio] music after leaving set to {}", mode);
     if (on) {
         startWatcher();
-        if (MpvPlayer::getInstance().isPlaying()) holdPort(kPortForApp, "mpv, already playing");
-    } else {
+        if (MpvPlayer::getInstance().isPlaying()) holdPortForMpv("mpv, already playing");
+    } else if (g_ownPortTest == 0) {
         releasePort(kPortForApp, "setting turned off");
     }
 }
@@ -1705,13 +1808,34 @@ void exitProcess(int code) {
 
 void onAudioPlayback(bool playing) {
     // Held from the first play and through pauses, like ElevenMPV-A; it goes
-    // when the player does, or when the setting is turned off.
-    if (playing && g_keepPlaying) holdPort(kPortForApp, "mpv playback");
+    // when the player does, or when the setting is turned off. The port test
+    // takes it its own way, whatever the setting.
+    if (playing && (g_keepPlaying || g_ownPortTest != 0)) holdPortForMpv("mpv playback");
 }
 
 void onTrackLoad() { g_loads++; }
 
-void onPlayerShutdown() { releasePort(kPortForApp, "player shut down"); }
+void onPlayerShutdown() {
+    const int priority = kOwnPort[g_ownPortTest];
+    releasePort(priority != 0 ? priority : kPortForApp, "player shut down");
+}
+
+int ownPortTest() { return g_ownPortTest; }
+
+void setOwnPortTest(int choice) {
+    if (choice < 0 || choice >= kOwnPortChoices) choice = 0;
+    g_ownPortTest = choice;
+    startWatcher();   // for the lines after PS is held
+    const int priority = kOwnPort[choice];
+    brls::Logger::info("[bgaudio] port test: mpv takes the BGM port {}{}",
+                       priority != 0 ? portName(priority) : "not at all",
+                       choice == 0 ? ", while background playback is on" : "");
+    if (!MpvPlayer::getInstance().isPlaying()) return;
+    if (choice != 0 || g_keepPlaying)
+        holdPortForMpv("port test changed");
+    else
+        releasePort(0, "port test changed");
+}
 
 void runShellFileTest(Report done) {
     if (g_shellBusy.exchange(true)) {

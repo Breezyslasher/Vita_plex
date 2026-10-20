@@ -102,6 +102,14 @@ void runHandoffTest(Report done);
 int shellService();
 void setShellService(int service);
 
+// How VitaPlex's own player takes the system's BGM port: 0 at priority 0x81
+// while background playback is on, as before; 1 at 0x80, 2 with no priority,
+// 3 as a music player, 4 not at all, each whenever mpv plays. The quick
+// menu's Music row once showed VitaPlex's icon, in a build nobody can name;
+// switching between these finds out what does that. Not saved.
+int ownPortTest();
+void setOwnPortTest(int choice);
+
 #else
 
 inline bool available() { return false; }
@@ -118,6 +126,8 @@ inline std::string stopShellTest() { return {}; }
 inline void runHandoffTest(Report) {}
 inline int shellService() { return 0; }
 inline void setShellService(int) {}
+inline int ownPortTest() { return 0; }
+inline void setOwnPortTest(int) {}
 
 #endif
 
