@@ -2350,6 +2350,21 @@ copy if there is one and it reads, else the server's photo transcoder at
 player has no borealis, so it builds stb_image itself, JPEG and PNG only
 (`stb_image_impl.c`).
 
+**Build 2030 on the console: the player's covers show** (logs `f5068799`,
+the player's, and `13848dbc`, the plugin's).
+
+- The quick menu was open as the player took the row, 6.4 s after it
+  opened. The first cover, made from the server in 1556 ms, showed 71 ms
+  after it was sent.
+- Next from the quick menu: "Bad Day"'s cover was made in 567 ms and showed
+  in 18 ms.
+- An earlier session of the same log (build 2029's player) had a bug.
+  - 11:37:01: a song was paused from the quick menu.
+  - 14:03:19: as the Vita woke, the power callback's play-again (above)
+    played the song again after 2 h 26 min.
+  - The callback checked the app's pause, but not the quick menu's. Build
+    2031 checks both.
+
 **The header took longer than the download** (log `2114643f`). This
 hand-over's first song was OGG, so the player fetched the server's MP3 (6.77
 MB in 7.6 s). Inspecting it and copying it behind a Xing header then took

@@ -1003,7 +1003,11 @@ static void fromTheStart(const Song* s) {
 // callback at that event, and so does this, from main.c's; the music then went
 // on through the screen going off and on (log d942eac0).
 void playerPowerEvent(int powerInfo) {
-    if (!(powerInfo & 0x00400000) || !g_handedOver || !g_shellUp || g_paused || g_stopped) return;
+    // Not for music paused from the quick menu: a song paused at 11:37 was
+    // played again as the Vita woke at 14:03 (log f5068799).
+    if (!(powerInfo & 0x00400000) || !g_handedOver || !g_shellUp || g_paused || g_menuPaused ||
+        g_stopped)
+        return;
     char r[24];
     logLine("apps suspending (power button?); play again, as ElevenMPV-A does: %s",
             result(r, sizeof(r), sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0)));
