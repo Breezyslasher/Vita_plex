@@ -1,6 +1,7 @@
 /**
- * VitaPlex's quick menu plugin: the song, and buttons that work, in the Music
- * row of the quick menu (hold PS), for VitaPlex BG and its background player.
+ * VitaPlex's quick menu plugin: the song, its cover, and buttons that work,
+ * in the Music row of the quick menu (hold PS), for VitaPlex BG and its
+ * background player.
  *
  * The row is SceShell's, and only code inside SceShell can change it. VitaPlex
  * BG loads this module into SceShell with taiHEN (qm_link.c) the first time
@@ -14,28 +15,25 @@
  * the lines and its own callbacks on the buttons. It differs where that
  * plugin fell short (docs/DESIGN_NOTES.md):
  *
- * - The buttons stayed dimmed with ElevenMPV-A's ButtonBase::Enable(false),
- *   though presses got through, and with Enable(true) as well (build 2022).
- *   Their icons are planes of their own beside them, and SceShell draws
- *   buttons and icons faded with every colour and alpha a widget has at full
- *   (build 2023), its draw objects' colours too (build 2024): the images or
- *   how they are drawn, then, which the log now lists. The way they are
- *   switched on can be chosen (QM_LOOK_*); the default also lights any
- *   colour it finds faded, and puts back what it changed when the row is
- *   SceShell's again.
- * - While VitaPlex plays, the play icon shows ⏸, as SceShell's own row does
- *   for its Music app.
+ * - It changes SceShell's widgets on SceShell's own UI thread, through PAF's
+ *   main thread call list, as ElevenMPV-A's app does its own. Both plugins
+ *   changed them from threads of their own, and the buttons, switched on,
+ *   kept their off look (builds 2019 to 2025), though nothing the log could
+ *   read of them differed from SceShell's lit row. Its own threads watch the
+ *   quick menu, take VitaPlex's messages and write the log.
  * - It takes the row 200 ms after the quick menu opens, as ElevenMPV-A's
  *   plugin about does: the song this one put on the lines at once did not
  *   show (build 2022). While the quick menu stays open it puts back what
- *   SceShell changes: buttons switched off, other text, faded icons.
+ *   SceShell changes: buttons switched off, other text.
+ * - While VitaPlex plays, the play icon shows ⏸; and the Music heading's icon
+ *   shows the song's cover, which VitaPlex writes to a file (QM_ART_PATH_FMT).
  * - A press is sent without waiting, so a process that stopped reading cannot
  *   hold SceShell up, and the row is given back by itself when no process has
  *   asked for it again in QM_ACTIVE_TIMEOUT_S.
- * - For the first opens of a boot it logs the row's widgets as the quick menu
- *   opens, then each change to them for 3 s, whether the row is wanted or
- *   not: what SceShell does to the row for its own Music app, beside what it
- *   does with VitaPlex playing.
+ * - It logs the row's widgets as the quick menu opens and their changes for
+ *   3 s, for the first opens of a boot, whoever has the row; and once a boot
+ *   each, one button and its icon byte for byte, with SceShell's row off,
+ *   SceShell's row lit, and the row the plugin's.
  *
  * Built with vitasdk against the PAF headers scripts/vita/fetch_paf_headers.sh
  * fetches; its PAF imports are in paf_stubs.S. Logs to
@@ -93,18 +91,29 @@ extern "C" void __cxa_pure_virtual() {
 namespace {
 
 // ── The log ─────────────────────────────────────────────────────────────────
+// Lines are put together where they happen, SceShell's UI thread included,
+// and kept in a ring; the watch thread writes them to the card, so that no
+// line waits for the card on a thread SceShell draws with.
 const char* const kLogPath = "ux0:data/VitaPlex/qm-plugin.log";
 const char* const kLogPrevPath = "ux0:data/VitaPlex/qm-plugin.prev.log";
 const int kLogMax = 512 * 1024;
+const int kRingLines = 128;
+const int kLineMax = 320;
 
+struct RingLine {
+    int n;
+    char text[kLineMax];
+};
+RingLine g_ring[kRingLines];
+int g_ringHead, g_ringCount, g_ringDropped;
+SceUID g_ringLock = -1;
 SceUID g_log = -1;
-SceUID g_logLock = -1;
 int g_logged;
 
 void logLine(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void logLine(const char* fmt, ...) {
-    if (g_log < 0 || g_logged > kLogMax) return;
-    char line[320];
+    if (g_ringLock < 0) return;
+    char line[kLineMax];
     SceDateTime t;
     sceClibMemset(&t, 0, sizeof(t));
     sceRtcGetCurrentClockLocalTime(&t);
@@ -116,15 +125,56 @@ void logLine(const char* fmt, ...) {
     va_end(ap);
     if (n > (int)sizeof(line) - 2) n = sizeof(line) - 2;
     line[n++] = '\n';
-    sceKernelLockMutex(g_logLock, 1, NULL);
-    sceIoWrite(g_log, line, n);
-    sceIoSyncByFd(g_log, 0);  // a SceShell crash keeps what came before it
-    g_logged += n;
-    sceKernelUnlockMutex(g_logLock, 1);
+    sceKernelLockMutex(g_ringLock, 1, NULL);
+    if (g_ringCount < kRingLines) {
+        RingLine& r = g_ring[(g_ringHead + g_ringCount) % kRingLines];
+        sceClibMemcpy(r.text, line, n);
+        r.n = n;
+        g_ringCount++;
+    } else {
+        g_ringDropped++;
+    }
+    sceKernelUnlockMutex(g_ringLock, 1);
+}
+
+// The watch thread's: the lines kept so far, to the card.
+void logDrain() {
+    if (g_log < 0) return;
+    int wrote = 0;
+    for (;;) {
+        RingLine line;
+        int dropped = 0;
+        sceKernelLockMutex(g_ringLock, 1, NULL);
+        const bool any = g_ringCount > 0;
+        if (any) {
+            line = g_ring[g_ringHead];
+            g_ringHead = (g_ringHead + 1) % kRingLines;
+            g_ringCount--;
+        } else {
+            dropped = g_ringDropped;
+            g_ringDropped = 0;
+        }
+        sceKernelUnlockMutex(g_ringLock, 1);
+        if (!any) {
+            if (dropped) {
+                char note[64];
+                const int n = sceClibSnprintf(note, sizeof(note), "(%d lines not kept)\n", dropped);
+                sceIoWrite(g_log, note, n);
+                wrote++;
+            }
+            break;
+        }
+        if (g_logged <= kLogMax) {
+            sceIoWrite(g_log, line.text, line.n);
+            g_logged += line.n;
+            wrote++;
+        }
+    }
+    if (wrote) sceIoSyncByFd(g_log, 0);  // a SceShell crash keeps what came before it
 }
 
 void logOpen() {
-    g_logLock = sceKernelCreateMutex("VitaPlexQM::Log", 0, 0, NULL);
+    g_ringLock = sceKernelCreateMutex("VitaPlexQM::Log", 0, 0, NULL);
     sceIoRemove(kLogPrevPath);
     sceIoRename(kLogPath, kLogPrevPath);
     g_log = sceIoOpen(kLogPath, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
@@ -187,10 +237,15 @@ const uint32_t kHashTextBottom = 0xF099B450;
 const uint32_t kHashIconRew = 0xD639AB27;
 const uint32_t kHashIconPlay = 0xE057A7D0;
 const uint32_t kHashIconFf = 0x6FA104CC;
-// One more there, at play's place and sized 0x0: the pause icon (showPlaying).
+// One more there, at play's place and sized 0x0: the pause icon. SceShell's
+// own row shows it in play's stead, by size, while its Music app plays
+// (build 2025).
 const uint32_t kHashIconPause = 0xB26E4562;
-// The row's heading, "Music", in a group of its own above it.
+// The row's heading, "Music", in a group of its own above it, with its icon:
+// a plane at the group's left, 0x0 and drawn at its texture's 80x80, as the
+// other rows' icons are.
 const uint32_t kHashHeading = 0x90E6251E;
+const uint32_t kHashHeadingIcon = 0xE219E0DE;
 
 // SceAppMgr's app state, as ElevenMPV-A's plugin asks for it (its build of
 // sceAppMgrGetAppState passes 0x03570000).
@@ -204,6 +259,11 @@ const int kPipeModeFull = 0x00000001;
 // plugin waits 100 ms and then looks for the buttons, and its song showed;
 // the song this one put on the lines at once did not (build 2022).
 const SceUInt64 kTakeAfterUs = 200 * 1000;
+// The row is looked at ten times a second while the quick menu is open.
+const SceUInt64 kTickUs = 100 * 1000;
+// PAF's Plugin keeps the pool its textures come from here (ScePaf-RE's
+// plugin.h, surface_pool; private there).
+const int kPluginSurfacePool = 0xD4;
 
 // No object here may need constructing as the module loads: it has no C
 // runtime to run constructors, so such an object stays all zeros. Build
@@ -213,24 +273,38 @@ paf::math::v4 white() {
     return paf::math::v4(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
-paf::ui::Widget* g_impose;  // the quick menu's root
+paf::ui::Widget* g_impose;               // the quick menu's root
+paf::graph::SurfacePool* g_surfacePool;  // power_manage_plugin's, for the cover
 SceUID g_toPlugin = -1, g_fromPlugin = -1;
 SceUID g_lock = -1;  // everything below, and the widgets
 
+// From VitaPlex, by the receiving thread:
 int g_active;
 uint32_t g_owner;
 SceUInt64 g_activatedUs;  // the last QM_CMD_ACTIVATE
 int g_look = QM_LOOK_LIT;
 int g_playing = -1;
 uint16_t g_title[256], g_artist[256], g_album[256];
+uint32_t g_artSerial;  // the cover at QM_ART_PATH, 0 for none
+int g_releaseDue;      // the row given back, to be left as SceShell had it
 
-// While the quick menu is open:
+// The quick menu, by the watch thread:
+int g_open;            // it is open
 SceUInt64 g_openedUs;  // when it was seen open
+int g_openSerial;      // opens so far; the row's tick sees a new one by it
+int g_timelineDue;     // this open's changes are to be logged
+
+// The row, by its tick (rowTick), on SceShell's UI thread: found anew each
+// tick, so that nothing is kept of a row SceShell has since done away with.
 paf::ui::Widget *g_rew, *g_play, *g_ff, *g_textTop, *g_textBottom;
-paf::ui::Widget *g_iconRew, *g_iconPlay, *g_iconFf, *g_iconPause;
+paf::ui::Widget *g_iconRew, *g_iconPlay, *g_iconFf, *g_iconPause, *g_headingIcon;
 uint32_t g_topHash, g_bottomHash;  // the lines as this plugin set them
-int g_applied;                     // the row is ours this time it is open
-int g_findTries;                   // looks for the buttons this time
+int g_tickOpenSerial;              // the open this tick's state is for
+SceUInt64 g_lastTickUs;
+int g_applied;    // the row is ours this time it is open
+int g_findTries;  // looks for the buttons this time
+int g_mainTicks;  // times SceShell's UI thread has called mainTick
+int g_fallback;   // it never has: the watch thread ticks the row itself
 // Once a boot:
 int g_layoutChecked, g_layoutOk;  // PAF's widget layout is its headers' (checkLayout)
 int g_opens;                      // times the quick menu opened
@@ -352,6 +426,7 @@ bool isA(paf::ui::Widget* w, const char* type) {
     return w && type && w->IsInherit(type);
 }
 
+// ── Textures ────────────────────────────────────────────────────────────────
 // An intrusive_ptr to a texture that the plugin fills itself and never
 // destroys: setting it adds no reference and nothing takes one away, so it
 // calls neither Surface::AddRef nor Release, imports the plugin does without.
@@ -398,7 +473,7 @@ paf::graph::Surface* currentTexture(paf::ui::Widget* w) {
     return (paf::graph::Surface*)tex;
 }
 
-// Gives a widget a texture the plugin holds (holdTexture).
+// Gives a widget a texture; the widget adds a reference of its own.
 void giveTexture(paf::ui::Widget* w, paf::graph::Surface* s) {
     TexRef ref(s);
     w->SetTexture(ref.ptr);
@@ -414,14 +489,20 @@ paf::ui::Widget* g_headingGroup;  // the heading's
 int g_timeline;                   // this open's changes are being logged
 int g_snapCount;
 
-void forgetWidgets() {
-    g_rew = g_play = g_ff = g_textTop = g_textBottom = NULL;
-    g_iconRew = g_iconPlay = g_iconFf = g_iconPause = NULL;
-    g_rowGroup = g_headingGroup = NULL;
-    g_applied = 0;
-    g_findTries = 0;
-    g_timeline = 0;
-    g_snapCount = 0;
+// The row's widgets, by their ids: on its tick. true when its buttons are
+// there; they come a moment after the quick menu.
+bool findRow() {
+    g_rew = find(kHashRew);
+    g_play = find(kHashPlay);
+    g_ff = find(kHashFf);
+    g_textTop = find(kHashTextTop);
+    g_textBottom = find(kHashTextBottom);
+    g_iconRew = find(kHashIconRew);
+    g_iconPlay = find(kHashIconPlay);
+    g_iconFf = find(kHashIconFf);
+    g_iconPause = find(kHashIconPause);
+    g_headingIcon = find(kHashHeadingIcon);
+    return g_rew && g_play && g_ff;
 }
 
 void onPress(int32_t type, paf::ui::Handler* self, paf::ui::Event* e, void* data) {
@@ -439,8 +520,8 @@ void onPress(int32_t type, paf::ui::Handler* self, paf::ui::Event* e, void* data
     QmPress msg;
     msg.press = press;
     msg.reserved = 0;
-    // On SceShell's own thread: logged only when it goes wrong, since each
-    // line waits for the memory card. VitaPlex logs the presses it takes.
+    // On SceShell's own thread: logged only when it goes wrong. VitaPlex logs
+    // the presses it takes.
     const int rc = sceKernelTrySendMsgPipe(g_fromPlugin, &msg, sizeof(msg),
                                            kPipeModeFull, NULL);
     if (rc < 0) logLine("press: %s, not sent (0x%08X): nobody reading", name, (unsigned)rc);
@@ -456,13 +537,13 @@ int buttonState(paf::ui::ButtonBase* b) {
 }
 
 // ── Lighting the buttons and icons ──────────────────────────────────────────
-// With no music of its own, SceShell draws the row's buttons and their icons
-// faded, its own Music app playing them opaque and white (screenshots, build
-// 2023). Every colour and alpha the widgets have read full either way, so the
-// fade is most likely in their draw objects' colours. The plugin sets the
-// widget's colour first, which PAF may pass on to them, and then, if one is
-// still faded, its colour itself, to kLitColor. What it changed is put back
-// when the row is SceShell's again, as long as that colour is still its.
+// SceShell draws the row's buttons and their icons faded with no music of its
+// own, and opaque and white with its Music app playing (screenshots, build
+// 2023), with every colour, alpha, texture and shader the log reads alike
+// either way (builds 2023 to 2025). Should a colour or alpha still turn up
+// faded, the widget's colour is set (SetColor_core), and a draw object's own
+// colour after it, to kLitColor; what was changed is put back when the row
+// is SceShell's again, as long as that colour is still the plugin's.
 // White, but for an alpha of 0xFE nobody would see: kept apart from a white
 // SceShell sets itself.
 const uint32_t kLitColor = 0xFFFFFFFE;
@@ -553,8 +634,8 @@ bool lightAll(int logIt) {
 }
 
 // Puts back the draw objects' colours the plugin changed, where they are still
-// its: under g_lock, the quick menu open and its widgets found (findRow).
-// They must be the widgets lit, so a row SceShell made anew is left alone.
+// its: with the row's widgets found this tick (findRow). They must be the
+// widgets lit, so a row SceShell made anew is left alone.
 void unlightAll(const char* why) {
     if (!g_litCount) return;
     int back = 0;
@@ -572,13 +653,10 @@ void unlightAll(const char* why) {
 }
 
 // ── The play/pause icon ─────────────────────────────────────────────────────
-// SceShell's row has a second icon at play's place, 0xB26E4562, sized 0x0:
-// its pause icon, by all appearances, since its own Music app's row shows ⏸
-// there while it plays (screenshot, build 2023). While VitaPlex plays, the
-// play icon is given that one's texture, and its own back when paused or
-// when the row is SceShell's again.
+// While VitaPlex plays, the play icon is given the pause icon's texture, and
+// its own back when paused or when the row is SceShell's again (build 2025).
 paf::graph::Surface *g_playTex, *g_pauseTex;  // held for good (holdTexture)
-int g_pauseShown;   // the play icon has the pause icon's texture
+int g_pauseShown;  // the play icon has the pause icon's texture
 int g_pauseLogged;
 
 // Holds the two icons' textures, the first time the row is taken in a boot:
@@ -591,7 +669,7 @@ void holdPlayTextures() {
 }
 
 // The play icon as VitaPlex's music is, or as SceShell's own row had it:
-// under g_lock, the quick menu open. true when it changed it.
+// true when it changed it.
 bool showPlaying(bool pause) {
     if (!g_iconPlay || !g_playTex || !g_pauseTex) return false;
     paf::graph::Surface* want = pause ? g_pauseTex : g_playTex;
@@ -605,6 +683,103 @@ bool showPlaying(bool pause) {
     return true;
 }
 
+// ── The cover ───────────────────────────────────────────────────────────────
+// The song's cover, in place of the Music heading's icon while the row is
+// VitaPlex's. VitaPlex writes it as a PNG (QM_ART_PATH_FMT, QM_ART_SIZE
+// square) and names it by a serial (QM_CMD_ART). It is loaded with PAF's own
+// decoder (Surface::Load, from a LocalFile), the calls ElevenMPV-A's app
+// loads its covers with, into power_manage_plugin's texture pool. The icon
+// keeps the only reference to it, so it goes when the icon gets its own back
+// or SceShell does away with the row. The icon shows either its own texture,
+// which the plugin holds, or the cover the plugin gave it last.
+paf::graph::Surface* g_headingTex;  // the heading's own icon, held for good
+uint32_t g_artShown;                // the cover given to the icon last, 0 for none
+uint32_t g_artFailed;               // a cover that would not load, not tried again
+int g_artLogged;
+
+// The heading icon's own texture, held the first time it is seen.
+void holdHeadingTexture() {
+    if (g_headingTex || !g_headingIcon) return;
+    g_headingTex = holdTexture(g_headingIcon);
+    logLine("art: the heading's icon %p, held", (void*)g_headingTex);
+}
+
+// A cover's file as a texture, with one reference: the caller's.
+paf::graph::Surface* loadArt(uint32_t serial) {
+    if (!g_surfacePool) return NULL;
+    char path[64];
+    sceClibSnprintf(path, sizeof(path), QM_ART_PATH_FMT, (unsigned)(serial & 1));
+    int32_t err = 0;
+    paf::common::SharedPtr<paf::LocalFile> file =
+        paf::LocalFile::Open(path, SCE_O_RDONLY, 0, &err);
+    if (err < 0 || !file.get()) {
+        if (g_artLogged < 6) {
+            g_artLogged++;
+            logLine("art: %s would not open: 0x%08X", path, (unsigned)err);
+        }
+        return NULL;
+    }
+    // Surface::Load takes a SharedPtr<File>, which PAF's SharedPtr will not
+    // make of a SharedPtr<LocalFile>: the same two pointers are passed as
+    // one, as ElevenMPV-A's app does, copied into a SharedPtr<File> that is
+    // never destroyed, so the file's count is the one `file` holds.
+    union AsFile {
+        paf::common::SharedPtr<paf::File> ptr;
+        AsFile() {}
+        ~AsFile() {}
+    } asFile;
+    static_assert(sizeof(asFile) == sizeof(file), "a SharedPtr is a SharedPtr");
+    sceClibMemcpy(&asFile, &file, sizeof(asFile));
+    // The texture it returns is built where it is wanted, so that nothing
+    // takes its reference away.
+    union Loaded {
+        paf::intrusive_ptr<paf::graph::Surface> ptr;
+        Loaded(paf::graph::SurfacePool* pool, paf::common::SharedPtr<paf::File>& f)
+            : ptr(paf::graph::Surface::Load(pool, f, NULL)) {}
+        ~Loaded() {}
+    } loaded(g_surfacePool, asFile.ptr);
+    return loaded.ptr.get();
+}
+
+// The heading's own icon on it again, if it has a cover. true when it
+// changed it.
+bool showOwnIcon(const char* why) {
+    g_artShown = 0;
+    if (!g_headingIcon || !g_headingTex || currentTexture(g_headingIcon) == g_headingTex)
+        return false;
+    giveTexture(g_headingIcon, g_headingTex);
+    logLine("art: the heading's own icon back (%s)", why);
+    return true;
+}
+
+// The heading's icon as the row's owner wants it: the cover named last, or
+// its own. A cover is loaded again for an icon SceShell has made anew, which
+// shows its own. true when it changed it.
+bool showArt() {
+    if (!g_headingIcon) return false;
+    holdHeadingTexture();
+    if (!g_headingTex) return false;
+    const uint32_t want = g_artSerial;
+    if (want == 0) return showOwnIcon("no cover");
+    const bool own = currentTexture(g_headingIcon) == g_headingTex;
+    if (!own && g_artShown == want) return false;
+    if (g_artFailed == want) return own ? false : showOwnIcon("the cover would not load");
+    const SceUInt64 start = sceKernelGetSystemTimeWide();
+    paf::graph::Surface* art = loadArt(want);
+    if (!art) {
+        g_artFailed = want;
+        logLine("art: %u not loaded", (unsigned)want);
+        return own ? false : showOwnIcon("the cover would not load");
+    }
+    giveTexture(g_headingIcon, art);
+    art->UnsafeRelease();  // the icon's reference is the one left
+    g_artShown = want;
+    logLine("art: %u, %dx%d, shown in %u ms", (unsigned)want, art->GetWidth(), art->GetHeight(),
+            (unsigned)((uint32_t)(sceKernelGetSystemTimeWide() - start) / 1000u));
+    return true;
+}
+
+// ── Switching the buttons on ────────────────────────────────────────────────
 // Switches a button on the way g_look says, logged before and after if asked.
 void applyLook(paf::ui::Widget* w, const char* name, int logIt) {
     paf::ui::ButtonBase* b = static_cast<paf::ui::ButtonBase*>(w);
@@ -637,10 +812,9 @@ void applyLookToAll(int logIt) {
     if (g_look == QM_LOOK_LIT) lightAll(logIt);
 }
 
-// While the row is ours and the quick menu open, ten times a second: a button
-// SceShell has switched off again since, as its own set-up of the row may do
-// after ours, is switched on again, and the first few times logged. true
-// when it changed anything.
+// While the row is ours: a button SceShell has switched off again since, as
+// its own set-up of the row may do after ours, is switched on again, and the
+// first few times logged. true when it changed anything.
 bool watchButtons() {
     if (!g_layoutOk || g_look == QM_LOOK_AS_ELEVENMPVA) return false;
     paf::ui::Widget* const buttons[3] = {g_rew, g_play, g_ff};
@@ -663,6 +837,7 @@ bool watchButtons() {
     return changed;
 }
 
+// ── The lines ───────────────────────────────────────────────────────────────
 void setTexts() {
     if (!g_textTop || !g_textBottom) return;
     paf::wstring top((const wchar_t*)g_title);
@@ -678,20 +853,27 @@ void setTexts() {
     g_textBottom->SetColor_core(c);
 }
 
-// While the row is ours and the quick menu open: the lines as set, should
-// SceShell have put other text or another colour on them. true when it
-// changed anything.
+// While the row is ours: the lines as the song is, should SceShell have put
+// other text or another colour on them, or VitaPlex sent another song. true
+// when it changed anything.
 bool keepTexts() {
     if (!g_textTop || !g_textBottom || !g_layoutOk) return false;
     paf::wstring top, bottom;
     g_textTop->GetString(top);
     g_textBottom->GetString(bottom);
     const uint32_t topColor = g_textTop->GetColor32(), bottomColor = g_textBottom->GetColor32();
-    if (hashText((const uint16_t*)top.c_str()) == g_topHash &&
+    // What the lines should hold, the song as it now is.
+    paf::wstring wantTop((const wchar_t*)g_title);
+    paf::wstring wantBottom((const wchar_t*)g_artist);
+    if (g_artist[0] && g_album[0]) wantBottom += L" / ";
+    wantBottom += (const wchar_t*)g_album;
+    const bool newSong = hashText((const uint16_t*)wantTop.c_str()) != g_topHash ||
+                         hashText((const uint16_t*)wantBottom.c_str()) != g_bottomHash;
+    if (!newSong && hashText((const uint16_t*)top.c_str()) == g_topHash &&
         hashText((const uint16_t*)bottom.c_str()) == g_bottomHash && topColor == 0xFFFFFFFF &&
         bottomColor == 0xFFFFFFFF)
         return false;
-    if (g_textsLogged < 6) {
+    if (!newSong && g_textsLogged < 6) {
         g_textsLogged++;
         char a[48], b[48];
         toLog((const uint16_t*)top.c_str(), a, sizeof(a));
@@ -807,8 +989,8 @@ void snapWidget(paf::ui::Widget* w, Snap* s) {
     const bool plane = startsWith(s->type, "plane");
     if (button || plane || startsWith(s->type, "app_icon"))
         textureOf(w, 0, &s->tex, &s->texWidth, &s->texHeight);
-    // A plane's draw object has four texture slots (PlaneObj); whether
-    // SceShell keeps a lit icon in another is for the log to say.
+    // A plane's draw object has four texture slots (PlaneObj); none of the
+    // row's had a second one in build 2025.
     if (plane)
         for (int i = 0; i < 3; i++)
             textureOf(w, i + 1, &s->moreTex[i], &s->moreWidth[i], &s->moreHeight[i]);
@@ -880,31 +1062,30 @@ void logChange(int ms, const Snap& was, const Snap& now) {
     if (l.n) logLine("+%d ms %s 0x%08X%s", ms, now.type, (unsigned)now.hash, l.buf);
 }
 
-// Ten times a second while the quick menu is open: under g_lock.
-void timelineTick(SceUInt64 now) {
-    if (!g_timeline) return;
+// Ten times a second while the quick menu is open, the row found this tick.
+void timelineTick(SceUInt64 now, bool found) {
+    if (!g_timeline || !found) return;
     const int ms = msOpen(now);
     if (now - g_openedUs > kTimelineUs) {
         logLine("+%d ms row: changes no longer logged this time", ms);
         g_timeline = 0;
         return;
     }
-    if (!g_rowGroup) {
-        // The row's widgets come a moment after the quick menu.
-        paf::ui::Widget* play = find(kHashPlay);
-        if (!play) return;
-        if (!g_layoutChecked) checkLayout(play);
-        if (!g_layoutOk) {
-            g_timeline = 0;
-            return;
-        }
-        g_rowGroup = play->GetParent();
-        paf::ui::Widget* heading = find(kHashHeading);
-        g_headingGroup = heading ? heading->GetParent() : NULL;
+    if (!g_layoutChecked) checkLayout(g_play);
+    if (!g_layoutOk) {
+        g_timeline = 0;
+        return;
+    }
+    paf::ui::Widget* heading = find(kHashHeading);
+    paf::ui::Widget* rowGroup = g_play->GetParent();
+    paf::ui::Widget* headingGroup = heading ? heading->GetParent() : NULL;
+    if (!g_snapCount || rowGroup != g_rowGroup || headingGroup != g_headingGroup) {
+        g_rowGroup = rowGroup;
+        g_headingGroup = headingGroup;
         g_snapCount = snapAll(g_snaps);
         // SceShell's own row with its play button on has its own music in it:
         // the lit look the plugin is after.
-        if (!g_active && static_cast<paf::ui::ButtonBase*>(play)->IsEnable()) {
+        if (!g_active && static_cast<paf::ui::ButtonBase*>(g_play)->IsEnable()) {
             g_sawLitRow = 1;
             logLine("+%d ms row: SceShell's own, lit: its own music is in it", ms);
         }
@@ -943,25 +1124,51 @@ void timelineQuiet() {
     if (g_timeline && g_rowGroup) g_snapCount = snapAll(g_snaps);
 }
 
-// The row's widgets, by their ids: under g_lock, the quick menu open. true
-// when its buttons are there; they come a moment after the quick menu.
-bool findRow() {
-    g_rew = find(kHashRew);
-    g_play = find(kHashPlay);
-    g_ff = find(kHashFf);
-    g_textTop = find(kHashTextTop);
-    g_textBottom = find(kHashTextBottom);
-    g_iconRew = find(kHashIconRew);
-    g_iconPlay = find(kHashIconPlay);
-    g_iconFf = find(kHashIconFf);
-    g_iconPause = find(kHashIconPause);
-    return g_rew && g_play && g_ff;
+// ── One button and its icon, byte for byte ──────────────────────────────────
+// Once a boot each, a second after the quick menu opens: the previous button
+// and its icon, the widgets and their draw objects, with SceShell's row off,
+// SceShell's row lit, and the row the plugin's. Nothing the timeline reads
+// differed between SceShell's lit row and the plugin's (build 2025), so what
+// lights SceShell's is in what differs here between its two, and not between
+// its off one and the plugin's. Reading past a widget's end reads only the
+// heap after it.
+int g_dumped[3];      // SceShell's off, SceShell's lit, the plugin's
+int g_dumpedThisOpen;
+
+void dumpBytes(const char* tag, const char* what, const void* p, int size) {
+    if (!p) return;
+    const uint32_t* w = (const uint32_t*)p;
+    for (int off = 0; off < size; off += 32) {
+        const uint32_t* r = w + off / 4;
+        logLine("dump %s %s +%03X: %08X %08X %08X %08X %08X %08X %08X %08X", tag, what, off,
+                (unsigned)r[0], (unsigned)r[1], (unsigned)r[2], (unsigned)r[3], (unsigned)r[4],
+                (unsigned)r[5], (unsigned)r[6], (unsigned)r[7]);
+    }
 }
 
-// Takes the row, the quick menu having been open kTakeAfterUs: under g_lock.
-// true when taken.
-bool takeRow(SceUInt64 now) {
-    if (!findRow()) {
+void dumpTick(SceUInt64 now, bool found) {
+    if (!found || g_dumpedThisOpen || !g_layoutOk || !g_iconRew || msOpen(now) < 1000) return;
+    int kind;
+    if (g_applied) kind = 2;
+    else if (!g_active) kind = static_cast<paf::ui::ButtonBase*>(g_play)->IsEnable() ? 1 : 0;
+    else return;
+    if (g_dumped[kind]) return;
+    g_dumped[kind] = 1;
+    g_dumpedThisOpen = 1;
+    const char* const tags[3] = {"off", "lit", "ours"};
+    logLine("dump %s: previous button %p, its icon %p", tags[kind], (void*)g_rew,
+            (void*)g_iconRew);
+    dumpBytes(tags[kind], "button", g_rew, 0x2C0);
+    dumpBytes(tags[kind], "button's draw", g_rew->GetDrawObj(0), 0xE0);
+    dumpBytes(tags[kind], "icon", g_iconRew, 0x290);
+    dumpBytes(tags[kind], "icon's draw", g_iconRew->GetDrawObj(0), 0xE0);
+}
+
+// ── Taking, keeping and giving back the row ─────────────────────────────────
+// Takes the row, the quick menu having been open kTakeAfterUs. true when
+// taken.
+bool takeRow(SceUInt64 now, bool found) {
+    if (!found) {
         // Another of SceShell's overlays, such as the LiveArea's, reads as the
         // quick menu open too.
         if (++g_findTries == 30) logLine("row: its buttons not found in 3 s: not the quick menu");
@@ -972,8 +1179,9 @@ bool takeRow(SceUInt64 now) {
     if (logIt) {
         g_takesLogged++;
         g_lookLogged = g_look;
-        logLine("row: taking it %d ms after the quick menu opened, buttons switched on with %s",
-                msOpen(now), lookName(g_look));
+        logLine("row: taking it %d ms after the quick menu opened, on %s's thread, buttons "
+                "switched on with %s",
+                msOpen(now), g_fallback ? "the plugin" : "SceShell's UI", lookName(g_look));
     }
     applyLookToAll(logIt);
     holdPlayTextures();
@@ -985,6 +1193,7 @@ bool takeRow(SceUInt64 now) {
     g_ff->SetEventCallback(paf::ui::ButtonBase::CB_BTN_DECIDE, onPress,
                            (void*)(uintptr_t)QM_PRESS_NEXT);
     setTexts();
+    showArt();
     g_applied = 1;
     if (logIt)
         logLine("row: taken for %s%s%s", ownerName(g_owner),
@@ -994,11 +1203,13 @@ bool takeRow(SceUInt64 now) {
 }
 
 // While the row is ours and the quick menu open, ten times a second: puts
-// back what SceShell has changed since. true when it changed anything.
+// back what SceShell has changed since, and shows what VitaPlex has sent
+// since. true when it changed anything.
 bool keepRow() {
     bool changed = watchButtons();
     changed |= keepTexts();
     changed |= showPlaying(g_playing == 1);
+    changed |= showArt();
     if (g_look == QM_LOOK_LIT) {
         const int logIt = g_dimsLogged < 6;
         if (lightAll(logIt)) {
@@ -1010,13 +1221,12 @@ bool keepRow() {
 }
 
 // The row given back with the quick menu open: it is left as SceShell's own
-// set-up had it with no music of its own (build 2023's log), the lines empty,
-// the buttons off and faded and play showing ▶, and kept no longer. Under
-// g_lock.
+// set-up had it with no music of its own (build 2023's log): the lines empty,
+// the buttons off and faded, play showing ▶ and the heading its own icon.
 void releaseRow(const char* why) {
-    if (!g_applied) return;
     unlightAll(why);
     if (g_pauseShown) showPlaying(false);
+    showOwnIcon(why);
     const paf::wstring empty;
     if (g_textTop) g_textTop->SetString(empty);
     if (g_textBottom) g_textBottom->SetString(empty);
@@ -1026,33 +1236,84 @@ void releaseRow(const char* why) {
     logLine("row: left as SceShell had it: lines empty, buttons off");
 }
 
-int g_openLogged;  // this open's opening was logged
-
-void quickMenuOpened(SceUInt64 now) {
-    forgetWidgets();
-    g_openedUs = now;
-    g_opens++;
-    // Past the first opens, those with the row SceShell's are still logged
-    // until its own row has been seen lit once: the look to match.
-    g_timeline = g_opens <= kTimelineOpens || (!g_active && !g_sawLitRow && g_opens <= 40);
-    g_openLogged = g_active || g_timeline;
-    if (g_openLogged) logLine("quick menu opened%s", g_active ? "" : ", the row SceShell's");
+// The row SceShell's, with something of the plugin's left on it since it was
+// last ours. true when it changed anything.
+bool restoreRow() {
+    if (!g_litCount && !g_pauseShown && !g_artShown) return false;
+    unlightAll("the row SceShell's");
+    // Its play icon is put back only with the button off: with it on,
+    // SceShell's own music is in the row, and ⏸ may be SceShell's.
+    if (g_pauseShown && !static_cast<paf::ui::ButtonBase*>(g_play)->IsEnable()) showPlaying(false);
+    g_pauseShown = 0;
+    if (g_artShown) showOwnIcon("the row SceShell's");
+    return true;
 }
 
-void quickMenuClosed(SceUInt64 now) {
-    if (g_active || g_openLogged) logLine("quick menu closed after %d ms", msOpen(now));
-    forgetWidgets();
+// ── The row's tick ──────────────────────────────────────────────────────────
+// Each time round SceShell's UI loop (mainTick), under g_lock; the row itself
+// is looked at ten times a second while the quick menu is open.
+void rowTick(SceUInt64 now) {
+    if (g_openSerial != g_tickOpenSerial) {
+        // Opened since the last tick: what was kept of the last open goes.
+        g_tickOpenSerial = g_openSerial;
+        g_applied = 0;
+        g_findTries = 0;
+        g_rowGroup = g_headingGroup = NULL;
+        g_snapCount = 0;
+        g_timeline = g_timelineDue;
+        g_dumpedThisOpen = 0;
+        g_lastTickUs = 0;
+    }
+    if (!g_open) {
+        g_applied = 0;
+        return;
+    }
+    if (now - g_lastTickUs < kTickUs) return;
+    g_lastTickUs = now;
+    const bool found = findRow();
+    if (!found) g_applied = 0;  // a row SceShell has done away with is not ours
+    timelineTick(now, found);
+    bool changed = false;
+    if (g_releaseDue) {
+        g_releaseDue = 0;
+        if (g_applied) {
+            releaseRow("given back");
+            changed = true;
+        }
+    }
+    if (g_active && !g_applied && now - g_openedUs >= kTakeAfterUs)
+        changed |= takeRow(now, found);
+    else if (g_active && g_applied)
+        changed |= keepRow();
+    else if (!g_active && found)
+        changed |= restoreRow();
+    if (changed) timelineQuiet();
+    dumpTick(now, found);
+}
+
+// PAF's main thread call list's: SceShell's UI thread, each time round its
+// loop. It never waits for the plugin's lock, so SceShell is never held up.
+void mainTick(void* data) {
+    (void)data;
+    if (!g_mainTicks) logLine("SceShell's UI thread ticks the row (thread 0x%08X)",
+                              (unsigned)sceKernelGetThreadId());
+    g_mainTicks++;
+    if (g_fallback) return;
+    if (sceKernelTryLockMutex(g_lock, 1) < 0) return;
+    rowTick(sceKernelGetSystemTimeWide());
+    unlock();
 }
 
 // ── Threads ─────────────────────────────────────────────────────────────────
-// Watches the quick menu open and close, as ElevenMPV-A's plugin does, and
-// takes the row whenever it is open and wanted.
+// Watches the quick menu open and close, as ElevenMPV-A's plugin does, gives
+// the row back when its owner has gone quiet, and writes the log.
 class WatchThread : public paf::thread::Thread {
 public:
     using paf::thread::Thread::Thread;
 
     void EntryFunction() override {
-        int wasOpen = 0;
+        const SceUInt64 started = sceKernelGetSystemTimeWide();
+        int wasOpen = 0, openLogged = 0;
         while (!IsCanceled()) {
             SceAppMgrAppState st;
             sceClibMemset(&st, 0, sizeof(st));
@@ -1060,40 +1321,38 @@ public:
             const int open = st.isSystemUiOverlaid != 0;
             const SceUInt64 now = sceKernelGetSystemTimeWide();
             lock();
-            if (open && !wasOpen) quickMenuOpened(now);
-            else if (!open && wasOpen) quickMenuClosed(now);
-            if (open) {
-                timelineTick(now);
-                bool changed = false;
-                if (g_active && !g_applied && now - g_openedUs >= kTakeAfterUs) {
-                    changed = takeRow(now);
-                } else if (g_active && g_applied) {
-                    changed = keepRow();
-                } else if (!g_active && (g_litCount || g_pauseShown) && findRow()) {
-                    // Changed while the row was ours, and the quick menu
-                    // closed since. Its play icon is put back only with the
-                    // button off: with it on, SceShell's own music is in the
-                    // row, and ⏸ may be SceShell's.
-                    unlightAll("the row SceShell's");
-                    if (g_pauseShown &&
-                        !static_cast<paf::ui::ButtonBase*>(g_play)->IsEnable())
-                        showPlaying(false);
-                    g_pauseShown = 0;
-                    changed = true;
-                }
-                if (changed) timelineQuiet();
+            if (open && !wasOpen) {
+                g_openedUs = now;
+                g_opens++;
+                g_openSerial++;
+                // Past the first opens, those with the row SceShell's are still
+                // logged until its own row has been seen lit once.
+                g_timelineDue = g_opens <= kTimelineOpens ||
+                                (!g_active && !g_sawLitRow && g_opens <= 40);
+                openLogged = g_active || g_timelineDue;
+                if (openLogged)
+                    logLine("quick menu opened%s", g_active ? "" : ", the row SceShell's");
+            } else if (!open && wasOpen && openLogged) {
+                logLine("quick menu closed after %d ms", msOpen(now));
             }
+            g_open = open;
             if (g_active && now - g_activatedUs > QM_ACTIVE_TIMEOUT_S * 1000000ULL) {
                 g_active = 0;
+                g_releaseDue = 1;
                 logLine("nothing from %s for %d s: row given back", ownerName(g_owner),
                         QM_ACTIVE_TIMEOUT_S);
-                if (g_applied) {
-                    releaseRow("given back");
-                    timelineQuiet();
-                }
             }
+            // SceShell's UI thread has never called mainTick: the row is
+            // ticked from here instead, as before build 2026.
+            if (!g_fallback && !g_mainTicks && now - started > 3000000ULL) {
+                g_fallback = 1;
+                logLine("SceShell's UI thread has not called the plugin in 3 s: the row is "
+                        "ticked from the plugin's own thread");
+            }
+            if (g_fallback) rowTick(now);
             unlock();
             wasOpen = open;
+            logDrain();
             paf::thread::Sleep(100);
         }
     }
@@ -1101,7 +1360,7 @@ public:
 
 QmMessage g_message;  // the receiving thread's alone
 
-// Takes what VitaPlex sends.
+// Takes what VitaPlex sends; the row's tick shows it.
 class ReceiveThread : public paf::thread::Thread {
 public:
     using paf::thread::Thread::Thread;
@@ -1127,6 +1386,7 @@ private:
         case QM_CMD_ACTIVATE:
             if (!g_active || g_owner != m.arg)
                 logLine("row wanted by %s", ownerName(m.arg));
+            if (g_owner != m.arg) g_artSerial = 0;  // the last owner's cover
             g_active = 1;
             g_owner = m.arg;
             g_activatedUs = sceKernelGetSystemTimeWide();
@@ -1134,10 +1394,8 @@ private:
         case QM_CMD_DEACTIVATE:
             if (g_active) logLine("row given back by %s", ownerName(g_owner));
             g_active = 0;
-            if (g_applied) {
-                releaseRow("given back");
-                timelineQuiet();
-            }
+            g_releaseDue = 1;
+            g_artSerial = 0;
             break;
         case QM_CMD_SONG: {
             sceClibMemcpy(g_title, m.title, sizeof(g_title));
@@ -1148,27 +1406,25 @@ private:
             toLog(g_title, title, sizeof(title));
             toLog(g_artist, artist, sizeof(artist));
             logLine("song: \"%s\" by %s", title, artist);
-            if (g_applied && g_active) {
-                setTexts();
-                timelineQuiet();
-            }
             break;
         }
         case QM_CMD_PLAYING:
             if (g_playing != (int)m.arg) logLine("%s", m.arg ? "playing" : "paused");
             g_playing = (int)m.arg;
-            if (g_applied && g_active && showPlaying(g_playing == 1)) timelineQuiet();
             break;
         case QM_CMD_LOOK:
             if (m.arg < QM_LOOK_COUNT && g_look != (int)m.arg) {
                 g_look = (int)m.arg;
+                g_lookLogged = -1;
                 logLine("buttons to be switched on with %s", lookName(g_look));
-                if (g_applied && g_active) {
-                    g_lookLogged = g_look;
-                    applyLookToAll(1);
-                    timelineQuiet();
-                }
             }
+            break;
+        case QM_CMD_ART:
+            if (g_artSerial != m.arg) {
+                if (m.arg) logLine("art: %u ready", (unsigned)m.arg);
+                else logLine("art: none");
+            }
+            g_artSerial = m.arg;
             break;
         default:
             logLine("unknown command %u", (unsigned)m.cmd);
@@ -1238,9 +1494,12 @@ extern "C" int module_start(SceSize args, const void* argp) {
     if (!g_impose) {
         logLine("the quick menu not found (power_manage_plugin %p, interface %p): not staying",
                 (void*)power, iface);
+        logDrain();
         return SCE_KERNEL_START_NO_RESIDENT;
     }
-    logLine("quick menu: %s at %p", g_impose->GetTypeName(), (void*)g_impose);
+    g_surfacePool = *(paf::graph::SurfacePool* const*)((const char*)power + kPluginSurfacePool);
+    logLine("quick menu: %s at %p; texture pool %p", g_impose->GetTypeName(), (void*)g_impose,
+            (void*)g_surfacePool);
 
     g_lock = sceKernelCreateMutex("VitaPlexQM::Lock", 0, 0, NULL);
     // As ElevenMPV-A's pipes are made: 0x40, user main memory; 0x81, whole
@@ -1252,6 +1511,7 @@ extern "C" int module_start(SceSize args, const void* argp) {
     if (g_lock < 0 || g_toPlugin < 0 || g_fromPlugin < 0) {
         logLine("pipes: 0x%08X, 0x%08X, lock 0x%08X: not staying", (unsigned)g_toPlugin,
                 (unsigned)g_fromPlugin, (unsigned)g_lock);
+        logDrain();
         return SCE_KERNEL_START_NO_RESIDENT;
     }
 
@@ -1263,6 +1523,11 @@ extern "C" int module_start(SceSize args, const void* argp) {
     hook.hook_func = (const void*)bgmStateCapped;
     const SceUID hooked = vitaplexQmHookFunctionImport(&g_bgmHookRef, &hook);
     logLine("BGM priority SceShell reads capped at 0x80: 0x%08X", (unsigned)hooked);
+
+    // PAF's list of what its main (UI) thread calls each time round its loop;
+    // ElevenMPV-A's app imports Register, so its NID is the console's.
+    paf::common::MainThreadCallList::Register(mainTick, NULL);
+    logLine("row's tick registered with SceShell's UI thread");
 
     (new WatchThread(kThreadPriority, 0x4000, "VitaPlexQM::Watch"))->Start();
     (new ReceiveThread(kThreadPriority, 0x4000, "VitaPlexQM::Receive"))->Start();

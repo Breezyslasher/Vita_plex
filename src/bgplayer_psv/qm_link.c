@@ -292,6 +292,13 @@ int qmSetLook(int look) {
     return rc;
 }
 
+int qmSetArt(uint32_t serial) {
+    lock();
+    const int rc = g_own ? sendCommandLocked(QM_CMD_ART, serial) : 0;
+    unlock();
+    return rc;
+}
+
 // UTF-8 to the UTF-16 the plugins show, ending in 0, cut to fit; what is not
 // UTF-8 becomes U+FFFD.
 static void toUtf16(const char* s, uint16_t* out, size_t cap) {

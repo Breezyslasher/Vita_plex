@@ -840,6 +840,7 @@ int main() {
     enable_language(ASM)
     target_sources(${PROJECT_NAME} PRIVATE
         src/utils/background_audio_psv.cpp
+        src/utils/cover_png.cpp
         src/utils/appmgr_bgm_stub.S
         src/bgplayer_psv/qm_link.c
         src/bgplayer_psv/qm_link_stub.S

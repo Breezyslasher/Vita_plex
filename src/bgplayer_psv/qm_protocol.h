@@ -16,9 +16,11 @@
 // keeps it as set while the quick menu is open; version 3's lights the
 // buttons and icons where they are drawn, and sets the song's lines white,
 // which version 2's set transparent; version 4's shows ⏸ while VitaPlex
-// plays (QM_CMD_PLAYING) and logs each icon's textures.
-#define QM_PIPE_TO_PLUGIN   "VitaPlexQM4::ToPlugin"
-#define QM_PIPE_FROM_PLUGIN "VitaPlexQM4::FromPlugin"
+// plays (QM_CMD_PLAYING) and logs each icon's textures; version 5's changes
+// the row on SceShell's own UI thread, and shows the song's cover on the
+// Music heading's icon (QM_CMD_ART).
+#define QM_PIPE_TO_PLUGIN   "VitaPlexQM5::ToPlugin"
+#define QM_PIPE_FROM_PLUGIN "VitaPlexQM5::FromPlugin"
 
 // To the plugin, a whole QmMessage each time.
 enum {
@@ -30,7 +32,12 @@ enum {
     QM_CMD_DEACTIVATE,  // give the row back
     QM_CMD_SONG,        // title, artist and album for the row's two lines
     QM_CMD_PLAYING,     // arg: 1 playing, 0 paused
-    QM_CMD_LOOK         // arg: QM_LOOK_*, how the row's buttons are switched on
+    QM_CMD_LOOK,        // arg: QM_LOOK_*, how the row's buttons are switched on
+    // arg: the song's cover by its serial, written to QM_ART_PATH_FMT before
+    // it is sent; 0 for none, the heading's own icon. A cover is its
+    // sender's: the plugin forgets it when the row is given back or another
+    // owner takes it.
+    QM_CMD_ART
 };
 enum { QM_OWNER_APP = 1, QM_OWNER_PLAYER = 2 };
 // The row's buttons stay dimmed with ElevenMPV-A's way, ButtonBase::Enable(false),
@@ -47,6 +54,15 @@ enum {
     QM_LOOK_COUNT
 };
 #define QM_ACTIVE_TIMEOUT_S 5
+
+// The cover: a PNG, QM_ART_SIZE square, at this path with the lowest bit of
+// its serial (0 or 1) in it. One serial after another goes to the other
+// file, so that the file the plugin may still be loading is never the one
+// being written. Serials only grow in a boot, from process to process: a
+// plugin that showed a cover from a VitaPlex since closed never takes a new
+// one for it.
+#define QM_ART_PATH_FMT "ux0:data/VitaPlex/qm-art-%u.png"
+#define QM_ART_SIZE     64
 
 typedef struct QmMessage {
     uint32_t cmd;

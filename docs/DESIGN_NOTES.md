@@ -2216,6 +2216,67 @@ Build 2025:
   lit once, its play button on. That open is marked in the log.
 - **Protocol 4**: pipes `VitaPlexQM4::…`, module `VitaPlexQM4`.
 
+**Build 2025 on the console: ⏸ works, the buttons still look off** (log
+`9beff030`, the plugin's).
+
+- The play icon showed ⏸ while VitaPlex played and ▶ while paused, as each
+  change came. The buttons and icons still looked faded.
+- SceShell's own row was logged lit, with its Music app playing ("Burn It to
+  the Ground", "Nickelback / Dark Horse"). Against the row the plugin took 19
+  s later, every widget read the same: type, state, colour FFFFFFFF, show and
+  meta alpha, size, each texture (the button background 100x60, each icon
+  64x64, the heading's 80x80), each draw object's colour, size, class and
+  shader. Its buttons read enabled 1, state 0, as the plugin's do once taken.
+  The only differences were the lines' text and the play and pause icons'
+  sizes.
+- SceShell shows ⏸ by size, not by texture: the play icon (`0xE057A7D0`)
+  shrinks to 0x0 while the pause icon (`0xB26E4562`) grows to 64x64, over
+  about 0.3 s, and back at the next press.
+- The groups were at new places in each of the three opens logged, so
+  SceShell made the row anew each time.
+
+So what SceShell lights is in nothing the plugin reads. One thing differs in
+how the two rows are changed. SceShell changes its widgets on its own UI
+thread, and both plugins changed them from threads of their own. ElevenMPV-A's
+app makes every change to its own widgets on its UI thread
+(`MainThreadCallList`).
+
+Build 2026:
+
+- **On SceShell's UI thread.** The plugin registers a function with PAF's
+  `common::MainThreadCallList`, which SceShell's UI thread calls each time
+  round its loop. All the plugin's work on the row now happens there: taking
+  it, keeping it, giving it back, the timeline. It runs ten times a second
+  while the quick menu is open, and never waits for the plugin's lock, so it
+  cannot hold SceShell up. The plugin's own threads watch the quick menu,
+  take VitaPlex's messages, and write the log. Lines are put together where
+  they happen and kept in a ring of 128, which the watching thread writes,
+  so no line waits for the memory card on a thread SceShell draws with. If
+  SceShell's thread has not called the plugin within 3 s of its start, the
+  watching thread ticks the row itself, as before, and the log says so.
+- **The cover**, in place of the Music heading's icon (`0xE219E0DE`, an
+  80x80 ♫ at size 0x0, drawn at its texture's size). VitaPlex BG fetches the
+  song's thumbnail through Plex's transcoder at 128x128, or reads a
+  download's local copy. It decodes it with the stb_image borealis builds,
+  scales its middle square to 64x64, and writes it as a PNG whose image data
+  is stored, not compressed. One cover after another goes to
+  `qm-art-0.png` or `qm-art-1.png` by the lowest bit of its serial, so the
+  file being written is never the one the plugin may be loading. Then
+  VitaPlex BG sends the serial (`QM_CMD_ART`). The plugin loads the file with
+  `LocalFile::Open` and `Surface::Load`, the calls ElevenMPV-A's app loads
+  its covers with, into power_manage_plugin's texture pool. It gives the
+  texture to the heading's icon, which then holds the only reference. The ♫
+  comes back when the row is given back, when another owner takes it, or if
+  a cover will not load.
+- **Byte dumps.** Once a boot each, a second after the quick menu opens, the
+  previous button and its icon, and their draw objects, are logged byte for
+  byte: with SceShell's row off, with it lit, and with the row the plugin's.
+  What lights SceShell's row is in what differs between its two.
+- **Imports.** `MainThreadCallList::Register`, `LocalFile::Open` and
+  `Surface::Load` are new, 23 in all. All three are in ElevenMPV-A's app,
+  as are their libraries, `ScePafMisc` and `ScePafGraphics`.
+- **Protocol 5**: pipes `VitaPlexQM5::…`, module `VitaPlexQM5`.
+
 **The header took longer than the download** (log `2114643f`). This
 hand-over's first song was OGG, so the player fetched the server's MP3 (6.77
 MB in 7.6 s). Inspecting it and copying it behind a Xing header then took

@@ -17,6 +17,37 @@ _ZN3paf15common_internal8on_errorEv:
 	.word 0x6A687A77
 	.align 4
 
+	.align 4
+	.global _ZN3paf6common18MainThreadCallList8RegisterEPFvPvES2_
+	.type _ZN3paf6common18MainThreadCallList8RegisterEPFvPvES2_, %function
+_ZN3paf6common18MainThreadCallList8RegisterEPFvPvES2_:
+	.word 0x00000000
+	.word 0x3C1965CD
+	.word 0x6735B503
+	.align 4
+
+	.section .vitalink.fstubs.ScePafGraphics,"ax",%progbits
+
+	.align 4
+	.global _ZN3paf5graph7Surface4LoadEPNS0_11SurfacePoolENS_6common9SharedPtrINS_4FileEEEPNS1_10LoadOptionE
+	.type _ZN3paf5graph7Surface4LoadEPNS0_11SurfacePoolENS_6common9SharedPtrINS_4FileEEEPNS1_10LoadOptionE, %function
+_ZN3paf5graph7Surface4LoadEPNS0_11SurfacePoolENS_6common9SharedPtrINS_4FileEEEPNS1_10LoadOptionE:
+	.word 0x00000000
+	.word 0xA070D6A7
+	.word 0xB228A257
+	.align 4
+
+	.section .vitalink.fstubs.ScePafMisc,"ax",%progbits
+
+	.align 4
+	.global _ZN3paf9LocalFile4OpenEPKcjjPi
+	.type _ZN3paf9LocalFile4OpenEPKcjjPi, %function
+_ZN3paf9LocalFile4OpenEPKcjjPi:
+	.word 0x00000000
+	.word 0x3D643CE8
+	.word 0xB9FB9BD6
+	.align 4
+
 	.section .vitalink.fstubs.ScePafStdc,"ax",%progbits
 
 	.align 4

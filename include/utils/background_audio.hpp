@@ -123,9 +123,10 @@ void setQuickMenuControls(bool on);
 int quickMenuLook();
 void setQuickMenuLook(int look);
 // From the OS now-playing bridge (now_playing.cpp): what MusicController
-// publishes, and that it was cleared.
+// publishes, and that it was cleared. artUrl is now_playing.hpp's: the
+// cover's thumbnail URL, a download's local copy, or "" for none.
 void quickMenuNowPlaying(const std::string& title, const std::string& artist,
-                         const std::string& album, bool playing);
+                         const std::string& album, const std::string& artUrl, bool playing);
 void quickMenuNowPlayingCleared();
 
 #else
@@ -150,7 +151,7 @@ inline void setQuickMenuControls(bool) {}
 inline int quickMenuLook() { return 0; }
 inline void setQuickMenuLook(int) {}
 inline void quickMenuNowPlaying(const std::string&, const std::string&, const std::string&,
-                                bool) {}
+                                const std::string&, bool) {}
 inline void quickMenuNowPlayingCleared() {}
 
 #endif

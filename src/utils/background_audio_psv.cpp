@@ -18,11 +18,14 @@
 #include "platform/paths.hpp"
 #include "platform/platform.hpp"
 #include "player/mpv_player.hpp"
+#include "utils/cover_png.hpp"
 #include "utils/http_client.hpp"
 #include "utils/now_playing.hpp"
 #include "utils/vita_install.hpp"
 
 #include <borealis.hpp>
+// The decoder nanovg builds into borealis (nanovg.c), declared only.
+#include <borealis/extern/nanovg/stb_image.h>
 
 #include <psp2/io/dirent.h>
 #include <psp2/kernel/processmgr.h>
@@ -239,11 +242,142 @@ std::atomic<bool> g_qmGone{false};      // handed over or quitting: not taken ag
 std::mutex g_qmMutex;
 struct QmSong {
     std::string title, artist, album;
+    std::string artUrl;    // its cover (now_playing.hpp), "" for none
     bool playing = false;
     bool wanted = false;   // published and not cleared since
     unsigned serial = 0;   // one more each time there is new text to send
 };
 QmSong g_qmSong;   // under g_qmMutex
+
+// ── The song's cover on the row (QM_CMD_ART) ─────────────────────────────
+// Made by a thread of its own, as the watcher asks for it: Plex's thumbnail
+// through its transcoder at twice the size the row shows, or a download's
+// local copy, decoded with the stb_image borealis builds, its middle square
+// scaled to QM_ART_SIZE and written as a PNG (cover_png.hpp), which PAF's
+// decoder in SceShell reads. The watcher sends its serial once written.
+std::mutex g_qmArtMutex;
+std::string g_qmArtWanted;     // the cover asked for, "" for none
+std::string g_qmArtDone;       // the last one made, or that failed ...
+uint32_t g_qmArtSerial = 0;    // ... and its serial, 0 if it failed
+SceUID g_qmArtSema = -1;       // signalled as g_qmArtWanted changes
+
+// Plex's transcoder asked for another size: its width and height.
+std::string withThumbSize(std::string url, int size) {
+    for (const char* key : {"width=", "height="}) {
+        size_t at = url.find(std::string("&") + key);
+        if (at == std::string::npos) at = url.find(std::string("?") + key);
+        if (at == std::string::npos) continue;
+        at += 1 + std::strlen(key);
+        const size_t end = url.find('&', at);
+        url.replace(at, end == std::string::npos ? std::string::npos : end - at,
+                    std::to_string(size));
+    }
+    return url;
+}
+
+// The cover at source written for serial; "" when done, else what failed.
+std::string makeQmArt(const std::string& source, uint32_t serial) {
+    std::string bytes;
+    if (source.rfind("http://", 0) == 0 || source.rfind("https://", 0) == 0) {
+        HttpRequest req;
+        req.url = withThumbSize(source, QM_ART_SIZE * 2);
+        req.timeout = 15;
+        HttpClient client;
+        HttpResponse r = client.request(req);
+        if (!r.success) return "not fetched: HTTP " + std::to_string(r.statusCode) + " " + r.error;
+        bytes.swap(r.body);
+    } else {
+        FILE* f = std::fopen(source.c_str(), "rb");
+        if (!f) return "its file would not open";
+        char buf[16384];
+        for (size_t n; (n = std::fread(buf, 1, sizeof(buf), f)) > 0;) bytes.append(buf, n);
+        std::fclose(f);
+    }
+    int width = 0, height = 0, channels = 0;
+    stbi_uc* px = stbi_load_from_memory((const stbi_uc*)bytes.data(), (int)bytes.size(), &width,
+                                        &height, &channels, 3);
+    if (!px) {
+        const char* why = stbi_failure_reason();
+        return "not decoded (" + std::to_string(bytes.size()) + " bytes): " + (why ? why : "?");
+    }
+    const std::string png =
+        cover::pngRgb(cover::squareRgb(px, width, height, QM_ART_SIZE), QM_ART_SIZE);
+    stbi_image_free(px);
+    char path[64];
+    std::snprintf(path, sizeof(path), QM_ART_PATH_FMT, (unsigned)(serial & 1));
+    FILE* out = std::fopen(path, "wb");
+    if (!out) return std::string("not written: ") + path + " would not open";
+    const bool wrote = std::fwrite(png.data(), 1, png.size(), out) == png.size();
+    if (std::fclose(out) != 0 || !wrote) return std::string("not written to ") + path;
+    return "";
+}
+
+int qmArtMain(SceSize, void*) {
+    // Serials only grow in a boot, process to process, and one after another
+    // goes to the other file (qm_protocol.h): the milliseconds since it, past
+    // the last, with the other lowest bit.
+    uint32_t last = 0;
+    for (;;) {
+        sceKernelWaitSema(g_qmArtSema, 1, nullptr);
+        std::string source;
+        {
+            std::lock_guard<std::mutex> lock(g_qmArtMutex);
+            source = g_qmArtWanted;
+            if (source == g_qmArtDone) continue;
+        }
+        uint32_t serial = 0;
+        if (!source.empty()) {
+            const SceUInt64 start = sceKernelGetSystemTimeWide();
+            serial = std::max(last + 1, (uint32_t)(start / 1000));
+            if (last != 0 && (serial & 1) == (last & 1)) serial++;
+            if (serial == 0) serial = 1;
+            const std::string failed = makeQmArt(source, serial);
+            if (failed.empty()) {
+                last = serial;
+                brls::Logger::info("[bgaudio] quick menu: cover {} made in {} ms", serial,
+                                   (sceKernelGetSystemTimeWide() - start) / 1000);
+            } else {
+                brls::Logger::info("[bgaudio] quick menu: cover {}", failed);
+                serial = 0;
+            }
+        }
+        std::lock_guard<std::mutex> lock(g_qmArtMutex);
+        g_qmArtDone = source;
+        g_qmArtSerial = serial;
+    }
+    return 0;
+}
+
+// From the watcher: the cover for source, made by now or asked for. true
+// with its serial (0 for none) once made, false while it is being made.
+bool qmArtFor(const std::string& source, uint32_t* serial) {
+    if (source.empty()) {
+        *serial = 0;
+        return true;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_qmArtMutex);
+        if (g_qmArtDone == source) {
+            *serial = g_qmArtSerial;
+            return true;
+        }
+        if (g_qmArtWanted == source) return false;
+        g_qmArtWanted = source;
+    }
+    static bool started = false;
+    if (!started) {
+        started = true;
+        g_qmArtSema = sceKernelCreateSema("VitaPlexQmArt", 0, 0, 1, nullptr);
+        const SceUID thid =
+            g_qmArtSema >= 0 ? sceKernelCreateThread("VitaPlexQmArt", qmArtMain, 0x10000100,
+                                                     0x10000, 0, 0, nullptr)
+                             : g_qmArtSema;
+        const int rc = thid >= 0 ? sceKernelStartThread(thid, 0, nullptr) : thid;
+        if (rc < 0) brls::Logger::error("[bgaudio] quick menu: no cover thread: {}", hex(rc));
+    }
+    sceKernelSignalSema(g_qmArtSema, 1);
+    return false;
+}
 
 // Gives the row back to the system for good, from any thread: the music
 // handed to the background player, which takes the row itself as it plays,
@@ -701,6 +835,7 @@ void quickMenuTick(SceInt64 now) {
     static SceInt64 lastTry = 0, lastBeat = 0;
     static unsigned sentSerial = 0;
     static int sentPlaying = -1, sentLook = -1;
+    static int64_t sentArt = -1;   // the cover's serial sent, -1 for none yet
     if (!g_qmEnabled || g_qmGone) return;
     QmSong song;
     {
@@ -726,6 +861,7 @@ void quickMenuTick(SceInt64 now) {
         g_qmActive = true;
         sentSerial = song.serial - 1;   // so the song goes again
         sentPlaying = sentLook = -1;
+        sentArt = -1;
         lastBeat = now;
     } else if (!wanted && g_qmActive) {
         g_qmActive = false;
@@ -756,6 +892,13 @@ void quickMenuTick(SceInt64 now) {
     if (playing != sentPlaying) {
         const int rc = qmSetPlaying(playing);
         if (rc >= 0) sentPlaying = playing;
+    }
+    // The cover: the last one stays on the row while the next is made.
+    uint32_t art = 0;
+    if (qmIsOwn() && qmArtFor(song.artUrl, &art) && (int64_t)art != sentArt) {
+        const int rc = qmSetArt(art);
+        brls::Logger::info("[bgaudio] quick menu: cover {} sent: {}", art, hex(rc));
+        if (rc >= 0) sentArt = art;
     }
     for (int press; (press = qmPoll()) != QM_NONE;) {
         const nowplaying::Transport t = press == QM_NEXT       ? nowplaying::Transport::Next
@@ -2023,7 +2166,7 @@ void setQuickMenuLook(int look) {
 }
 
 void quickMenuNowPlaying(const std::string& title, const std::string& artist,
-                         const std::string& album, bool playing) {
+                         const std::string& album, const std::string& artUrl, bool playing) {
     if (!available()) return;
     std::lock_guard<std::mutex> lock(g_qmMutex);
     if (!g_qmSong.wanted || title != g_qmSong.title || artist != g_qmSong.artist ||
@@ -2032,6 +2175,7 @@ void quickMenuNowPlaying(const std::string& title, const std::string& artist,
     g_qmSong.title = title;
     g_qmSong.artist = artist;
     g_qmSong.album = album;
+    g_qmSong.artUrl = artUrl;
     g_qmSong.playing = playing;
     g_qmSong.wanted = true;
 }

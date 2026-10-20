@@ -277,7 +277,7 @@ void setQueue(const std::vector<QueueEntry>&, int64_t) {}
 // background_audio_psv.cpp puts it on the row through ElevenMPV-A's shell
 // plugin, and sends the row's presses back through dispatchTransport.
 void update(const Info& info) {
-    bgaudio::quickMenuNowPlaying(info.title, info.artist, info.album, info.playing);
+    bgaudio::quickMenuNowPlaying(info.title, info.artist, info.album, info.artUrl, info.playing);
 }
 void clear() { bgaudio::quickMenuNowPlayingCleared(); }
 void setQueue(const std::vector<QueueEntry>&, int64_t) {}

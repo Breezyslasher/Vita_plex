@@ -70,6 +70,9 @@ int qmSetSong(const char* title, const char* artist, const char* album);
 int qmSetPlaying(int playing);
 // How VitaPlex's plugin switches the row's buttons on (QM_LOOK_*).
 int qmSetLook(int look);
+// The song's cover, written to QM_ART_PATH_FMT under this serial first; 0
+// for none. VitaPlex's plugin only.
+int qmSetArt(uint32_t serial);
 
 // A press waiting on the row, or QM_NONE. Never waits.
 int qmPoll(void);
