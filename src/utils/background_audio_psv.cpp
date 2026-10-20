@@ -1798,9 +1798,11 @@ bool handOver(const char* why) {
                           s.state == MpvPlayerState::BUFFERING ||
                           s.state == MpvPlayerState::LOADING);
     if (!playing || !MusicQueue::getInstance().isMusicQueue()) {
-        brls::Logger::info("[bgaudio] background player: {}, with no music playing ({}); "
-                           "nothing handed over",
-                           why, describeMpv(s));
+        // Which of the two: log b8cde643 said "no music playing" with mpv
+        // playing a queue of downloaded songs that was not marked as music.
+        brls::Logger::info("[bgaudio] background player: {}, {} ({}); nothing handed over", why,
+                           playing ? "with a queue that is not music" : "with no music playing",
+                           describeMpv(s));
         return false;
     }
     std::string what;

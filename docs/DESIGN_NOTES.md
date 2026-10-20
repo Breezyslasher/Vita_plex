@@ -2563,6 +2563,25 @@ simulated music service and real files, under ASan and UBSan, in 57 checks:
 `qm_link.c`'s test has the new messages, and `qmCoverWriteFile` writes the
 same PNG as `qmCoverWrite` and leaves nothing behind on a bad image.
 
+**Build 2033 on the console: nothing was handed over** (logs `4cff4881`, the
+plugin's, and `b8cde643`, VitaPlex BG's).
+
+- An album of downloaded songs was started from the Downloads tab. The
+  player said "queue=true music=false", and mpv played
+  `downloads/7561.m4a`.
+- The system asked VitaPlex BG to quit 35 s in. It logged "with no music
+  playing (mpv PLAYING at 35.3s)": "nothing handed over". So no background
+  player ran, and SceShell had nothing to carry on.
+- The Downloads tab built its queue items with no media type, in each of its
+  six places. `MusicQueue::isMusicQueue` reads the current song's type, and
+  the hand-over requires a music queue.
+- Build 2034 gives them their type (`queueItem`). The refusal now says which
+  check failed: no music playing, or a queue that is not music.
+- The row showed the album, Doo-Wops & Hooligans, as the artist. A download
+  keeps a parent title that is the album's, the artist's or the playlist's,
+  by how it was downloaded, and the tab used it as both. That is the
+  downloads' own record, left for now.
+
 
 ### PS4: the popup, and nothing to hang progress on
 
