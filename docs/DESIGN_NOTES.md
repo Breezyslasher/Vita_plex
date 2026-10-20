@@ -1971,6 +1971,86 @@ UTF-16 text with a surrogate pair and a stray byte, a long title cut to fit,
 and the presses. "Quick Menu Music Controls" in VitaPlex BG's settings turns
 it off; it is on by default.
 
+**Build 2019 on the console: the row works, its buttons stay dimmed** (logs
+`530d89d8`, the player's, `bfd9c56c`, VitaPlex BG's, and a screenshot).
+
+- VitaPlex BG loaded its own copy of the plugin
+  (`ux0:app/VPLEX0002/module/shell_plugin.suprx`, module `0x403D09F3`).
+- The row showed the title above and "artist / album" below, in white.
+- Play/pause, previous and next all reached VitaPlex BG; next went on to the
+  next song, whose title the row then showed.
+- The three buttons stayed drawn dimmed throughout, though they worked. Play
+  showed ▶ while the song played.
+
+ElevenMPV-A's binary imports `ButtonBase::Enable(bool)` (ScePafWidget
+`0x8F1A3A59`) and calls it with false. PAF's headers (below) give
+`ButtonBase` an `Enable(bool)` and a `Disable(bool)`, a state
+(`ST_BTN_NORMAL` 0, `ST_BTN_DISABLE` 1, then the pressed ones), a virtual
+`ChangeButtonState` and a colour of its own for the dimmed state. So
+`Enable(false)` most likely lets presses through and leaves the button
+looking dimmed. The text was dimmed too, until the plugin set its colour.
+
+Two more things in these logs:
+
+- The hand-over at 23:10:30 was silent for about a minute and a half. The
+  player fetched "Bad Day" (5.4 MB) at about 60 KB/s: 0.4 MB in 10 s, 1.2 MB
+  in 20 s. Its status had it playing 1:10 in at about 23:12:36, having
+  started at 0:32. Build 2014's player fetched 5.7 MB in 6.8 s.
+- At 22:54 the player's log stops 0.3 s after it started, before it asked the
+  server for the song, with no request to stop. Ended by the system, most
+  likely: 35 of the 213 apps installed have extended memory.
+
+**VitaPlex's own quick menu plugin** (`src/qm_plugin_psv`, from build 2020).
+Lighting the buttons, the play/pause icon and the artwork all need code in
+SceShell that ElevenMPV-A's plugin does not have. That plugin builds only
+with Sony's SDK. Its replacement builds with vitasdk:
+
+- **PAF, the UI library the quick menu is made of.** vita-headers declares
+  about 20 of its C functions and none of its widgets. GrapheneCt's ScePaf-RE
+  has the C++ API with its NIDs, restored from debug data.
+  Princess-of-Sleeping's vitasdk-paf-component (MIT) patches it for vitasdk.
+  `scripts/vita/fetch_paf_headers.sh` fetches both at pinned commits, since
+  ScePaf-RE has no licence file; its install would also replace the SDK's
+  own PAF stubs, so it is not used.
+- **Imports.** `paf_stubs.S` has the 21 PAF imports the plugin needs, written
+  by `scripts/vita/gen_paf_stubs.py` from ScePaf-RE's NID table. Each NID is
+  its name's hash with PAF's key. 18 of them are ones ElevenMPV-A's binary
+  imports.
+- **Checked against ElevenMPV-A's binary**, unpacked and disassembled:
+  - its virtual calls for colour and text go through slots `0x98` and
+    `0x11C`, ScePaf-RE's `SetColor_core` and `SetString`;
+  - it calls `_sceAppMgrGetAppState(&state, 0x80, 0x03570000)`;
+  - its pipes are made with type `0x40` and attributes `0x81`;
+  - its threads run at priority 191.
+
+How it differs:
+
+- **The buttons.** It switches them on with `Enable(true)` by default.
+  "Quick Menu Buttons (test)" in VitaPlex BG's settings picks that, that
+  plus `ChangeButtonState(normal)`, or ElevenMPV-A's way. While the quick
+  menu is open it checks the buttons ten times a second and switches back on
+  any that SceShell has switched off again, in case SceShell sets the row up
+  after it does.
+- **Its own protocol** (`qm_protocol.h`), with the version in the pipes'
+  names, so a newer VitaPlex never talks to an older plugin still loaded
+  that boot.
+- **No freeze.** A press is sent without waiting and dropped if nobody reads
+  it. The owner asks for the row again every second, and the plugin gives it
+  back by itself after 5 s without, as for a player the system ended.
+- **The log.** `ux0:data/VitaPlex/qm-plugin.log` holds each button's state
+  before and after. Once a boot it lists the row's widgets: their type, id,
+  place, size, colour and text, for the artwork and the play/pause icon
+  next. It reads widget members only once the layout is shown to be the
+  headers': the play button found by its id reports that id, and is among
+  its parent's children.
+
+It also caps the BGM priority SceShell reads at 0x80, as ElevenMPV-A's
+plugin does. If ElevenMPV-A's plugin is in SceShell from earlier in the
+boot, VitaPlex asks it once, without waiting, to give the row back.
+VitaPlex falls back to ElevenMPV-A's plugin when its own is missing, will
+not load, or opens no pipes. The plugin is GPL-3.0 like the one it is based
+on; VitaPlexBG.vpk carries its licence and a note of where its source is.
+
 **The header took longer than the download** (log `2114643f`). This
 hand-over's first song was OGG, so the player fetched the server's MP3 (6.77
 MB in 7.6 s). Inspecting it and copying it behind a Xing header then took

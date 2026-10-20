@@ -133,8 +133,10 @@ uses the [borealis](https://github.com/dragonflylee/borealis) UI library, both
 Apache-2.0. Media playback is provided by [libmpv](https://mpv.io) (LGPL-2.1+),
 which is linked dynamically.
 
-The PS Vita's VitaPlex BG package (`VitaPlexBG.vpk`) also carries the quick
-menu plugin of [ElevenMPV-A](https://github.com/GrapheneCt/ElevenMPV-A) by
-GrapheneCt, unchanged. It is a program of its own, licensed under the GNU
-GPL, version 3; its licence and source are in
+The PS Vita's VitaPlex BG package (`VitaPlexBG.vpk`) also carries two quick
+menu plugins, each a program of its own licensed under the GNU GPL, version
+3: VitaPlex's own, based on ElevenMPV-A's, with its source in
+[src/qm_plugin_psv](src/qm_plugin_psv); and, unchanged, the one of
+[ElevenMPV-A](https://github.com/GrapheneCt/ElevenMPV-A) by GrapheneCt, with
+its licence and source in
 [third_party/elevenmpva-shell-plugin](third_party/elevenmpva-shell-plugin).

@@ -42,7 +42,8 @@ void playerStop(const char* why);
 // and this plays it again, as ElevenMPV-A does.
 void playerPowerEvent(int powerInfo);
 // From the watcher, four times a second: the quick menu's Music row through
-// ElevenMPV-A's plugin, while the queue says so and a song plays.
+// VitaPlex's plugin (or ElevenMPV-A's), while the queue says so and a song
+// plays.
 void playerQuickMenuTick(void);
 
 // apps.c: which other apps run beside the player, and which of them have

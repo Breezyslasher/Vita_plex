@@ -1483,6 +1483,54 @@ if(PLATFORM_PSV)
     set(VITA_MAKE_FSELF_FLAGS "")
     vita_create_self(vitaplex_bgplayer.self vitaplex_bgplayer UNSAFE MEMSIZE 0x4000 ATTRIBUTE 3)
     set(VITA_MAKE_FSELF_FLAGS "${_bgp_saved_fself}")
+
+    # ── VitaPlex's quick menu plugin (src/qm_plugin_psv) ────────────────
+    # A module VitaPlex BG and its player load into SceShell (qm_link.c), for
+    # the song and working buttons in the quick menu's Music row. It is
+    # written against PAF, the Vita's UI library, whose headers
+    # scripts/vita/fetch_paf_headers.sh fetches; without
+    # -DVITAPLEX_PAF_INCLUDE_DIR it is left out, and VitaPlex falls back to
+    # ElevenMPV-A's plugin. No C runtime: PAF's new and delete, the kernel's
+    # memcpy, and import stubs of its own (paf_stubs.S, taihen_stub.S). As
+    # vitasdk-paf-component's samples build: wchar_t is PAF's 16 bits, and
+    # the headers' __declspec(dllimport) goes. Always -O2, whatever the build
+    # type: what it imports (paf_stubs.S) is what the compiler leaves out of
+    # line, and at -O0 that is more.
+    set(VITAPLEX_PAF_INCLUDE_DIR "" CACHE PATH
+        "PAF headers for the Vita quick menu plugin (scripts/vita/fetch_paf_headers.sh)")
+    set(VITAPLEX_QM_PLUGIN "")
+    if(VITAPLEX_PAF_INCLUDE_DIR AND EXISTS "${VITAPLEX_PAF_INCLUDE_DIR}/paf.h")
+        add_executable(vitaplex_qm
+            src/qm_plugin_psv/main.cpp
+            src/qm_plugin_psv/paf_stubs.S
+            src/qm_plugin_psv/taihen_stub.S)
+        target_include_directories(vitaplex_qm PRIVATE
+            ${VITAPLEX_PAF_INCLUDE_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/bgplayer_psv)
+        target_compile_options(vitaplex_qm PRIVATE
+            "$<$<COMPILE_LANGUAGE:CXX>:-O2;-fno-rtti;-fno-exceptions;-fno-builtin;-fshort-wchar;-fno-threadsafe-statics;-fno-sized-deallocation;-Wno-unused-function;-Wno-sign-compare;-D__declspec(x)=>")
+        target_link_options(vitaplex_qm PRIVATE -nostartfiles -nostdlib)
+        target_link_libraries(vitaplex_qm
+            SceLibKernel_stub
+            SceAppMgr_stub
+            SceIofilemgr_stub
+            SceKernelThreadMgr_stub
+            SceRtc_stub
+            gcc)
+        set(_qm_saved_fself "${VITA_MAKE_FSELF_FLAGS}")
+        set(VITA_MAKE_FSELF_FLAGS "")
+        vita_create_self(vitaplex_qm.suprx vitaplex_qm
+            CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/src/qm_plugin_psv/exports.yml UNSAFE STRIPPED)
+        set(VITA_MAKE_FSELF_FLAGS "${_qm_saved_fself}")
+        # Beside it in the package: its licence, and where its source is.
+        set(VITAPLEX_QM_PLUGIN
+            FILE ${CMAKE_BINARY_DIR}/vitaplex_qm.suprx               module/vitaplex_qm.suprx
+            FILE src/qm_plugin_psv/LICENSE                           module/vitaplex_qm.LICENSE.txt
+            FILE src/qm_plugin_psv/NOTICE.txt                        module/vitaplex_qm.NOTICE.txt)
+    else()
+        message(STATUS "Vita quick menu plugin left out: no PAF headers "
+                       "(-DVITAPLEX_PAF_INCLUDE_DIR, scripts/vita/fetch_paf_headers.sh)")
+    endif()
     # Its param2.sfo: the keys of BGFTP's background program's and no others
     # (vita-mksfoex -e, without its defaults), a title id of its own, and its
     # app's for save data and add-on content, as the background tests had.
@@ -1528,7 +1576,9 @@ if(PLATFORM_PSV)
         # beside it (third_party/elevenmpva-shell-plugin/README.md).
         FILE third_party/elevenmpva-shell-plugin/shell_plugin.suprx module/shell_plugin.suprx
         FILE third_party/elevenmpva-shell-plugin/LICENSE            module/shell_plugin.LICENSE.txt
-        FILE third_party/elevenmpva-shell-plugin/NOTICE.txt         module/shell_plugin.NOTICE.txt)
+        FILE third_party/elevenmpva-shell-plugin/NOTICE.txt         module/shell_plugin.NOTICE.txt
+        # VitaPlex's own, tried first, when it was built (above).
+        ${VITAPLEX_QM_PLUGIN})
     set(VITA_MKSFOEX_FLAGS "${_bg_saved_sfo}")
     set(VITA_PACK_VPK_FLAGS "${_bg_saved_pack}")
     set(resources "${_bg_saved_resources}")

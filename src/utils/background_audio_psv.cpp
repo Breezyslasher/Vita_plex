@@ -228,10 +228,12 @@ bool handOver(const char* why);
 
 // ── The quick menu's Music row (qm_link.h) ───────────────────────────────
 // What MusicController publishes, which now_playing.cpp hands here on the
-// Vita, for the watcher to put on the row through ElevenMPV-A's plugin. The
-// row is this process's while it has music to show; it goes to the
-// background player with the queue, and back to the system as the app goes.
+// Vita, for the watcher to put on the row through VitaPlex's quick menu
+// plugin (or ElevenMPV-A's). The row is this process's while it has music to
+// show; it goes to the background player with the queue, and back to the
+// system as the app goes.
 std::atomic<bool> g_qmEnabled{false};   // the setting
+std::atomic<int> g_qmLook{QM_LOOK_ENABLE};   // the test picker
 std::atomic<bool> g_qmActive{false};    // the plugin has the row for this process
 std::atomic<bool> g_qmGone{false};      // handed over or quitting: not taken again
 std::mutex g_qmMutex;
@@ -696,8 +698,9 @@ void watchQuickMenu(SceInt64 now) {
 // song sent as it changes; and the row's presses passed to MusicController
 // the way the OS media controls' are (now_playing.hpp).
 void quickMenuTick(SceInt64 now) {
-    static SceInt64 lastTry = 0;
+    static SceInt64 lastTry = 0, lastBeat = 0;
     static unsigned sentSerial = 0;
+    static int sentPlaying = -1, sentLook = -1;
     if (!g_qmEnabled || g_qmGone) return;
     QmSong song;
     {
@@ -708,7 +711,7 @@ void quickMenuTick(SceInt64 now) {
     if (!qmIsOpen()) {
         if (!wanted || (lastTry != 0 && now - lastTry < 30 * 1000000LL)) return;
         lastTry = now;
-        char what[192];
+        char what[320];
         const int rc = qmOpen(what, sizeof(what));
         brls::Logger::info("[bgaudio] quick menu: {} ({})", what, hex(rc));
         if (rc < 0) return;
@@ -717,11 +720,13 @@ void quickMenuTick(SceInt64 now) {
         // A press left from whoever had the row before is not one for this.
         for (int stale; (stale = qmPoll()) != QM_NONE;)
             brls::Logger::info("[bgaudio] quick menu: an earlier press ({}) dropped", stale);
-        const int rc = qmActivate();
+        const int rc = qmActivate(QM_OWNER_APP);
         brls::Logger::info("[bgaudio] quick menu: row taken: {}", hex(rc));
         if (rc < 0) return;
         g_qmActive = true;
         sentSerial = song.serial - 1;   // so the song goes again
+        sentPlaying = sentLook = -1;
+        lastBeat = now;
     } else if (!wanted && g_qmActive) {
         g_qmActive = false;
         brls::Logger::info("[bgaudio] quick menu: row given back, nothing published: {}",
@@ -729,11 +734,28 @@ void quickMenuTick(SceInt64 now) {
         return;
     }
     if (!g_qmActive) return;
+    // VitaPlex's plugin gives the row back by itself once these stop.
+    if (now - lastBeat >= 1000000) {
+        lastBeat = now;
+        qmHeartbeat(QM_OWNER_APP);
+    }
+    const int look = g_qmLook;
+    if (look != sentLook && qmIsOwn()) {
+        const int rc = qmSetLook(look);
+        brls::Logger::info("[bgaudio] quick menu: buttons to be switched on with look {}: {}",
+                           look, hex(rc));
+        if (rc >= 0) sentLook = look;
+    }
     if (song.serial != sentSerial) {
         const int rc = qmSetSong(song.title.c_str(), song.artist.c_str(), song.album.c_str());
         brls::Logger::info("[bgaudio] quick menu: \"{}\" by {}: {}", song.title, song.artist,
                            hex(rc));
         if (rc >= 0) sentSerial = song.serial;
+    }
+    const int playing = song.playing ? 1 : 0;
+    if (playing != sentPlaying) {
+        const int rc = qmSetPlaying(playing);
+        if (rc >= 0) sentPlaying = playing;
     }
     for (int press; (press = qmPoll()) != QM_NONE;) {
         const nowplaying::Transport t = press == QM_NEXT       ? nowplaying::Transport::Next
@@ -1982,13 +2004,22 @@ void setQuickMenuControls(bool on) {
     if (!available()) return;
     g_qmEnabled = on;
     brls::Logger::info("[bgaudio] quick menu controls {}",
-                       on ? "on, through ElevenMPV-A's plugin" : "off");
+                       on ? "on, through VitaPlex's quick menu plugin" : "off");
     if (on) {
         startWatcher();
     } else if (g_qmActive.exchange(false)) {
         brls::Logger::info("[bgaudio] quick menu: row given back, turned off: {}",
                            hex(qmDeactivate()));
     }
+}
+
+int quickMenuLook() {
+    return g_qmLook;
+}
+
+void setQuickMenuLook(int look) {
+    if (look < 0 || look >= QM_LOOK_COUNT) return;
+    g_qmLook = look;   // the watcher sends it to the plugin
 }
 
 void quickMenuNowPlaying(const std::string& title, const std::string& artist,

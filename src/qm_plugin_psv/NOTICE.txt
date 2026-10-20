@@ -1,0 +1,10 @@
+vitaplex_qm.suprx, in this folder, is VitaPlex's quick menu plugin: the song
+and working buttons in the Music row of the quick menu. VitaPlex BG loads it
+into the system shell and talks to it through message pipes. It is a program
+of its own, based on the quick menu plugin of ElevenMPV-A by GrapheneCt, and
+licensed under the GNU General Public License, version 3: see
+vitaplex_qm.LICENSE.txt, beside it. VitaPlex itself is licensed under the
+Apache License, version 2.0.
+
+Its source is in VitaPlex's repository, https://github.com/breezyslasher/vita_plex,
+folder src/qm_plugin_psv, with how it is built.

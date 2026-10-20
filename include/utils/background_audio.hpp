@@ -113,11 +113,15 @@ void setShellService(int service);
 int ownPortTest();
 void setOwnPortTest(int choice);
 
-// The quick menu's Music row, through ElevenMPV-A's shell plugin
-// (src/bgplayer_psv/qm_link.h): the song on it and its three buttons working,
-// for VitaPlex BG's own playback and, through the queue, the background
-// player's. On or off, as saved.
+// The quick menu's Music row, through VitaPlex's quick menu plugin, or
+// ElevenMPV-A's where that will not load (src/bgplayer_psv/qm_link.h): the
+// song on it and its three buttons working, for VitaPlex BG's own playback
+// and, through the queue, the background player's. On or off, as saved.
 void setQuickMenuControls(bool on);
+// How VitaPlex's plugin switches the row's buttons on (QM_LOOK_* in
+// qm_protocol.h): ElevenMPV-A's way left them dimmed. Not saved.
+int quickMenuLook();
+void setQuickMenuLook(int look);
 // From the OS now-playing bridge (now_playing.cpp): what MusicController
 // publishes, and that it was cleared.
 void quickMenuNowPlaying(const std::string& title, const std::string& artist,
@@ -143,6 +147,8 @@ inline void setShellService(int) {}
 inline int ownPortTest() { return 0; }
 inline void setOwnPortTest(int) {}
 inline void setQuickMenuControls(bool) {}
+inline int quickMenuLook() { return 0; }
+inline void setQuickMenuLook(int) {}
 inline void quickMenuNowPlaying(const std::string&, const std::string&, const std::string&,
                                 bool) {}
 inline void quickMenuNowPlayingCleared() {}

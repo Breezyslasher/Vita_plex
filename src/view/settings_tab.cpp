@@ -1163,13 +1163,31 @@ brls::Box* SettingsTab::createMusicSection() {
         auto* quickMenuInfo = new brls::Label();
         quickMenuInfo->setText("Shows the song in the Music row of the quick menu (hold PS) and "
                                "makes its play/pause, next and previous buttons work, here and "
-                               "for the background player. Uses ElevenMPV-A's quick menu "
-                               "plugin, which VitaPlex BG comes with (GPL-3.0, by GrapheneCt); "
-                               "it stays loaded until the Vita restarts.");
+                               "for the background player. Uses VitaPlex BG's quick menu plugin "
+                               "(GPL-3.0, based on ElevenMPV-A's by GrapheneCt), or ElevenMPV-A's "
+                               "own if that will not load; it stays loaded until the Vita "
+                               "restarts.");
         quickMenuInfo->setFontSize(14);
         quickMenuInfo->setMarginLeft(16);
         quickMenuInfo->setMarginTop(8);
         box->addView(quickMenuInfo);
+
+        // How the plugin switches the row's buttons on: ElevenMPV-A's way left
+        // them dimmed, though they worked. Not saved: it is for trying each in
+        // turn.
+        box->addView(makePickerCell("Quick Menu Buttons (test)",
+            {"Enabled", "Enabled, normal state", "As ElevenMPV-A"},
+            bgaudio::quickMenuLook(),
+            [](int index) { bgaudio::setQuickMenuLook(index); }));
+
+        auto* lookInfo = new brls::Label();
+        lookInfo->setText("How the Music row's buttons are switched on. Each applies the next "
+                          "time the quick menu opens; ux0:data/VitaPlex/qm-plugin.log says "
+                          "what each did to them.");
+        lookInfo->setFontSize(14);
+        lookInfo->setMarginLeft(16);
+        lookInfo->setMarginTop(8);
+        box->addView(lookInfo);
 
         // How VitaPlex BG takes the system's music port, against the quick
         // menu's Music row: for its own player, for the system player tests

@@ -115,7 +115,7 @@ static volatile unsigned g_pausedAtMs;
 // The download running is not wanted any more.
 static volatile int g_cancel;
 
-// The quick menu's Music row through ElevenMPV-A's plugin (qm_link.h), when
+// The quick menu's Music row through VitaPlex's plugin (qm_link.h), when
 // the queue says so: the player's while a song of the queue is with the
 // shell, and the system's again as the music stops (stopShell).
 static int g_qmEnabled;           // the queue's qm=1
@@ -1207,8 +1207,8 @@ static void stopShell(const char* why) {
 // taken while the queue plays and the song sent as it changes, and presses
 // passed to watchSong.
 void playerQuickMenuTick(void) {
-    static double lastTry;
-    static int sentIndex = -2;
+    static double lastTry, lastBeat;
+    static int sentIndex = -2, sentPlaying = -1;
     char r[24];
     if (!(g_qmEnabled && g_handedOver && g_shellUp && !g_paused && !g_stopped)) {
         if (__atomic_exchange_n(&g_qmActive, 0, __ATOMIC_SEQ_CST))
@@ -1220,7 +1220,7 @@ void playerQuickMenuTick(void) {
     if (!qmIsOpen()) {
         if (lastTry != 0 && now() - lastTry < 30.0) return;
         lastTry = now();
-        char what[192];
+        char what[320];
         const int rc = qmOpen(what, sizeof(what));
         logLine("quick menu: %s (%s)", what, result(r, sizeof(r), rc));
         if (rc < 0) return;
@@ -1229,11 +1229,19 @@ void playerQuickMenuTick(void) {
         // A press left from whoever had the row before is not one for this.
         for (int stale; (stale = qmPoll()) != QM_NONE;)
             logLine("quick menu: an earlier press (%d) dropped", stale);
-        const int rc = qmActivate();
+        const int rc = qmActivate(QM_OWNER_PLAYER);
         logLine("quick menu: row taken: %s", result(r, sizeof(r), rc));
         if (rc < 0) return;
         g_qmActive = 1;
         sentIndex = -2;
+        sentPlaying = -1;
+        lastBeat = now();
+    }
+    // VitaPlex's plugin gives the row back by itself once these stop, as when
+    // the system ends this process.
+    if (now() - lastBeat >= 1.0) {
+        lastBeat = now();
+        qmHeartbeat(QM_OWNER_PLAYER);
     }
     lockStatus();
     const int index = g_now.index;
@@ -1244,6 +1252,8 @@ void playerQuickMenuTick(void) {
         logLine("quick menu: \"%s\" by %s: %s", e->title, e->artist, result(r, sizeof(r), rc));
         if (rc >= 0) sentIndex = index;
     }
+    const int playing = !g_menuPaused;
+    if (playing != sentPlaying && qmSetPlaying(playing) >= 0) sentPlaying = playing;
     for (int press; (press = qmPoll()) != QM_NONE;) {
         logLine("quick menu: %s pressed",
                 press == QM_NEXT ? "next" : press == QM_PREVIOUS ? "previous" : "play/pause");

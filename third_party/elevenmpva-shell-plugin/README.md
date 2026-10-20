@@ -39,12 +39,14 @@ building it.
 
 ## How VitaPlex uses it
 
-As a program of its own. VitaPlex BG and its background player load it into
-SceShell with taiHEN the way ElevenMPV-A does, unless it is there already
-this boot, and talk to it through the two message pipes it makes
-(`src/bgplayer_psv/qm_link.c`). None of it is linked into VitaPlex, so
-VitaPlexBG.vpk is an aggregate: VitaPlex stays Apache-2.0, and the plugin
-GPL-3.0, with its source here.
+As a fallback, since build 2020: VitaPlex BG's own plugin
+(`src/qm_plugin_psv`, based on this one) is loaded first, and this one only
+when that will not load. As a program of its own. VitaPlex BG and its
+background player load it into SceShell with taiHEN the way ElevenMPV-A
+does, unless it is there already this boot, and talk to it through the two
+message pipes it makes (`src/bgplayer_psv/qm_link.c`). None of it is linked
+into VitaPlex, so VitaPlexBG.vpk is an aggregate: VitaPlex stays Apache-2.0,
+and the plugin GPL-3.0, with its source here.
 
 In SceShell it puts the song on the quick menu's Music row (the title, then
 "artist / album") and sends the presses of the row's play/pause, next and
