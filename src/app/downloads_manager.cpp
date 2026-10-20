@@ -203,7 +203,8 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
                                       const std::string& groupKey,
                                       const std::string& groupTitle,
                                       const std::string& groupThumb,
-                                      const std::string& albumTitle) {
+                                      const std::string& albumTitle,
+                                      const std::string& artist) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     // Check if already in queue
@@ -230,6 +231,7 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
     item.groupTitle = groupTitle;
     item.groupThumb = groupThumb;
     item.albumTitle = albumTitle;
+    item.artist = artist;
 
     // ratingKey and partPath come from the Plex server's JSON response. A
     // malicious or compromised server can return arbitrary strings, so we
@@ -624,23 +626,34 @@ void DownloadsManager::syncProgressFromServer() {
     brls::Logger::info("DownloadsManager: Pulling server progress for {} items", ratingKeys.size());
 
     PlexClient& client = PlexClient::getInstance();
+    int named = 0;
     for (const auto& key : ratingKeys) {
         MediaItem serverItem;
-        if (client.fetchMediaDetails(key, serverItem) && serverItem.viewOffset > 0) {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            for (auto& d : m_downloads) {
-                if (d.ratingKey == key) {
-                    // Use whichever progress is further ahead
-                    if (serverItem.viewOffset > d.viewOffset) {
-                        brls::Logger::info("DownloadsManager: Updated local progress for {} from {}ms to {}ms (from server)",
-                                          d.title, d.viewOffset, serverItem.viewOffset);
-                        d.viewOffset = serverItem.viewOffset;
-                    }
-                    break;
+        if (!client.fetchMediaDetails(key, serverItem)) continue;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& d : m_downloads) {
+            if (d.ratingKey == key) {
+                // Use whichever progress is further ahead
+                if (serverItem.viewOffset > d.viewOffset) {
+                    brls::Logger::info("DownloadsManager: Updated local progress for {} from {}ms to {}ms (from server)",
+                                      d.title, d.viewOffset, serverItem.viewOffset);
+                    d.viewOffset = serverItem.viewOffset;
                 }
+                // A track downloaded before its artist was kept gets it,
+                // and its album, from the same answer.
+                if (d.mediaType == "track" && serverItem.mediaType == MediaType::MUSIC_TRACK &&
+                    (d.artist.empty() || d.albumTitle.empty())) {
+                    if (d.artist.empty()) d.artist = serverItem.grandparentTitle;
+                    if (d.albumTitle.empty()) d.albumTitle = serverItem.parentTitle;
+                    named++;
+                }
+                break;
             }
         }
     }
+    if (named > 0)
+        brls::Logger::info("DownloadsManager: {} track(s) given their artist and album from the "
+                           "server", named);
 
     saveState();
 }
@@ -2248,6 +2261,7 @@ void DownloadsManager::saveStateUnlocked() {
            << "\"groupTitle\":\"" << escapeJson(item.groupTitle) << "\",\n"
            << "\"groupThumb\":\"" << escapeJson(item.groupThumb) << "\",\n"
            << "\"albumTitle\":\"" << escapeJson(item.albumTitle) << "\",\n"
+           << "\"artist\":\"" << escapeJson(item.artist) << "\",\n"
            << "\"groupTotalItems\":" << item.groupTotalItems << "\n"
            << "}";
     }
@@ -2352,6 +2366,7 @@ void DownloadsManager::loadState() {
         item.groupTitle = extractJsonString(objStr, "groupTitle");
         item.groupThumb = extractJsonString(objStr, "groupThumb");
         item.albumTitle = extractJsonString(objStr, "albumTitle");
+        item.artist = extractJsonString(objStr, "artist");
         item.groupTotalItems = static_cast<int>(extractJsonInt(objStr, "groupTotalItems"));
 
         if (!item.ratingKey.empty()) {

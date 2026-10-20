@@ -463,7 +463,9 @@ void downloadArtistTracks(const MediaItem& artist) {
                                 full.ratingKey, full.title, full.partPath,
                                 full.duration, "track", artist.title, 0, full.index,
                                 full.thumb, DownloadGroupType::ARTIST, artist.ratingKey,
-                                artist.title, artist.thumb, album.title))
+                                artist.title, artist.thumb, album.title,
+                                full.grandparentTitle.empty() ? artist.title
+                                                              : full.grandparentTitle))
                             queued++;
                     }
                 }
@@ -2319,7 +2321,9 @@ void MediaDetailView::onDownload() {
         parentTitle = m_item.grandparentTitle;  // Artist name
     }
 
-    // Queue the download (pass thumb for cover art on music tracks)
+    // Queue the download (pass thumb for cover art on music tracks); a
+    // track keeps its album and artist too.
+    const bool isTrack = m_item.mediaType == MediaType::MUSIC_TRACK;
     bool queued = DownloadsManager::getInstance().queueDownload(
         m_item.ratingKey,
         m_item.title,
@@ -2329,7 +2333,10 @@ void MediaDetailView::onDownload() {
         parentTitle,
         seasonNum,
         episodeNum,
-        m_item.thumb
+        m_item.thumb,
+        DownloadGroupType::NONE, "", "", "",
+        isTrack ? m_item.parentTitle : "",
+        isTrack ? m_item.grandparentTitle : ""
     );
 
     if (queued) {
@@ -2526,7 +2533,8 @@ void MediaDetailView::downloadAll() {
                     ratingKey,
                     parentTitle,
                     itemThumb,
-                    fullItem.parentTitle  // album title for tracks
+                    fullItem.parentTitle,  // album title for tracks
+                    itemMediaType == "track" ? fullItem.grandparentTitle : ""
                 )) {
                     queued++;
                 }
@@ -2861,7 +2869,8 @@ void MediaDetailView::loadTrackList() {
                                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                     fullItem.duration, "track",
                                     fullItem.grandparentTitle, 0, fullItem.index,
-                                    fullItem.thumb);
+                                    fullItem.thumb, DownloadGroupType::NONE, "", "", "",
+                                    fullItem.parentTitle, fullItem.grandparentTitle);
                                 brls::sync([queued, fullItem]() {
                                     if (queued) {
                                         DownloadsManager::getInstance().startDownloads();
@@ -4468,7 +4477,7 @@ void MediaDetailView::showAlbumContextMenuStatic(const MediaItem& album) {
                             fullItem.thumb,
                             DownloadGroupType::ALBUM, capturedAlbum.ratingKey,
                             capturedAlbum.title, capturedAlbum.thumb,
-                            fullItem.parentTitle)) {
+                            fullItem.parentTitle, fullItem.grandparentTitle)) {
                             queued++;
                         }
                     }
@@ -4621,7 +4630,8 @@ void MediaDetailView::showTrackContextMenuStatic(const MediaItem& track) {
                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
                     fullItem.duration, "track",
                     fullItem.grandparentTitle, 0, 0,
-                    fullItem.thumb);
+                    fullItem.thumb, DownloadGroupType::NONE, "", "", "",
+                    fullItem.parentTitle, fullItem.grandparentTitle);
                 brls::sync([queued, fullItem]() {
                     if (queued) {
                         DownloadsManager::getInstance().startDownloads();

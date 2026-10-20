@@ -74,9 +74,29 @@ struct DownloadItem {
     std::string groupKey;       // ratingKey of the parent (playlist/album/artist/show)
     std::string groupTitle;     // Display title of the group
     std::string groupThumb;     // Thumbnail URL of the group (for cover art)
-    std::string albumTitle;     // Album title (for tracks in an artist group)
+    std::string albumTitle;     // Album title (for tracks)
+    // A track's artist (its grandparentTitle, as the player shows it), kept
+    // since parentTitle names the artist, the album or the playlist by how
+    // the track was downloaded. Empty on older downloads until the progress
+    // sync fills it, with albumTitle, from the server.
+    std::string artist;
     int groupTotalItems = 0;    // Total items originally in the group (stable Y for X/Y display)
 };
+
+// A downloaded track's artist and album, as the download keeps them. An
+// older one, until the progress sync fills them in: its parent title is the
+// artist for a track downloaded on its own or with its artist's, and the
+// album for an album's; a playlist's is the playlist's name, neither.
+inline std::string downloadArtist(const DownloadItem& d) {
+    if (!d.artist.empty()) return d.artist;
+    return d.groupType == DownloadGroupType::NONE || d.groupType == DownloadGroupType::ARTIST
+               ? d.parentTitle
+               : std::string();
+}
+inline std::string downloadAlbum(const DownloadItem& d) {
+    if (!d.albumTitle.empty()) return d.albumTitle;
+    return d.groupType == DownloadGroupType::ALBUM ? d.parentTitle : std::string();
+}
 
 // Progress callback: (downloadedBytes, totalBytes)
 using DownloadProgressCallback = std::function<void(int64_t, int64_t)>;
@@ -99,7 +119,8 @@ public:
                        const std::string& groupKey = "",
                        const std::string& groupTitle = "",
                        const std::string& groupThumb = "",
-                       const std::string& albumTitle = "");
+                       const std::string& albumTitle = "",
+                       const std::string& artist = "");
 
     // Get all downloads belonging to a specific group
     std::vector<DownloadItem> getDownloadsByGroup(DownloadGroupType type, const std::string& groupKey) const;

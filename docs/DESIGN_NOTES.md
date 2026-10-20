@@ -2579,8 +2579,18 @@ plugin's, and `b8cde643`, VitaPlex BG's).
   check failed: no music playing, or a queue that is not music.
 - The row showed the album, Doo-Wops & Hooligans, as the artist. A download
   keeps a parent title that is the album's, the artist's or the playlist's,
-  by how it was downloaded, and the tab used it as both. That is the
-  downloads' own record, left for now.
+  by how it was downloaded, and the tab used it as both.
+- So from build 2035 a track's download keeps its own artist, the track's
+  `grandparentTitle` as the player shows it, and its album, at every place a
+  song is downloaded (`DownloadItem::artist`, `albumTitle`).
+  - Older downloads get both from the server the next time VitaPlex
+    connects: `syncProgressFromServer` already fetches every completed
+    download's details for its progress.
+  - Until then `downloadArtist` and `downloadAlbum` read the parent title by
+    the download's group: the artist for a single track or an artist's, the
+    album for an album's, and neither for a playlist's.
+  - The Downloads tab's queue items and rows, and the player's local-file
+    path, use them.
 
 
 ### PS4: the popup, and nothing to hang progress on

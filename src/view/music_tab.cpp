@@ -932,7 +932,8 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
                             playlistTitle, 0, fullItem.index,
                             fullItem.thumb,
                             DownloadGroupType::PLAYLIST, playlistId,
-                            playlistTitle, playlistThumb)) {
+                            playlistTitle, playlistThumb,
+                            fullItem.parentTitle, fullItem.grandparentTitle)) {
                             queued++;
                         }
                     }

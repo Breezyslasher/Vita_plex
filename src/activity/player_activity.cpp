@@ -1572,11 +1572,12 @@ void PlayerActivity::loadMedia() {
 
         if (isAudioTrack) {
             // Set up music UI labels
+            const std::string artist = downloadArtist(dlItem);
             if (musicTitleLabel) musicTitleLabel->setText(dlItem.title);
-            if (musicArtistLabel) musicArtistLabel->setText(dlItem.parentTitle);
+            if (musicArtistLabel) musicArtistLabel->setText(artist);
             if (titleLabel) titleLabel->setText(dlItem.title);
             if (artistLabel) {
-                artistLabel->setText(dlItem.parentTitle);
+                artistLabel->setText(artist);
                 artistLabel->setVisibility(brls::Visibility::VISIBLE);
             }
 

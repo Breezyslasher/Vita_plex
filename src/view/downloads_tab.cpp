@@ -173,13 +173,19 @@ DownloadsTab::Type itemType(const DownloadItem& it) {
 // downloaded songs is then a music queue (MusicQueue::isMusicQueue), which
 // the music layout and VitaPlex BG's hand-over to its background player go by.
 // Without it, a queue started here was not handed over (log b8cde643:
-// "queue=true music=false", then "nothing handed over").
+// "queue=true music=false", then "nothing handed over"). A track's artist
+// and album are its own (downloadArtist), not the parent title, which named
+// the album as the artist on the quick menu's row in that log.
 MediaItem queueItem(const DownloadItem& d) {
     MediaItem mi;
     mi.ratingKey = d.ratingKey;
     mi.title = d.title;
     mi.grandparentTitle = d.parentTitle;
     mi.parentTitle = d.parentTitle;
+    if (d.mediaType == "track") {
+        mi.grandparentTitle = downloadArtist(d);
+        mi.parentTitle = downloadAlbum(d);
+    }
     mi.duration = d.duration;
     mi.thumb = d.thumbUrl;
     mi.type = d.mediaType;
@@ -1294,8 +1300,10 @@ brls::Box* DownloadsTab::buildItemRow(const DownloadItem& item) {
 
     auto* titleLabel = new brls::Label();
     std::string displayTitle = item.title;
-    if (!item.parentTitle.empty()) {
-        displayTitle = item.parentTitle + " - " + item.title;
+    // A track's artist (downloadArtist); an episode's show.
+    const std::string byline = item.mediaType == "track" ? downloadArtist(item) : item.parentTitle;
+    if (!byline.empty()) {
+        displayTitle = byline + " - " + item.title;
     }
     if (item.seasonNum > 0 && item.episodeNum > 0) {
         char epStr[32];
