@@ -1978,6 +1978,16 @@ void takeBack() {
             at = (long long)fieldNum(status, "positionMs");
         }
     } else {
+        // The system clock starts again with the Vita, so a status written
+        // later than now is from before it last started: one read as written
+        // 1101 s after VitaPlex BG started (log fbc54add). Nothing of it plays.
+        if (fieldNum(status, "written") > systemSecs() + 1.0) {
+            brls::Logger::info("[bgaudio] background player: not running; its status (\"{}\") is "
+                               "from before the Vita last started",
+                               fieldText(status, "state"));
+            removePlayerSongs();
+            return;
+        }
         // SceShell carrying the queue on (qm_protocol.h) was told at init to
         // stop, and says where it stopped: its status is read again until it
         // is one written after that.

@@ -2642,6 +2642,31 @@ BG's).
   (213 of them, from 20 s after it started). It now says either may be the
   cause.
 
+**Build 2036 on the console: the player outlives VitaSurf** (logs
+`46636387`, the player's; `a9f4a7db`, the plugin's; `fbc54add`, VitaPlex
+BG's).
+
+- VitaSurf (`VSRF00001`, `ATTRIBUTE2` 12) was opened from the LiveArea with
+  VitaPlex BG playing. The system asked VitaPlex BG to quit, and it handed
+  10 songs over at 0:04 into the second and started the player.
+- The player's app watch had VitaSurf running beside it from its first look.
+  It played song 2 to its end, and song 3 on, for the 4.5 minutes VitaSurf
+  ran. Then VitaSurf was closed and VitaShell opened, and it played on.
+- So the system ended no player started as VitaPlex BG closed for an app with
+  extended memory. It ended one already running when such an app opened:
+  VitaPlex BG in build 2035's log, and VitaSurf in BG Test 20's (build 2004).
+  SceShell carrying the queue on is for that case, one game after another,
+  and here it had nothing to do.
+- Nothing was sought. The hand-over at 0:04 is under the 5 s past which the
+  player seeks, so it started the song from 0:00. Nothing was paused from the
+  row. So build 2036's changes to both were not exercised.
+- The Vita had been restarted since the last session. VitaPlex BG read the
+  player's status from before that as written "-1101.1 s before VitaPlex BG
+  started", since the system clock counts from each start. It took that for
+  under 20 s old, and looked for the player's song in the shell, which had
+  none. From build 2037 a status written later than now is said to be from
+  before the Vita last started, and set aside.
+
 
 ### PS4: the popup, and nothing to hang progress on
 
