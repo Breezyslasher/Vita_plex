@@ -2666,6 +2666,17 @@ BG's).
   under 20 s old, and looked for the player's song in the shell, which had
   none. From build 2037 a status written later than now is said to be from
   before the Vita last started, and set aside.
+- VitaPlex BG was opened again at 17:43:56 (log `c8dab58b`), and its opening
+  ended the player. The player had played on from the 17:32 hand-over: its
+  song 5 at 0:50 fits that to the second.
+  - VitaPlex BG found the shell playing that song at 0:50 and stopped it.
+    Then it found the queue file "not the one it played", and went on with
+    nothing, so the music stopped.
+  - Nothing but a hand-over writes the queue file, so it was gone, not whole,
+    or replaced from outside. The one line said all three alike.
+  - From build 2037 the queue is checked before the shell's song is stopped,
+    and a song with nothing to go on with plays on there. The line says
+    which of the three it was, and the two `written` values.
 
 
 ### PS4: the popup, and nothing to hang progress on

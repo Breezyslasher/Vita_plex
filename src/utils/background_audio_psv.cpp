@@ -1934,6 +1934,26 @@ long long takeFromShell(int durationMs) {
     return at;
 }
 
+// Why the queue at BGPLAYER_QUEUE is not the one the player played, as its
+// status says, which the take-back goes on with; "" when it is.
+std::string queueProblem(bool haveQueue, const std::map<std::string, std::string>& queue,
+                         std::size_t tracks, const std::map<std::string, std::string>& status) {
+    char why[128];
+    if (!haveQueue) {
+        std::snprintf(why, sizeof(why), "its queue at %s is %s", BGPLAYER_QUEUE,
+                      fileExists(BGPLAYER_QUEUE) ? "not whole" : "gone");
+    } else if (fieldNum(queue, "written") != fieldNum(status, "queue")) {
+        std::snprintf(why, sizeof(why), "its queue at %s is another, written at %.6f, not %.6f",
+                      BGPLAYER_QUEUE, fieldNum(queue, "written"), fieldNum(status, "queue"));
+    } else if (fieldNum(status, "index") < 0 || fieldNum(status, "index") >= (double)tracks) {
+        std::snprintf(why, sizeof(why), "its song %d is not among the %d of its queue",
+                      (int)fieldNum(status, "index") + 1, (int)tracks);
+    } else {
+        return std::string();
+    }
+    return why;
+}
+
 // What the background player had got to as VitaPlex BG opens, taken back:
 // a running player is asked to pause and says where; one the system ended
 // left its song playing in the shell, which is stopped. The queue then plays
@@ -2015,6 +2035,15 @@ void takeBack() {
                            fieldText(status, "state"), age);
         const bool said = fieldText(status, "state") == BGPLAYER_STATE_PLAYING;
         if (said && age < 20.0) {
+            // The shell's song is stopped only with the queue to go on with
+            // here: log c8dab58b stopped one with none, and left silence.
+            const std::string problem = queueProblem(haveQueue, queue, tracks.size(), status);
+            if (!problem.empty()) {
+                brls::Logger::warning("[bgaudio] background player: {}; its song is left to play "
+                                      "on in the system player",
+                                      problem);
+                return;
+            }
             at = takeFromShell((int)fieldNum(status, "durationMs"));
             if (at >= 0) index = (int)fieldNum(status, "index");
         }
@@ -2024,11 +2053,9 @@ void takeBack() {
         if (!said || at >= 0) removePlayerSongs();
     }
     if (index < 0 || at < 0) return;
-    if (!haveQueue || fieldNum(queue, "written") != fieldNum(status, "queue") ||
-        index >= (int)tracks.size()) {
-        brls::Logger::warning("[bgaudio] background player: its queue at {} is not the one it "
-                              "played; nothing to go on with",
-                              BGPLAYER_QUEUE);
+    const std::string problem = queueProblem(haveQueue, queue, tracks.size(), status);
+    if (!problem.empty()) {
+        brls::Logger::warning("[bgaudio] background player: {}; nothing to go on with", problem);
         return;
     }
 
