@@ -39,6 +39,9 @@
  *   memory starts, SceShell carries its queue on: this plays the queue's
  *   songs that are on the memory card through SceShell's music service, from
  *   inside SceShell, and keeps the row (qm_protocol.h, build 2033).
+ * - For a test, it fetches the start of a song from the server through Sony's
+ *   HTTP library as SceShell has it (QM_CMD_HTTP_TEST, build 2040): whether
+ *   SceShell can fetch the queue's songs that are not on the memory card.
  *
  * Built with vitasdk against the PAF headers scripts/vita/fetch_paf_headers.sh
  * fetches; its PAF imports are in paf_stubs.S. Logs to
@@ -1602,6 +1605,314 @@ void musicTest(const char* path) {
     logLine("music test: done: %s", played ? "SceShell played it" : "its clock never moved");
 }
 
+// ── Fetching from inside SceShell (a test) ──────────────────────────────────
+// QM_CMD_HTTP_TEST: what SceShell needs to fetch the queue's songs that are
+// not on the memory card, tried on its own. Sony's SSL and HTTP libraries, as
+// SceShell has them, are found with taiHEN as the music service is: imported,
+// a library SceShell did not have would keep the whole plugin out. What holds
+// for all of SceShell is left as it is: the TLS options and certificates, and
+// the libraries' start, ended only when this test began them. On a thread of
+// its own with a 64 KB stack, which it measures, so that the fetching to come
+// knows whether the music thread's 32 KB would do. Every code logged, each
+// line with "http test:" in it; the token goes as a header, never logged.
+struct LibFn {
+    const char* name;
+    uint32_t nid;
+    uintptr_t fn;  // found, or 0
+};
+const uint32_t kSslLibrary = 0xCAF5F2E9;   // SceSsl, in module SceLibSsl
+const uint32_t kHttpLibrary = 0xE8F15CDE;  // SceHttp, in module SceLibHttp
+enum { kSslInit, kSslTerm, kSslFns };
+LibFn g_ssl[kSslFns] = {{"sceSslInit", 0x3C733316, 0}, {"sceSslTerm", 0x03CE6E3A, 0}};
+enum {
+    kHttpInit,
+    kHttpTerm,
+    kHttpCreateTemplate,
+    kHttpDeleteTemplate,
+    kHttpCreateConnection,
+    kHttpDeleteConnection,
+    kHttpCreateRequest,
+    kHttpDeleteRequest,
+    kHttpAddHeader,
+    kHttpSend,
+    kHttpStatus,
+    kHttpLength,
+    kHttpRead,
+    kHttpResolveTimeOut,
+    kHttpConnectTimeOut,
+    kHttpSendTimeOut,
+    kHttpRecvTimeOut,
+    kHttpsSslError,
+    kHttpFns
+};
+LibFn g_http[kHttpFns] = {
+    {"sceHttpInit", 0x214926D9, 0},
+    {"sceHttpTerm", 0xC9076666, 0},
+    {"sceHttpCreateTemplate", 0x62241DAB, 0},
+    {"sceHttpDeleteTemplate", 0xEC85ECFB, 0},
+    {"sceHttpCreateConnectionWithURL", 0xC616C200, 0},
+    {"sceHttpDeleteConnection", 0xF0F65C15, 0},
+    {"sceHttpCreateRequestWithURL", 0xBD5DA1D0, 0},
+    {"sceHttpDeleteRequest", 0x3D3D29AD, 0},
+    {"sceHttpAddRequestHeader", 0x7B51B122, 0},
+    {"sceHttpSendRequest", 0x9CA58B99, 0},
+    {"sceHttpGetStatusCode", 0x27071691, 0},
+    {"sceHttpGetResponseContentLength", 0xF580D304, 0},
+    {"sceHttpReadData", 0x7EDE3979, 0},
+    {"sceHttpSetResolveTimeOut", 0x8455B5B3, 0},
+    {"sceHttpSetConnectTimeOut", 0x237CA86E, 0},
+    {"sceHttpSetSendTimeOut", 0x8AE3F008, 0},
+    {"sceHttpSetRecvTimeOut", 0x94BF196E, 0},
+    {"sceHttpsGetSslError", 0x2B79BDE0, 0},
+};
+// As psp2/net/http.h has them.
+typedef int (*FnUnsigned)(unsigned);
+typedef int (*FnVoid)(void);
+typedef int (*FnId)(int);
+typedef int (*FnIdUnsigned)(int, unsigned);
+typedef int (*FnTemplate)(const char*, int, int);
+typedef int (*FnConnection)(int, const char*, int);
+typedef int (*FnRequest)(int, int, const char*, unsigned long long);
+typedef int (*FnHeader)(int, const char*, const char*, unsigned);
+typedef int (*FnSend)(int, const void*, unsigned);
+typedef int (*FnStatus)(int, int*);
+typedef int (*FnLength)(int, unsigned long long*);
+typedef int (*FnRead)(int, void*, unsigned);
+typedef int (*FnSslError)(int, int*, unsigned*);
+template <typename F>
+F httpFn(int i) {
+    return (F)g_http[i].fn;
+}
+const int kHttpVersion11 = 2;                    // SCE_HTTP_VERSION_1_1
+const int kHttpGet = 0;                          // SCE_HTTP_METHOD_GET
+const unsigned kHeaderOverwrite = 0;             // SCE_HTTP_HEADER_OVERWRITE
+const int kHttpAlreadyInited = (int)0x80431020;  // SCE_HTTP_ERROR_ALREADY_INITED
+// The pools, should this test be what starts the libraries.
+const unsigned kSslPool = 256 * 1024, kHttpPool = 64 * 1024;
+const char* const kHttpTestFile = "ux0:data/VitaPlex/qm-http-test.bin";
+const int kHttpStack = 0x10000;
+const uint32_t kPaintBytes = 40 * 1024;  // of it painted, below where the thread begins
+const uint32_t kPaint = 0x56504C58;
+
+// From QM_CMD_HTTP_TEST: set under g_lock while g_httpBusy is 0, then the
+// test thread's until it sets it back.
+char g_httpBase[256], g_httpPath[256], g_httpToken[256];
+uint32_t g_httpBytes;
+int g_httpBusy;
+uint8_t g_httpBuf[8192];  // the test thread's
+
+// A library's functions, from SceShell's module of it, else from its file
+// loaded into SceShell now. true when every one is found.
+bool findLibrary(const char* module, uint32_t libnid, const char* path, LibFn* fns, int count) {
+    uintptr_t fn = 0;
+    int rc = vitaplexQmGetModuleExportFunc(module, libnid, fns[0].nid, &fn);
+    logLine("http test: %s in SceShell already: 0x%08X", module, (unsigned)rc);
+    if (rc < 0) {
+        int status = 0;
+        const SceUID mod = sceKernelLoadStartModule(path, 0, NULL, 0, NULL, &status);
+        logLine("http test: %s loaded into SceShell: 0x%08X, its start 0x%08X", path,
+                (unsigned)mod, (unsigned)status);
+        if (mod < 0) return false;
+    }
+    bool all = true;
+    for (int i = 0; i < count; i++) {
+        fn = 0;
+        rc = vitaplexQmGetModuleExportFunc(module, libnid, fns[i].nid, &fn);
+        fns[i].fn = rc >= 0 ? fn : 0;
+        if (rc < 0) {
+            all = false;
+            logLine("http test: %s not in %s: 0x%08X", fns[i].name, module, (unsigned)rc);
+        }
+    }
+    return all;
+}
+
+// What sceHttpsGetSslError's detail says (SCE_HTTPS_ERROR_SSL_*), for the log.
+void sslDetail(unsigned detail, char* out, int cap) {
+    static const char* const kWhy[6] = {"internal",      "invalid certificate",
+                                        "not the server's name", "expired",
+                                        "not yet valid", "unknown CA"};
+    int n = 0;
+    out[0] = 0;
+    for (int i = 0; i < 6 && n < cap; i++)
+        if (detail & (1u << i)) n += sceClibSnprintf(out + n, cap - n, "%s%s", n ? ", " : ": ", kWhy[i]);
+}
+
+// One GET of url with the template tmpl, `what` naming it in the log: the
+// token as a header when given, and only the first `bytes` asked for and read
+// when non-0, the body written to kHttpTestFile when `save`. The status code,
+// or the code of the call that failed (< 0); the body's size in *got.
+int httpGet(int tmpl, const char* what, const char* url, const char* token, uint32_t bytes,
+            bool save, uint32_t* got) {
+    *got = 0;
+    const int conn = httpFn<FnConnection>(kHttpCreateConnection)(tmpl, url, 1);
+    if (conn < 0) {
+        logLine("http test: %s: connection 0x%08X", what, (unsigned)conn);
+        return conn;
+    }
+    const int req = httpFn<FnRequest>(kHttpCreateRequest)(conn, kHttpGet, url, 0);
+    int result = req;
+    if (req < 0) {
+        logLine("http test: %s: request 0x%08X", what, (unsigned)req);
+    } else {
+        int rc = 0;
+        if (token) rc = httpFn<FnHeader>(kHttpAddHeader)(req, "X-Plex-Token", token, kHeaderOverwrite);
+        if (rc >= 0 && bytes) {
+            char range[32];
+            sceClibSnprintf(range, sizeof(range), "bytes=0-%u", (unsigned)(bytes - 1));
+            rc = httpFn<FnHeader>(kHttpAddHeader)(req, "Range", range, kHeaderOverwrite);
+        }
+        const SceUInt64 t0 = sceKernelGetSystemTimeWide();
+        if (rc >= 0) rc = httpFn<FnSend>(kHttpSend)(req, NULL, 0);
+        if (rc < 0) {
+            int err = 0;
+            unsigned detail = 0;
+            const int rcSsl = httpFn<FnSslError>(kHttpsSslError)(req, &err, &detail);
+            char why[128];
+            sslDetail(detail, why, sizeof(why));
+            logLine("http test: %s: failed 0x%08X; TLS error 0x%08X, detail 0x%X%s (0x%08X)", what,
+                    (unsigned)rc, (unsigned)err, detail, why, (unsigned)rcSsl);
+            result = rc;
+        } else {
+            int status = 0;
+            unsigned long long length = 0;
+            const int rcStatus = httpFn<FnStatus>(kHttpStatus)(req, &status);
+            const int rcLength = httpFn<FnLength>(kHttpLength)(req, &length);
+            const SceUID fd =
+                save ? sceIoOpen(kHttpTestFile, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666) : -1;
+            uint8_t first[8];
+            sceClibMemset(first, 0, sizeof(first));
+            int rcRead = 0, rcWrite = 0;
+            for (;;) {
+                uint32_t want = sizeof(g_httpBuf);
+                if (bytes && bytes - *got < want) want = bytes - *got;
+                if (want == 0) break;
+                rcRead = httpFn<FnRead>(kHttpRead)(req, g_httpBuf, want);
+                if (rcRead <= 0) break;
+                if (*got == 0) sceClibMemcpy(first, g_httpBuf, rcRead < 8 ? rcRead : 8);
+                if (fd >= 0 && rcWrite >= 0) {
+                    const int w = sceIoWrite(fd, g_httpBuf, (SceSize)rcRead);
+                    if (w != rcRead) rcWrite = w < 0 ? w : -1;
+                }
+                *got += (uint32_t)rcRead;
+            }
+            if (fd >= 0) sceIoClose(fd);
+            // In 32 bits, as msOpen: a test is over in well under 71 minutes.
+            const uint32_t ms = (uint32_t)(sceKernelGetSystemTimeWide() - t0) / 1000u;
+            char len[24];
+            if (rcLength < 0)
+                sceClibSnprintf(len, sizeof(len), "none (0x%08X)", (unsigned)rcLength);
+            else if (length >> 32)
+                sceClibSnprintf(len, sizeof(len), "4 GB or more");
+            else
+                sceClibSnprintf(len, sizeof(len), "%u", (unsigned)length);
+            logLine("http test: %s: status %d (0x%08X), length %s; %u bytes in %u ms, %u KB/s, "
+                    "the last read 0x%08X",
+                    what, status, (unsigned)rcStatus, len, (unsigned)*got, (unsigned)ms,
+                    (unsigned)(*got / (ms ? ms : 1)), (unsigned)rcRead);
+            if (save)
+                logLine("http test: %s: written to %s: %s (0x%08X), its first bytes %02X %02X %02X "
+                        "%02X %02X %02X %02X %02X",
+                        what, kHttpTestFile, fd < 0 || rcWrite < 0 ? "no" : "yes",
+                        (unsigned)(fd < 0 ? fd : rcWrite), first[0], first[1], first[2], first[3],
+                        first[4], first[5], first[6], first[7]);
+            result = rcStatus < 0 ? rcStatus : status;
+        }
+        httpFn<FnId>(kHttpDeleteRequest)(req);
+    }
+    httpFn<FnId>(kHttpDeleteConnection)(conn);
+    return result;
+}
+
+// The test: base's /identity with no token, and over plain http too, then
+// the first `bytes` of the file at path with the token, only over the first
+// if its TLS held. What it came to.
+const char* httpTest(const char* base, const char* path, const char* token, uint32_t bytes) {
+    logLine("http test: %s, its /identity, then the first %u KB of %s, from inside SceShell",
+            base, (unsigned)(bytes / 1024), path);
+    if (!findLibrary("SceLibSsl", kSslLibrary, "vs0:sys/external/libssl.suprx", g_ssl, kSslFns) ||
+        !findLibrary("SceLibHttp", kHttpLibrary, "vs0:sys/external/libhttp.suprx", g_http,
+                     kHttpFns))
+        return "Sony's SSL and HTTP libraries are not all there in SceShell";
+    // Begun here only if SceShell has not begun them, and then ended here.
+    const int rcSsl = ((FnUnsigned)g_ssl[kSslInit].fn)(kSslPool);
+    logLine("http test: SSL library started: 0x%08X%s", (unsigned)rcSsl,
+            rcSsl >= 0 ? ", here, for this test" : "");
+    const int rcHttp = httpFn<FnUnsigned>(kHttpInit)(kHttpPool);
+    logLine("http test: HTTP library started: 0x%08X%s", (unsigned)rcHttp,
+            rcHttp >= 0                    ? ", here, for this test"
+            : rcHttp == kHttpAlreadyInited ? ", SceShell's already"
+                                           : "");
+    const char* outcome = "the HTTP library would not start";
+    if (rcHttp >= 0 || rcHttp == kHttpAlreadyInited) {
+        const int tmpl = httpFn<FnTemplate>(kHttpCreateTemplate)("VitaPlex (SceShell)",
+                                                                 kHttpVersion11, 1);
+        logLine("http test: template 0x%08X", (unsigned)tmpl);
+        outcome = "no template";
+        if (tmpl >= 0) {
+            const int rcResolve = httpFn<FnIdUnsigned>(kHttpResolveTimeOut)(tmpl, 5000000u),
+                      rcConnect = httpFn<FnIdUnsigned>(kHttpConnectTimeOut)(tmpl, 5000000u),
+                      rcSend = httpFn<FnIdUnsigned>(kHttpSendTimeOut)(tmpl, 10000000u),
+                      rcRecv = httpFn<FnIdUnsigned>(kHttpRecvTimeOut)(tmpl, 10000000u);
+            logLine("http test: time-outs of 5, 5, 10 and 10 s: 0x%08X 0x%08X 0x%08X 0x%08X",
+                    (unsigned)rcResolve, (unsigned)rcConnect, (unsigned)rcSend, (unsigned)rcRecv);
+            static char url[600];
+            uint32_t got = 0;
+            sceClibSnprintf(url, sizeof(url), "%s/identity", base);
+            const int identity = httpGet(tmpl, "/identity", url, NULL, 0, false, &got);
+            if (startsWith(base, "https://")) {
+                sceClibSnprintf(url, sizeof(url), "http://%s/identity", base + 8);
+                httpGet(tmpl, "/identity over plain http", url, NULL, 0, false, &got);
+            }
+            if (identity != 200) {
+                outcome = "the server's /identity did not answer 200, so the token was not sent";
+            } else {
+                sceClibSnprintf(url, sizeof(url), "%s%s", base, path);
+                const int song = httpGet(tmpl, "the song", url, token, bytes, true, &got);
+                logLine("http test: %s removed: 0x%08X", kHttpTestFile,
+                        (unsigned)sceIoRemove(kHttpTestFile));
+                outcome = (song == 206 || song == 200) && got > 0 ? "SceShell fetched the song's start"
+                                                                  : "the song's start did not come";
+            }
+            logLine("http test: template deleted: 0x%08X",
+                    (unsigned)httpFn<FnId>(kHttpDeleteTemplate)(tmpl));
+        }
+    }
+    if (rcHttp >= 0)
+        logLine("http test: HTTP library ended: 0x%08X", (unsigned)httpFn<FnVoid>(kHttpTerm)());
+    if (rcSsl >= 0)
+        logLine("http test: SSL library ended: 0x%08X", (unsigned)((FnVoid)g_ssl[kSslTerm].fn)());
+    return outcome;
+}
+
+// The test's thread. The stack below where it begins is painted, and read
+// back after the test for how far down the test reached; nothing is called
+// as it is painted, so the frames painted over are none in use.
+#if defined(__arm__)
+#define READ_SP(sp) asm volatile("mov %0, sp" : "=r"(sp))
+#else  // the host test
+#define READ_SP(sp) asm volatile("mov %%rsp, %0" : "=r"(sp))
+#endif
+__attribute__((no_sanitize_address)) int httpThread(SceSize, void*) {
+    uintptr_t sp;
+    READ_SP(sp);
+    volatile uint32_t* const low = (volatile uint32_t*)((sp - 256 - kPaintBytes) & ~(uintptr_t)3);
+    volatile uint32_t* const high = (volatile uint32_t*)((sp - 256) & ~(uintptr_t)3);
+    for (volatile uint32_t* p = low; p < high; p++) *p = kPaint;
+    const char* outcome = httpTest(g_httpBase, g_httpPath, g_httpToken, g_httpBytes);
+    volatile uint32_t* p = low;
+    while (p < high && *p == kPaint) p++;
+    logLine("http test: its thread used %u KB of its %u KB stack%s",
+            (unsigned)((sp - (uintptr_t)p) / 1024), (unsigned)(kHttpStack / 1024),
+            p == low ? " or more, all that was measured" : "");
+    logLine("http test: done: %s", outcome);
+    lock();
+    sceClibMemset(g_httpToken, 0, sizeof(g_httpToken));
+    g_httpBusy = 0;
+    unlock();
+    return sceKernelExitDeleteThread(0);
+}
+
 // ── SceShell carries the queue on ───────────────────────────────────────────
 // (qm_protocol.h) The background player stopped checking in without giving
 // the row back: the system has ended it, and its song plays on in the shell.
@@ -2728,6 +3039,29 @@ private:
             g_carryAllowed = 0;
             stopCarry("VitaPlex BG takes the music back", kEndTakeBack);
             break;
+        case QM_CMD_HTTP_TEST: {
+            if (g_httpBusy) {
+                logLine("http test: done: one runs already");
+                break;
+            }
+            // VitaPlex's addresses, paths and tokens are ASCII. The token is
+            // kept no longer than the test needs it, here or in the message.
+            toLog(m.title, g_httpBase, sizeof(g_httpBase));
+            toLog(m.artist, g_httpPath, sizeof(g_httpPath));
+            toLog(m.album, g_httpToken, sizeof(g_httpToken));
+            sceClibMemset(g_message.album, 0, sizeof(g_message.album));
+            g_httpBytes = m.arg;
+            g_httpBusy = 1;
+            const SceUID thread = sceKernelCreateThread("VitaPlexQM::Http", httpThread,
+                                                        kThreadPriority, kHttpStack, 0, 0, NULL);
+            const int rc = thread < 0 ? thread : sceKernelStartThread(thread, 0, NULL);
+            if (rc < 0) {
+                logLine("http test: done: no thread for it (0x%08X)", (unsigned)rc);
+                sceClibMemset(g_httpToken, 0, sizeof(g_httpToken));
+                g_httpBusy = 0;
+            }
+            break;
+        }
         default:
             logLine("unknown command %u", (unsigned)m.cmd);
             break;

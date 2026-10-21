@@ -379,6 +379,23 @@ int qmMusicTest(const char* path) {
     return rc;
 }
 
+int qmHttpTest(const char* base, const char* path, const char* token, unsigned bytes) {
+    lock();
+    int rc = -1;
+    if (g_own) {
+        memset(&g_message, 0, sizeof(g_message));
+        g_message.own.cmd = QM_CMD_HTTP_TEST;
+        g_message.own.arg = bytes;
+        toUtf16(base, g_message.own.title, 256);
+        toUtf16(path, g_message.own.artist, 256);
+        toUtf16(token, g_message.own.album, 256);
+        rc = sendLocked();
+        memset(&g_message, 0, sizeof(g_message));  // the token, kept no longer here
+    }
+    unlock();
+    return rc;
+}
+
 int qmSongFile(int index, const char* key, const char* path) {
     lock();
     int rc = -1;

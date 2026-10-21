@@ -94,6 +94,11 @@ std::string stopShellTest();
 // QM_CMD_MUSIC_TEST), the first step of moving the background music there.
 // The report has the plugin's own lines, read back from its log.
 void runPluginMusicTest(Report done);
+// SceShell fetching a song itself: the plugin fetches the start of a song
+// from the server through Sony's HTTP library, from inside SceShell
+// (QM_CMD_HTTP_TEST), the step before SceShell fetches the queue's songs that
+// are not on the memory card. The report has the plugin's own lines.
+void runPluginHttpTest(Report done);
 
 // BG Test 11: pauses the song VitaPlex is playing, writes it, where it was
 // paused and the queue's next song for VPLXBGT11, and starts that app, which
@@ -146,6 +151,7 @@ inline void onTrackLoad() {}
 inline void onPlayerShutdown() {}
 inline void runShellFileTest(Report) {}
 inline void runPluginMusicTest(Report) {}
+inline void runPluginHttpTest(Report) {}
 inline void runShellStreamTest(Report) {}
 inline std::string stopShellTest() { return {}; }
 inline void runHandoffTest(Report) {}

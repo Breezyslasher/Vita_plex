@@ -1254,6 +1254,17 @@ brls::Box* SettingsTab::createMusicSection() {
         });
         box->addView(sceShellTest);
 
+        auto* fetchTest = new brls::DetailCell();
+        fetchTest->setText("Test: SceShell Fetches a Song Itself");
+        fetchTest->setDetailText("Its first 64 KB, over HTTPS, through the quick menu plugin");
+        fetchTest->registerClickAction([](brls::View*) {
+            brls::Application::notify("Asking SceShell to fetch the start of a song: up to a "
+                                      "minute. Stay in VitaPlex until the report shows.");
+            bgaudio::runPluginHttpTest(showTestReport);
+            return true;
+        });
+        box->addView(fetchTest);
+
         auto* stopTest = new brls::DetailCell();
         stopTest->setText("Stop System Player Test");
         stopTest->registerClickAction([](brls::View*) {

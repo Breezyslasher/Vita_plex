@@ -20,9 +20,11 @@
 // the row on SceShell's own UI thread, and shows the song's cover on the
 // Music heading's icon (QM_CMD_ART); version 6's plays a file itself, from
 // inside SceShell, for a test (QM_CMD_MUSIC_TEST); version 7's carries the
-// background player's queue on when the system ends the player (below).
-#define QM_PIPE_TO_PLUGIN   "VitaPlexQM7::ToPlugin"
-#define QM_PIPE_FROM_PLUGIN "VitaPlexQM7::FromPlugin"
+// background player's queue on when the system ends the player (below);
+// version 8's fetches the start of a song from the server, from inside
+// SceShell, for a test (QM_CMD_HTTP_TEST).
+#define QM_PIPE_TO_PLUGIN   "VitaPlexQM8::ToPlugin"
+#define QM_PIPE_FROM_PLUGIN "VitaPlexQM8::FromPlugin"
 
 // SceShell carries the queue on. The system ends the background player as an
 // app with extended memory starts, and SceShell is never ended. So when the
@@ -72,7 +74,17 @@ enum {
     // carries on stops where it is, with the song left playing for VitaPlex BG
     // to stop, and the status written one last time. None is carried on after
     // this until the background player takes the row again.
-    QM_CMD_TAKE_BACK
+    QM_CMD_TAKE_BACK,
+    // A test: the plugin fetches from the server through Sony's HTTP library,
+    // as SceShell has it, from inside SceShell. title has the server's
+    // address ("https://host:port"), artist the path of a song's file on it,
+    // album the token, which goes as a header and is never logged; arg how
+    // many bytes from the file's start to fetch. It asks for /identity with
+    // no token, then for the song's start with it, and logs each step to
+    // qm-plugin.log, each line with "http test:" in it and the last with
+    // "http test: done". Whether this works decides whether SceShell can
+    // fetch the queue's songs that are not on the memory card.
+    QM_CMD_HTTP_TEST
 };
 enum { QM_OWNER_APP = 1, QM_OWNER_PLAYER = 2 };
 
@@ -104,6 +116,8 @@ enum {
 };
 #define QM_ACTIVE_TIMEOUT_S 5
 #define QM_MUSIC_TEST_S     30
+#define QM_HTTP_TEST_S      60     // the longest a fetch test may take
+#define QM_HTTP_TEST_BYTES  65536  // what it fetches of the song
 
 // The plugin's log, one file a boot; VitaPlex BG reads a test's lines back
 // from it.

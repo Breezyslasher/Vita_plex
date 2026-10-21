@@ -2675,18 +2675,19 @@ std::string stopShellTest() {
 // background player holds it. The plugin plays for QM_MUSIC_TEST_S at most
 // and logs as it goes; its lines are read back from its log.
 
-// The plugin's "music test:" lines written past `from` bytes, and whether
-// the last of them says it is done.
-std::string pluginTestLines(long from, bool* finished) {
+// The plugin's lines with `test` ("music test:") in them written past `from`
+// bytes, and whether the last of them says it is done.
+std::string pluginTestLines(long from, const char* test, bool* finished) {
     std::string out;
     FILE* f = std::fopen(QM_PLUGIN_LOG, "rb");
     if (!f) return out;
     std::fseek(f, from, SEEK_SET);
+    const std::string done = std::string(test) + " done";
     char line[512];
     while (std::fgets(line, sizeof(line), f)) {
-        if (!std::strstr(line, "music test:")) continue;
+        if (!std::strstr(line, test)) continue;
         out += line;
-        if (std::strstr(line, "music test: done")) *finished = true;
+        if (std::strstr(line, done.c_str())) *finished = true;
     }
     std::fclose(f);
     return out;
@@ -2746,11 +2747,109 @@ void runPluginMusicTest(Report done) {
         bool finished = false;
         for (int i = 0; rc >= 0 && i < (QM_MUSIC_TEST_S + 15) * 2 && !finished; i++) {
             sceKernelDelayThread(500 * 1000);
-            lines = pluginTestLines(from, &finished);
+            lines = pluginTestLines(from, "music test:", &finished);
         }
         if (port != 0) releasePort(port, "SceShell music test over");
         brls::Logger::info("[bgaudio] SceShell music test, the plugin's lines:\n{}", lines);
         std::string report = title;
+        if (rc < 0)
+            report += "The plugin could not be asked: " + hex(rc);
+        else
+            report += lines.empty() ? std::string("Nothing from the plugin.") : lines;
+        if (rc >= 0 && !finished)
+            report += "\n\nThe plugin has not said it is done: its last line is the step it "
+                      "stopped at.";
+        finishTest(done, report);
+    });
+}
+
+// ── SceShell fetching a song itself ──────────────────────────────────────
+//
+// SceShell carries the queue on when the system ends the background player,
+// and passes over its songs that are not on the memory card (qm_protocol.h).
+// Fetching those from inside SceShell is the next step, and this tries it on
+// its own (QM_CMD_HTTP_TEST): the plugin asks the server for /identity with
+// no token, then for the first QM_HTTP_TEST_BYTES of a song's file with it,
+// through Sony's HTTP library as SceShell has it. Its lines are read back
+// from its log. Nothing plays, so mpv and the BGM port are left as they are.
+
+// The song for it: the one playing, else the first song of the last queue
+// handed over that is not downloaded, as SceShell would fetch, else that
+// queue's first. Its ratingKey and title; empty with none.
+void pickFetchSong(std::string& ratingKey, std::string& title) {
+    if (const QueueItem* track = MusicQueue::getInstance().getCurrentTrack()) {
+        ratingKey = track->ratingKey;
+        title = track->title;
+        if (!ratingKey.empty()) return;
+    }
+    std::map<std::string, std::string> queue;
+    std::vector<std::vector<std::string>> tracks;
+    readNote(BGPLAYER_QUEUE, queue, &tracks);
+    for (const auto& t : tracks) {
+        if (!t[BGPLAYER_TRACK_LOCAL].empty() || t[BGPLAYER_TRACK_KEY].empty()) continue;
+        ratingKey = t[BGPLAYER_TRACK_KEY];
+        title = t[BGPLAYER_TRACK_TITLE];
+        return;
+    }
+    if (!tracks.empty()) {
+        ratingKey = tracks[0][BGPLAYER_TRACK_KEY];
+        title = tracks[0][BGPLAYER_TRACK_TITLE];
+    }
+}
+
+void runPluginHttpTest(Report done) {
+    if (g_shellBusy.exchange(true)) {
+        done("A system player test is already running.");
+        return;
+    }
+    std::string ratingKey, title;
+    pickFetchSong(ratingKey, title);
+    if (ratingKey.empty()) {
+        g_shellBusy = false;
+        done("No song to fetch. Play a track, then run this again.");
+        return;
+    }
+    platform::launchThread([done, ratingKey, title]() {
+        const std::string head =
+            "SceShell fetches a song itself (an experiment)\n\n" + title + "\n\n";
+        PlexClient& plex = PlexClient::getInstance();
+        MediaItem item;
+        const bool haveDetails = plex.fetchMediaDetails(ratingKey, item);
+        const std::string base = plex.getServerUrl();
+        const std::string token = plex.getAuthToken();
+        if (!haveDetails || item.partPath.empty()) {
+            finishTest(done, head + "The server gave no file for it.");
+            return;
+        }
+        // The plugin's message holds 255 characters of each.
+        if (base.size() > 255 || item.partPath.size() > 255 || token.size() > 255) {
+            finishTest(done, head + "Its address is too long for the plugin's message.");
+            return;
+        }
+        char what[320] = "";
+        int rc = 0;
+        if (!qmIsOpen()) {
+            rc = qmOpen(what, sizeof(what));
+            brls::Logger::info("[bgaudio] SceShell fetch test: {} ({})", what, hex(rc));
+        }
+        if (rc < 0 || !qmIsOwn()) {
+            finishTest(done, head + "VitaPlex's quick menu plugin is not in SceShell" +
+                                 (what[0] ? std::string(": ") + what : std::string(".")));
+            return;
+        }
+        const long from = fileLength(QM_PLUGIN_LOG);
+        rc = qmHttpTest(base.c_str(), item.partPath.c_str(), token.c_str(), QM_HTTP_TEST_BYTES);
+        brls::Logger::info("[bgaudio] SceShell fetch test: the first {} KB of {} (track {}) "
+                           "asked of the plugin: {}",
+                           QM_HTTP_TEST_BYTES / 1024, item.partPath, ratingKey, hex(rc));
+        std::string lines;
+        bool finished = false;
+        for (int i = 0; rc >= 0 && i < (QM_HTTP_TEST_S + 10) * 2 && !finished; i++) {
+            sceKernelDelayThread(500 * 1000);
+            lines = pluginTestLines(from, "http test:", &finished);
+        }
+        brls::Logger::info("[bgaudio] SceShell fetch test, the plugin's lines:\n{}", lines);
+        std::string report = head;
         if (rc < 0)
             report += "The plugin could not be asked: " + hex(rc);
         else

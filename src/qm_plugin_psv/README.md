@@ -71,6 +71,19 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   acting on this music. A song that goes on away from where it stopped, as
   an M4A download went on 35 s back after a pause, is sought back there
   (build 2036). Its log lines begin "carry on:".
+- **Fetching from inside SceShell (a test, build 2040):** VitaPlex BG's
+  setting "Test: SceShell Fetches a Song Itself" sends the server's address,
+  a song's file on it and the token (`QM_CMD_HTTP_TEST`). The plugin finds
+  Sony's SSL and HTTP libraries in SceShell at run time, as it finds the
+  music service, and loads their files from `vs0:sys/external` if they are
+  not there. It asks for the server's `/identity` with no token, over https
+  and plain http. Only if https answers does it fetch the song's first 64 KB
+  to the memory card, with the token as a header. It starts the libraries
+  only if SceShell has not, and ends only what it started; the TLS options
+  and certificates, which hold for all of SceShell, it leaves alone. It runs
+  on a thread of its own with a 64 KB stack, deleted when done, and logs how
+  much of that the test used. Its log lines begin "http test:"; the token is
+  never logged.
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system

@@ -2699,6 +2699,41 @@ files; the plugin's log was not sent).
 - 15 of that queue's 29 songs had no download, so SceShell would have passed
   them over. Fetching those from inside SceShell is the next step.
 
+**Build 2040: SceShell fetches the start of a song (a test).** Before the
+plugin fetches the queue's songs itself, the parts that are new are tried on
+their own, as build 2032 tried playing (`QM_CMD_HTTP_TEST`, protocol 8; the
+setting "Test: SceShell Fetches a Song Itself").
+
+- Sony's SSL and HTTP libraries are looked up in SceShell at run time
+  (`SceLibSsl`, `SceLibHttp`), not imported. A plugin's imports are matched
+  against what SceShell has loaded as it loads, and one SceShell lacks keeps
+  the whole plugin out, row and carry-on with it. If they are not there, the
+  test loads `libssl.suprx` and `libhttp.suprx` from `vs0:sys/external`, as
+  build 2032 loaded `libshellsvc.suprx`.
+- SceShell uses these libraries itself, for PSN and the store. So the test
+  starts them only if SceShell has not (`sceSslInit`, `sceHttpInit`), and ends
+  only what it started. It leaves alone what holds for the whole process:
+  `sceHttpsEnableOption`, `sceHttpsDisableOption` and `sceHttpsLoadCert`
+  take no template and would change SceShell's own TLS.
+- It asks for the server's `/identity` with no token, over https and over
+  plain http. Only if https answers 200 does it ask for the song's first 64 KB
+  with the token, as an `X-Plex-Token` header rather than in the URL. That
+  goes to the memory card and is removed. On a failure it logs
+  `sceHttpsGetSslError`'s reason: unknown CA, wrong name, expired. The
+  background player brings its own CA bundle to curl because the Vita's
+  built-in list is old, so an unknown CA is the likely failure.
+- It runs on a thread of its own with a 64 KB stack, deleted as it ends. The
+  40 KB below where that thread begins are painted and read back, so the log
+  says how much stack the libraries used, and whether the music thread's
+  32 KB would do for fetching.
+- The token is copied out of the message and wiped from it, and wiped again
+  as the test ends; it is never logged. VitaPlex's side wipes its copy once
+  sent. On a host, the plugin's harness ran it against simulated libraries in
+  12 checks. They cover SceShell's libraries already started, the HTTP library
+  missing, TLS refused (no token sent), the test starting and ending the
+  libraries, a server ignoring the range, and the token refused. The pipe
+  test checks the message and its wiping.
+
 
 ### PS4: the popup, and nothing to hang progress on
 
