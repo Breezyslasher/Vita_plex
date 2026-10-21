@@ -2678,6 +2678,27 @@ BG's).
     and a song with nothing to go on with plays on there. The line says
     which of the three it was, and the two `written` values.
 
+**Build 2037 on the console: SceShell carries the queue on** (logs
+`3980c597`, VitaPlex BG's; `60eb9584`, the player's; the status and queue
+files; the plugin's log was not sent).
+
+- The player took the queue on beside VitaSurf, as before, and the hand-over
+  seeks landed exactly: 1:07 and 0:17 into M4A downloads, in 0.3 s.
+- Opening a second app with extended memory ended the player, twice.
+  - The first time, SceShell carried the queue on into song 2. VitaPlex BG,
+    opened at 17:59:51, read SceShell's status written as it was told to
+    stop, song 2 at 1:31. 20 s later it found the shell at 1:51 of that song,
+    stopped it there, and went on in mpv from 1:51.
+  - The second time the player's log stops 30 s into song 4. SceShell
+    carried on, and the row's next took it to song 5: its status, written
+    every 2 s, had song 5 at 1:38, 2:39 after the hand-over and 45 s before
+    song 4 would have ended.
+- So the take-back from SceShell works, and build 2037's check on the
+  status's clock let SceShell's status, written just after VitaPlex BG
+  started, through.
+- 15 of that queue's 29 songs had no download, so SceShell would have passed
+  them over. Fetching those from inside SceShell is the next step.
+
 
 ### PS4: the popup, and nothing to hang progress on
 
