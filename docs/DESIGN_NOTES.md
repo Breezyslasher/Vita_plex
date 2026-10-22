@@ -3399,6 +3399,50 @@ paused when VitaPlex is opened.
   it stopped and jumps back 0.4 or 6 s after. The plugin builds at 45868
   bytes, with build 2052's imports.
 
+**Build 2054: build 2053's run.** Logs `eb750b65` (the plugin) and
+`9ed6aa55` (VitaPlex), and the user's word: shuffle was on throughout, and
+with Wi-Fi off the music should go on to the songs on the memory card, as a
+setting on by default.
+
+- Shuffle and repeat: the queue of 19 was shuffled as it loaded ("shuffled,
+  keeping 0 in front"), and repeat was set to all, with which it was handed
+  over ("repeat 2"). The log ends before the queue went round.
+- The hand-over: "Music After Leaving VitaPlex" was "Stops" as the song
+  began, and was set to "Plays on" 58 s into it, 14 s before the system
+  asked VitaPlex to quit. A song is made ready for a hand-over as
+  MusicController publishes what plays (readySongForPlaying), which does
+  nothing with the setting at "Stops", and nothing was published after the
+  change. The queue went over "for SceShell to fetch": SceShell fetched the
+  song, 8.28 MB, in 10.7 s, and began it at VitaPlex's place, 1:11, 12.6 s
+  after it was handed over. Now the setting turned on makes the song playing
+  ready at once.
+- The stream: at 17:32:21 mpv's connection broke and it reconnected at byte
+  1364938; 25.6 s later the Vita's MP3 decoder failed on four packets
+  ("Multiple frames in a packet", 0x807F0000), and the audio's time jumped
+  0.1 s, at 0:52. Log `4e8bcb05` has a reconnect followed 23 s later by the
+  same warning, without the failures. Not acted on.
+- Wi-Fi off, as build 2052's run found it: the setting "Skip to Downloads
+  When Offline", on by default, goes to SceShell in the queue
+  (`offlineSkip=1`). A song whose fetch gets no answer from the server (every
+  request failed with 0x80412113 as it was sent in log `0790f7dc`), or that
+  nothing could ask for, is fetched twice as before, and then passed over
+  for the nearest song after it on the memory card: a download, or a file
+  fetched or kept in the folder of songs. The whole queue is read once for
+  it, as the songs looked at for what comes next stop at 20, repeat all going
+  round; the folder is looked in for the songs within 20 of it either way,
+  as it keeps no others, and for the songs the shell has and had. With none,
+  the song is held: the shell stopped, the row showing it paused, the status
+  written every 2 s with `fetching=1` and `paused=1`, and nothing fetched.
+  The row's play fetches it twice again, and holds it again if the server
+  still does not answer; VitaPlex takes it back paused, as build 2052 takes
+  back a pause from the row; previous plays the song before, and next goes
+  on. A server that answers with an error is not taken for one that does not
+  answer: such songs are passed over, and three in a row stop the queue, as
+  before and as with the setting off.
+- On a host the harness passes 227 checks, with a server whose every request
+  fails as with Wi-Fi off. The plugin builds at 47238 bytes, with build
+  2053's imports.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

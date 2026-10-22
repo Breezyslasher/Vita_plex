@@ -230,6 +230,12 @@ struct AppSettings {
     // package's quick menu plugin, when the system closes the app for a game;
     // 2 hands it to SceShell at once. See utils/background_audio.hpp.
     int vitaOutsideMusic = 1;
+    // Vita only: as SceShell plays the queue on, a song it cannot fetch, the
+    // server not answering, is passed over for the next song on the memory
+    // card, and with none it waits paused for the quick menu's play or for
+    // VitaPlex (bgaudio::setOfflineSkip). Off: such songs are passed over,
+    // and three in a row stop the music.
+    bool vitaOfflineSkip = true;
     // Vita only: the song and its buttons in the quick menu's Music row,
     // through VitaPlex's quick menu plugin (bgaudio::setQuickMenuControls).
     bool vitaQuickMenuControls = true;

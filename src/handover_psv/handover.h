@@ -59,6 +59,11 @@
 //   positionMs=<where in it>
 //   repeat=<0 off, 1 the one song, 2 all>
 //   file=<that song as a file the app made ready for the shell, or nothing>
+//   offlineSkip=<1: a song the server does not answer for is passed over for
+//                the next song on the memory card, and with none, held
+//                paused (the app's setting, build 2054); 0 or missing: songs
+//                that cannot be fetched are passed over, and three in a row
+//                stop the queue>
 //   track=<fields, below>        one a song, in the order they play
 //   end
 //
@@ -103,7 +108,8 @@ enum {
 //   by=<SceShell: VitaPlex's quick menu plugin wrote it; missing when the
 //       background player of builds up to 2045 did>
 //   fetching=<1 when SceShell has stopped the shell's music to fetch the song
-//             it names, which plays from positionMs once fetched; missing
+//             it names, which plays from positionMs once fetched, or holds it
+//             paused as the server does not answer (offlineSkip); missing
 //             otherwise>
 //   paused=<1 while the quick menu's play/pause holds the music, which
 //           VitaPlex then takes back paused (build 2052); missing otherwise>

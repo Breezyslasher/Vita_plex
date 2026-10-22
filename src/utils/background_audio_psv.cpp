@@ -146,6 +146,7 @@ bool fileExists(const std::string& path) {
 
 std::atomic<bool> g_keepPlaying{false};
 std::atomic<int> g_outsideMusic{kOutsideStops};   // the setting (OutsideMusic)
+std::atomic<bool> g_offlineSkip{true};            // the setting (setOfflineSkip)
 
 // ── Handing the music over (see "Handing the music to SceShell" below) ───
 // When the queue was handed over, on the way out; 0 before. Past
@@ -1046,10 +1047,11 @@ bool writeQueue(std::string& what, std::string& key) {
 
     const QueueItem& now = items[(std::size_t)order[from + (std::size_t)at]];
     const std::string file = handReadySong(now.ratingKey);
-    char head[320];
+    char head[340];
     std::snprintf(head, sizeof(head),
-                  "written=%.6f\nindex=%d\npositionMs=%lld\nrepeat=%d\nfile=%s\n", systemSecs(),
-                  at, positionMs, repeatCode(q.getRepeatMode()), file.c_str());
+                  "written=%.6f\nindex=%d\npositionMs=%lld\nrepeat=%d\nfile=%s\nofflineSkip=%d\n",
+                  systemSecs(), at, positionMs, repeatCode(q.getRepeatMode()), file.c_str(),
+                  g_offlineSkip ? 1 : 0);
     std::string text = head;
     DownloadsManager& downloads = DownloadsManager::getInstance();
     for (std::size_t i = from; i < order.size() && i - from < HANDOVER_MAX_TRACKS; i++) {
@@ -1578,6 +1580,11 @@ void setOutsideMusic(int mode) {
     brls::Logger::info("[bgaudio] music after leaving set to {}", mode);
     if (on) {
         if (MpvPlayer::getInstance().isPlaying()) holdPort("mpv, already playing");
+        // The song playing, begun with the setting off, made ready for a
+        // hand-over now: else SceShell fetched it as VitaPlex quit, 14 s
+        // after the setting was changed, and waited 11.7 s for it (log
+        // 9ed6aa55).
+        readySongForPlaying();
     } else {
         dropReadySong();
         releasePort("setting turned off");
@@ -1585,6 +1592,12 @@ void setOutsideMusic(int mode) {
 }
 
 int outsideMusic() { return g_outsideMusic; }
+
+void setOfflineSkip(bool on) {
+    g_offlineSkip = on;
+    brls::Logger::info("[bgaudio] SceShell, with the server not answering: {}",
+                       on ? "on to the songs on the memory card" : "songs passed over");
+}
 
 bool keepPlaying() { return g_keepPlaying; }
 

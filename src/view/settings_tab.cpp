@@ -1128,6 +1128,28 @@ brls::Box* SettingsTab::createMusicSection() {
         outsideInfo->setMarginTop(8);
         box->addView(outsideInfo);
 
+        auto* offlineSkip = new brls::BooleanCell();
+        offlineSkip->init("Skip to Downloads When Offline", settings.vitaOfflineSkip,
+            [](bool value) {
+                Application& app = Application::getInstance();
+                app.getSettings().vitaOfflineSkip = value;
+                app.saveSettings();
+                bgaudio::setOfflineSkip(value);
+            });
+        box->addView(offlineSkip);
+
+        auto* offlineInfo = new brls::Label();
+        offlineInfo->setText("For the music in the background: when the server can't be reached, "
+                             "it skips ahead to the next song on the memory card, a download or "
+                             "one already fetched. With none left, it pauses on the song it could "
+                             "not fetch: play in the quick menu tries again, and opening VitaPlex "
+                             "picks it up there. Off: such songs are passed over, and three in a "
+                             "row stop the music.");
+        offlineInfo->setFontSize(14);
+        offlineInfo->setMarginLeft(16);
+        offlineInfo->setMarginTop(8);
+        box->addView(offlineInfo);
+
         auto* quickMenu = new brls::BooleanCell();
         quickMenu->init("Quick Menu Music Controls", settings.vitaQuickMenuControls,
             [](bool value) {

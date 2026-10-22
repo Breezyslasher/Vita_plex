@@ -62,6 +62,13 @@ void setOutsideMusic(int mode);
 int outsideMusic();
 bool keepPlaying();
 
+// The setting for SceShell's music with the server out of reach: a song it
+// cannot fetch for want of an answer is passed over for the next song on the
+// memory card, and with none it is held paused, for the quick menu's play or
+// for VitaPlex to take back (handover.h's offlineSkip). Off, such songs are
+// passed over, and three in a row stop the queue. Goes with each hand-over.
+void setOfflineSkip(bool on);
+
 // Ends the process.
 [[noreturn]] void exitProcess(int code);
 
@@ -100,6 +107,7 @@ inline void init(int) {}
 inline void setOutsideMusic(int) {}
 inline int outsideMusic() { return 0; }
 inline bool keepPlaying() { return false; }
+inline void setOfflineSkip(bool) {}
 inline void onAudioPlayback(bool) {}
 inline void onPlayerShutdown() {}
 inline void setQuickMenuControls(bool) {}

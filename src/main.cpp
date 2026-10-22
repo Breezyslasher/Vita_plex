@@ -156,6 +156,7 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     // The Vita's music outside the app starts watching here, and takes the
     // music back from SceShell. No-op on every other platform.
     vitaplex::bgaudio::init(app.getSettings().vitaOutsideMusic);
+    vitaplex::bgaudio::setOfflineSkip(app.getSettings().vitaOfflineSkip);
     vitaplex::bgaudio::setQuickMenuControls(app.getSettings().vitaQuickMenuControls);
 
     // Run application (blocking)

@@ -105,7 +105,14 @@ the plugin.
   as VitaPlex takes the music back, which plays on from them (build 2048),
   and a song's file found there is played as it is. A song wanted before it
   has come is waited for, with the shell stopped, and the status says
-  `fetching=1` so that VitaPlex can take the music back. One
+  `fetching=1` so that VitaPlex can take the music back. With VitaPlex's
+  "Skip to Downloads When Offline" setting (`offlineSkip=1` in the queue,
+  build 2054), a song the server does not answer for, as with Wi-Fi off, is
+  fetched twice and then passed over for the nearest song after it on the
+  memory card, looked for through the whole queue, repeat all going round;
+  with none, it is held, paused on the row: the row's play fetches it again,
+  and VitaPlex takes it back paused. Without the setting such songs are
+  passed over, and three in a row stop the queue. One
   fetch runs at a time, on a thread of its own. The server and the token come
   from VitaPlex's settings; the token is read for each fetch, sent as a
   header, wiped after it, and never logged. From build 2046, a song in a
