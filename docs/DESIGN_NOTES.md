@@ -2734,6 +2734,32 @@ setting "Test: SceShell Fetches a Song Itself").
   libraries, a server ignoring the range, and the token refused. The pipe
   test checks the message and its wiping.
 
+**Build 2040 on the console: SceShell fetches** (logs `53b14f67`, the
+plugin's; `e9ecf378`, VitaPlex BG's).
+
+- `SceLibSsl` and `SceLibHttp` were in SceShell, and both already started:
+  `sceSslInit` gave 0x80435020 and `sceHttpInit` 0x80431020 (already
+  initialized). So fetching shares SceShell's own pools, and nothing is
+  started or ended for it.
+- The server's `/identity` answered 200 over https in 306 ms, with the
+  Vita's own certificates: the plex.direct certificate's root is among them.
+  Over plain http it took 50 ms.
+- The song, an MP3 that is not downloaded, came as 206: 64 KB in 487 ms with
+  its own TLS handshake, written to the memory card, its first bytes an MP3
+  frame's (FF FB). The whole test took about a second.
+- The libraries used 2 KB of the test thread's stack, so the music thread's
+  32 KB will do for fetching.
+- So the plugin can fetch the queue's songs that are not on the memory card
+  from inside SceShell, with what SceShell has. They are still looked up at
+  run time, since one boot's evidence does not show SceShell always has them
+  loaded as the plugin loads.
+- After the test, VitaPlex BG closed for a game and handed over its one song.
+  The plugin saw the background player take the row 24 s later: the song was
+  not downloaded, and the player fetches a song whole before the shell can
+  play it.
+- VitaPlex BG also set aside, as build 2037 has it, the player's status from
+  before the Vita was restarted.
+
 
 ### PS4: the popup, and nothing to hang progress on
 
