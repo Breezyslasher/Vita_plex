@@ -2,12 +2,12 @@
 
 `vitaplex_qm.suprx`: the song and its cover, and play/pause, next and
 previous buttons that work, in the Music row of the PS Vita's quick menu
-(hold PS). It is for
-VitaPlex BG and its background player. Both load it into SceShell with
-taiHEN the first time they want the row in a boot
-(`src/bgplayer_psv/qm_link.c`), and talk to it through the two message pipes
-`src/bgplayer_psv/qm_protocol.h` lays out. It stays until the Vita restarts.
-Nothing goes in taiHEN's config.txt.
+(hold PS); and VitaPlex BG's music played on from inside SceShell, which no
+app or game closes, once VitaPlex BG has gone. VitaPlex BG loads it into
+SceShell with taiHEN the first time it wants the row or hands its music
+over in a boot (`src/bgplayer_psv/qm_link.c`), and talks to it through the
+two message pipes `src/bgplayer_psv/qm_protocol.h` lays out. It stays until
+the Vita restarts. Nothing goes in taiHEN's config.txt.
 
 It is based on the quick menu plugin of
 [ElevenMPV-A](https://github.com/GrapheneCt/ElevenMPV-A) by GrapheneCt, which
@@ -44,8 +44,8 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   icon's texture (`0xB26E4562`, a second icon at play's place, sized 0x0),
   as SceShell's own row shows ⏸ while its Music app plays.
 - **The cover:** the Music heading's icon (`0xE219E0DE`) shows the song's
-  cover, a 64x64 PNG that VitaPlex BG or its background player writes
-  (`src/bgplayer_psv/qm_cover.c`, `QM_ART_PATH_FMT`, `QM_CMD_ART`).
+  cover, a 64x64 PNG that VitaPlex BG writes (`src/bgplayer_psv/qm_cover.c`,
+  `QM_ART_PATH_FMT`, `QM_CMD_ART`), or that SceShell fetches as it plays.
   The plugin loads it with PAF's own decoder (`LocalFile::Open`,
   `Surface::Load`) into power_manage_plugin's texture pool, and the icon
   keeps the only reference to it. The icon gets its ♫ back when the row is
@@ -53,25 +53,23 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
 - **Playing from inside SceShell (a test, build 2032):** given a song's path
   (`QM_CMD_MUSIC_TEST`), a thread of its own, created on the first test,
   drives SceShell's music service
-  as the background player does through libShellAudio. It plays the song for
+  as the background player did through libShellAudio. It plays the song for
   up to 30 s, and logs every call's code under "music test:". It finds the
   service's client (`sceShellSvcGetSvcObj`) at run time with taiHEN's
   `taiGetModuleExportFunc` (`taihen_stub.S`), and loads
   `vs0:sys/external/libshellsvc.suprx` into SceShell if no module there
   has it. That is the first step of moving the background music into
   SceShell (docs/DESIGN_NOTES.md, build 2032).
-- **Carrying the queue on (build 2033):** when the background player stops
-  checking in without giving the row back, the system has ended it. The
-  same thread then plays the rest of its queue from inside SceShell, from
-  the songs on the memory card: downloads the queue names, and the player's
-  own files (`QM_CMD_SONG_FILE`); from build 2042, the rest are fetched
-  (below). It reads the player's status and the
-  queue (`src/bgplayer_psv/bgplayer.h`), and writes the status as the
-  player does, with `by=SceShell`, so that VitaPlex BG takes the music back
-  where SceShell got to (`QM_CMD_TAKE_BACK`). The row stays, its buttons
-  acting on this music. A song that goes on away from where it stopped, as
-  an M4A download went on 35 s back after a pause, is sought back there
-  (build 2036). Its log lines begin "carry on:".
+- **Carrying the queue on (build 2033):** up to build 2045, when VitaPlex
+  BG's background player stopped checking in without giving the row back,
+  the system had ended it, and the same thread played the rest of its queue
+  from inside SceShell. It writes the status (`src/bgplayer_psv/bgplayer.h`)
+  with `by=SceShell`, so that VitaPlex BG takes the music back where
+  SceShell got to (`QM_CMD_TAKE_BACK`). The row stays, its buttons acting on
+  this music. A song that goes on away from where it stopped, as an M4A
+  download went on 35 s back after a pause, is sought back there (build
+  2036). Its log lines begin "carry on:". VitaPlex BG has no background
+  player from build 2046: it hands its queue to SceShell (below).
 - **Fetching from inside SceShell (a test, build 2040):** VitaPlex BG's
   setting "Test: SceShell Fetches a Song Itself" sends the server's address,
   a song's file on it and the token (`QM_CMD_HTTP_TEST`). The plugin finds
@@ -87,25 +85,29 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   never logged.
 - **Fetching the queue's songs (build 2042):** as it carries the queue on,
   songs not on the memory card are fetched from VitaPlex's server, the way the
-  background player fetches them. Each song's file comes as the server has
+  background player fetched them. Each song's file comes as the server has
   it when the shell plays its format, along with its cover as a PNG from the
-  server's photo transcoder. Both go into the player's folder of songs, and
-  both are removed once played. The next song is fetched while the one
+  server's photo transcoder. Both go into the folder of songs
+  (`BGPLAYER_SONGS`), and both are removed once played. The next song is fetched while the one
   before plays. A song wanted before it has come is waited for, with the
   shell stopped, and the status says `fetching=1` so that VitaPlex BG can
   take the music back. One fetch runs at a time, on a thread of its own,
   through the libraries the test finds. The server and the token come from
   VitaPlex's settings; the token is read for each fetch, sent as a header,
-  wiped after it, and never logged. Songs in other formats, such as FLAC,
-  are still passed over.
-- **Playing VitaPlex BG's queue (build 2043):** by its setting, VitaPlex BG
-  hands its queue to SceShell as it goes (`QM_CMD_PLAY_QUEUE`), in place of
-  starting its background player. The plugin plays from the queue's song
-  and place in it. That song comes from its download or from the server,
-  and the shell is taken to the place once it plays. The rest goes as it
-  does when carrying a queue on. Covers come from the server for the songs
-  on the card too, and a song played to its end is marked played on the
-  server, as the player does.
+  wiped after it, and never logged. From build 2046, a song in a format
+  the shell does not play, such as FLAC, comes as the server's MP3 of it, as
+  the background player had it made: the transcode decision, then
+  start.mp3. A streamed transcode has no length header, so the frames go to
+  the shell behind a Xing frame giving their count, without the ID3 tag;
+  without one the shell read a 2:51 song as 19:17 long.
+- **Playing VitaPlex BG's queue (build 2043):** VitaPlex BG hands its queue
+  to SceShell as it goes (`QM_CMD_PLAY_QUEUE`). The plugin plays from the
+  queue's song and place in it. That song comes from the file VitaPlex BG
+  made ready (`file=`, build 2046), else from its download, else from the
+  server, and the shell is taken to the place once it plays. The rest goes
+  as it does when carrying a queue on. Covers come from the server for the
+  songs on the card too, and a song played to its end is marked played on
+  the server.
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system
@@ -132,7 +134,8 @@ vitasdk by Princess-of-Sleeping's
 Both are pinned to a commit. ScePaf-RE has no licence file, so it is fetched
 at build time and not kept here. CMake builds the plugin when given
 `-DVITAPLEX_PAF_INCLUDE_DIR=<dir>/include`, and otherwise leaves it out, in
-which case VitaPlex uses ElevenMPV-A's plugin.
+which case VitaPlex uses ElevenMPV-A's plugin, for the row alone: without
+VitaPlex's, no music plays on once VitaPlex BG has gone.
 
 `paf_stubs.S` holds the PAF imports, which `scripts/vita/gen_paf_stubs.py`
 writes from ScePaf-RE's NID table:

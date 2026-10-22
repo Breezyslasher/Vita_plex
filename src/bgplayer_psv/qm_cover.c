@@ -1,7 +1,6 @@
 /**
  * The song's cover for VitaPlex's quick menu plugin: qm_cover.h. stb_image
- * comes with nanovg in VitaPlex BG (borealis) and from stb_image_impl.c in
- * the background player.
+ * comes with nanovg in VitaPlex BG (borealis).
  */
 
 #include "qm_cover.h"

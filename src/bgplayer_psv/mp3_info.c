@@ -1,6 +1,8 @@
 /**
- * MP3 inspection for VitaPlex BG's background player and the background
- * test's (mp3_info.h). Plain C, so it builds and is checked on a host too.
+ * MP3 inspection for the background test's player (mp3_info.h), and for
+ * VitaPlex BG's background player up to build 2045; VitaPlex's quick menu
+ * plugin has the same logic on sceIo (fetchMp3). Plain C, so it builds and
+ * is checked on a host too.
  */
 
 #include "mp3_info.h"

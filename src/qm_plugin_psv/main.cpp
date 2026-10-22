@@ -1,7 +1,7 @@
 /**
  * VitaPlex's quick menu plugin: the song, its cover, and buttons that work,
- * in the Music row of the quick menu (hold PS), for VitaPlex BG and its
- * background player.
+ * in the Music row of the quick menu (hold PS), for VitaPlex BG; and VitaPlex
+ * BG's queue played on from inside SceShell once it has gone.
  *
  * The row is SceShell's, and only code inside SceShell can change it. VitaPlex
  * BG loads this module into SceShell with taiHEN (qm_link.c) the first time
@@ -35,18 +35,21 @@
  *   asked for it again in QM_ACTIVE_TIMEOUT_S.
  * - It logs the row's widgets as the quick menu opens and their changes for
  *   3 s, for the first opens of a boot, whoever has the row.
- * - When the system ends the background player, as an app with extended
- *   memory starts, SceShell carries its queue on: this plays the queue's
- *   songs that are on the memory card through SceShell's music service, from
- *   inside SceShell, and keeps the row (qm_protocol.h, build 2033).
+ * - When the system ended VitaPlex BG's background player, as an app with
+ *   extended memory started, SceShell carried its queue on: this played the
+ *   queue's songs that are on the memory card through SceShell's music
+ *   service, from inside SceShell, and kept the row (qm_protocol.h, builds
+ *   2033 to 2045).
  * - For a test, it fetches the start of a song from the server through Sony's
  *   HTTP library as SceShell has it (QM_CMD_HTTP_TEST, build 2040): whether
  *   SceShell can fetch the queue's songs that are not on the memory card.
  * - As it carries the queue on, it fetches those songs that way, each while
  *   the one before plays, when the shell plays their format (build 2042).
- * - VitaPlex BG can hand its queue to it straight away, with no background
- *   player (QM_CMD_PLAY_QUEUE, build 2043): it plays from the queue's song
- *   and place, fetches covers and marks songs played, as the player does.
+ * - VitaPlex BG hands its queue to it as it goes (QM_CMD_PLAY_QUEUE, build
+ *   2043): it plays from the queue's song and place, fetches covers and marks
+ *   songs played, as the player did. From build 2046 there is no background
+ *   player, and songs in formats the shell does not play come as the
+ *   server's MP3s.
  *
  * Built with vitasdk against the PAF headers scripts/vita/fetch_paf_headers.sh
  * fetches; its PAF imports are in paf_stubs.S. Logs to
@@ -1371,15 +1374,15 @@ void mainTick(void* data) {
 }
 
 // ── SceShell's music service ────────────────────────────────────────────────
-// The background player plays through SceShell's music service from a process
-// of its own, which the system ends as an app with extended memory starts.
-// Code in SceShell drives the same service (build 2032's test,
-// docs/DESIGN_NOTES.md), so the queue is carried on from here once the player
-// is gone (qm_protocol.h). The service's client object (sceShellSvcGetSvcObj)
+// The background player played through SceShell's music service from a
+// process of its own, which the system ended as an app with extended memory
+// started. Code in SceShell drives the same service (build 2032's test,
+// docs/DESIGN_NOTES.md), so the queue is played from here once VitaPlex BG
+// has gone (qm_protocol.h). The service's client object (sceShellSvcGetSvcObj)
 // is found with taiHEN, so that the plugin does not import it and takes
 // whatever SceShell has: in build 2032 SceShell's own module SceShellSvc had
 // it. It is spoken to with libShellAudio's calls (lib/libshellaudio), as the
-// background player makes them. The BGM port is left to the service, which
+// background player made them. The BGM port is left to the service, which
 // took it for SceShell itself while it played for SceShell (build 2032): the
 // libraries that take it (SceAppMgr) and that name a module (SceModulemgr)
 // are ones no plugin known to load in SceShell imports, and one SceShell
@@ -1400,7 +1403,7 @@ struct SvcParams {
 typedef int (*SvcInvoke)(void* obj, int method, SvcParams* in, int inCount, int* res,
                          SvcParams* out, int outCount);
 // Who the service is talking to: for the music player service of type 0,
-// as the background player starts it, 1 and 8.
+// as the background player started it, 1 and 8.
 struct SvcTracking {
     int unk;
     int t1, t2;
@@ -2834,7 +2837,7 @@ int fetchFile(int tmpl, const char* token, const char* label, const char* to, ui
 }
 
 // ── The server's MP3 of a song in another format ────────────────────────────
-// As the background player has it (player.c's download and giveHeader, and
+// As the background player had it (player.c's download and giveHeader, and
 // mp3_info.c, whose logic this is): a decision first, then start.mp3 with the
 // same session. A streamed transcode has no length header, so the shell would
 // work its length out from the first frame's bitrate: 19:17 for a 2:51 song

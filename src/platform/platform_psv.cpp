@@ -373,8 +373,6 @@ bool needsHardExit() {
 }
 
 [[noreturn]] void hardExit(int code) {
-    // Through the system call underneath once VitaPlex BG has started its
-    // background player, after which sceKernelExitProcess did not return.
     bgaudio::exitProcess(code);
 }
 

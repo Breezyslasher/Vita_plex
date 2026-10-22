@@ -1169,7 +1169,7 @@ void PlayerActivity::loadFromQueue() {
     // New track: the stream restarts at the top, so drop any offset a seek left behind.
     MusicController::getInstance().resetStreamStartOffset();
     m_transcodeBaseOffsetMs = 0;
-    // A queue taken back from the background player goes on where its song had got to; the first load only.
+    // A queue taken back from SceShell goes on where its song had got to; the first load only.
     const long long startAt = m_queueStartOffsetMs;
     m_queueStartOffsetMs = 0;
 

@@ -34,8 +34,11 @@
 #define BGPLAYER_DIR       "ux0:data/VitaPlex/"
 #define BGPLAYER_QUEUE     BGPLAYER_DIR "bgplayer-queue.txt"
 #define BGPLAYER_STATUS    BGPLAYER_DIR "bgplayer-status.txt"
-// The songs handed to the shell: the one playing and the next. A file is
-// written beside its name, with ".part" on the end, and moved in once whole.
+// The songs handed to the shell: the one playing and the next, named
+// "<ratingKey>.<extension>", with their covers. A file is written beside its
+// name, with ".part" on the end, and moved in once whole; VitaPlex BG writes
+// the song it makes ready for a hand-over with ".ready" on the end instead,
+// so that it never shares a file with the plugin's fetch of the same song.
 #define BGPLAYER_SONGS     BGPLAYER_DIR "bgplayer"
 
 // The queue, one "key=value" a line:

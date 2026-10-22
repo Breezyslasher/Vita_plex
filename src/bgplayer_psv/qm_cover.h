@@ -1,9 +1,8 @@
 /**
  * The song's cover for VitaPlex's quick menu plugin (qm_protocol.h,
- * QM_CMD_ART), from an image VitaPlex BG or its background player has
- * fetched: decoded with stb_image, its middle square scaled to QM_ART_SIZE,
- * and written as a PNG that PAF's decoder in SceShell reads. Shared by both,
- * which fetch the image each in its own way. Plain C.
+ * QM_CMD_ART), from an image VitaPlex BG has fetched: decoded with
+ * stb_image, its middle square scaled to QM_ART_SIZE, and written as a PNG
+ * that PAF's decoder in SceShell reads. Plain C.
  */
 
 #ifndef VITAPLEX_QM_COVER_H

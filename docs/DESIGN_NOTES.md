@@ -2924,6 +2924,84 @@ that handed over was written over).
 - On a host, the plugin's harness passes 163 checks. The plugin builds for
   the Vita at 50164 bytes, with the same imports as build 2042.
 
+**Build 2045 on the console** (log `5ae2ab41`, the plugin's; `68588225` and
+`7c97dfa5`, VitaPlex BG's two sessions).
+
+- The main screen came 2.0 s and 1.8 s after VitaPlex BG started, with the
+  downloads' sync of 147 going on beside it for 21.1 s. The take-back told
+  SceShell to stop 3.4 s after the start, where build 2043's took 26.6 s.
+  SceShell's status came 0.2 s later, written after it: song 1 of 1000 at
+  0:30. VitaPlex BG stopped the shell at 0:32 and went on from there.
+- The take-back's silence was 6.2 s. Of that, 2.7 s went on the UI thread,
+  busy building the home screen, before it began the player, and 3.5 s on
+  mpv starting.
+- There were two hand-overs, both on a quit request. Each time, the song
+  VitaPlex BG was playing was not on the card. It was fetched in 5.1 s and
+  4.1 s (748 and 921 KB/s), and played 6.6 s and 5.9 s after VitaPlex BG
+  gave up the BGM port. The next song was fetched while it played (614 and
+  1202 KB/s), with its cover.
+- The second hand-over fetched the song again. SceShell had had its file
+  51 s before, but VitaPlex BG removed it as it took the music back.
+- The seek to VitaPlex BG's place was checked against the status read
+  before it, in the same look of the music thread that asked for it. So the
+  time since the seek came out below 0, as 4294.9 s unsigned.
+  - At 0:05, the 0:00 read before the seek counted as near enough. The song
+    had in fact gone to 0:05: it was at 0:30 when taken back 25 s later.
+  - At 1:14, the seek was asked for again at once. The second landed at
+    1:15 in 0.5 s.
+- mpv played the song taken back as the server's MP3 from 0:32. It lost its
+  stream at byte 1290950, about 52 s in at 198 kb/s, and its three
+  reconnects got HTTP 400. The hand-over came at 1:14, before what it had
+  read ran out. Not looked into yet.
+
+**Build 2046: SceShell plays every format, and the background player goes.**
+
+- A seek is checked only on a status read after it: a look that asks for
+  one ends there. The same stale reading did more harm, which the harness
+  found once its clock moved on at each read, as the console's does:
+  - A song the shell began part-way was taken back to its start, but 3:11
+    was kept as the furthest it had got.
+  - So the next look's 0:00 was taken for its end.
+  - For repeat one, which hands the shell the same file again, that began
+    the song over and over.
+- Songs in formats the shell does not play now come as the server's MP3, as
+  the background player had them:
+  - The transcode decision, then start.mp3 in its session, the token as a
+    header only.
+  - The frames go to the shell behind a Xing frame giving their count,
+    without the ID3 tag. This is mp3_info.c's logic, on sceIo in 32 bits,
+    in two passes through the fetch's 16 KB buffer.
+  - A server MP3 with a header of its own goes as it came. One with no
+    frame is passed over for good.
+- With that, SceShell does all the background player did, and the player
+  goes, as planned since build 2032:
+  - Its program, eboot2.bin with its param2.sfo, leaves VitaPlexBG.vpk.
+    VitaPlex BG no longer starts it through SceBgAppUtil, nor ends through
+    the raw exit that needed.
+  - The setting "Background Music Played By" goes. The queue always goes to
+    SceShell. When the plugin is not there to take it, the music plays on
+    in VitaPlex BG.
+  - The take-back reads SceShell's status alone.
+  - In the plugin, the carry-on of the player's queue, its song files
+    (QM_CMD_SONG_FILE) and its owner go. The protocol is version 11, so the
+    new plugin loads beside an older one already in SceShell.
+  - The queue loses port= and qm=, which only the player read, and the
+    status loses wasPlaying.
+- VitaPlex BG makes the song it plays ready for a hand-over:
+  - 2 s into a song that could be handed over, its file is fetched in the
+    background into the folder of songs, if it is not a download and the
+    shell plays its format.
+  - It is written through a file ending in .ready, never the plugin's
+    .part, and moved in under the lock a hand-over takes.
+  - Once whole, the queue names it (file=), and SceShell plays it at once.
+  - A song taken back keeps its file for the next hand-over.
+  - At the run's 614 to 1202 KB/s, a 3.73 MB song is ready 5 to 8 s after
+    it starts. Build 2045's first hand-over came 6.7 s into its song.
+- On a host, the plugin's harness passes 174 checks under ASan and UBSan.
+  Its tests now begin from a queue handed over. The pipe test passes 35.
+  The plugin builds for the Vita at 51125 bytes, with the same imports as
+  build 2042.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

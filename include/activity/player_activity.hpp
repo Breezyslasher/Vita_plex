@@ -45,7 +45,7 @@ public:
     // Resume existing queue (return to player without resetting queue)
     static PlayerActivity* createResumeQueue();
 
-    // A queue taken back from VitaPlex BG's background player (utils/background_audio.hpp),
+    // A queue VitaPlex BG takes back from SceShell (utils/background_audio.hpp),
     // set as it is: in the order it played, with no server play queue or shuffle, its
     // first track loaded from startOffsetMs.
     static PlayerActivity* createWithRestoredQueue(const std::vector<MediaItem>& tracks,
