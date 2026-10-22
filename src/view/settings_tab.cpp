@@ -996,30 +996,6 @@ brls::Box* SettingsTab::createPlaybackSection() {
     return box;
 }
 
-// What a background-audio test found, in a dialog. Several lines and some of
-// them long, which a notification would cut off.
-static void showTestReport(const std::string& text) {
-    auto* content = new brls::Box();
-    content->setAxis(brls::Axis::COLUMN);
-    content->setWidth(600.0f);
-
-    auto* scroll = new brls::ScrollingFrame();
-    scroll->setWidth(600.0f);
-    scroll->setHeight(300.0f);
-
-    auto* label = new brls::Label();
-    label->setText(text);
-    label->setFontSize(16.0f);
-    label->setIsWrapping(true);
-    label->setWidth(580.0f);
-    scroll->setContentView(label);
-    content->addView(scroll);
-
-    auto* dialog = new brls::Dialog(content);
-    dialog->addButton("Close", []() {});
-    dialog->open();
-}
-
 brls::Box* SettingsTab::createMusicSection() {
     Application& app = Application::getInstance();
     AppSettings& settings = app.getSettings();
@@ -1123,11 +1099,11 @@ brls::Box* SettingsTab::createMusicSection() {
     musicInfoLabel->setMarginTop(8);
     box->addView(musicInfoLabel);
 
-    // Vita: leaving the app itself stops the music in VitaPlex, whatever the
-    // toggle above says. VitaPlex BG, the non-game package, plays on, and
-    // SceShell carries the queue on through games, through the package's quick
-    // menu plugin; see utils/background_audio.hpp. VitaPlex itself and other
-    // platforms have none of this.
+    // Vita: what music does once VitaPlex itself is left, whatever the toggle
+    // above says. VitaPlex is a non-game app, which the system lets play on,
+    // and SceShell carries the queue on through games, through VitaPlex's quick
+    // menu plugin; see utils/background_audio.hpp. Other platforms have none
+    // of this.
     if (bgaudio::available()) {
         box->addView(makePickerCell("Music After Leaving VitaPlex",
             {"Stops", "Plays on, then in the background", "In the background at once"},
@@ -1144,8 +1120,9 @@ brls::Box* SettingsTab::createMusicSection() {
                              "goes on in the background through the system's music player, which "
                              "fetches the songs that are not downloaded as they come up, and "
                              "songs in formats it cannot play, such as FLAC, as MP3s from the "
-                             "server. At once: it goes there as you press PS, and VitaPlex BG "
-                             "closes. Opening VitaPlex BG takes the music back.");
+                             "server. At once: it goes there as you press PS, and VitaPlex "
+                             "closes. Opening VitaPlex takes the music back. A video pauses "
+                             "whenever VitaPlex is left.");
         outsideInfo->setFontSize(14);
         outsideInfo->setMarginLeft(16);
         outsideInfo->setMarginTop(8);
@@ -1164,132 +1141,14 @@ brls::Box* SettingsTab::createMusicSection() {
         auto* quickMenuInfo = new brls::Label();
         quickMenuInfo->setText("Shows the song in the Music row of the quick menu (hold PS) and "
                                "makes its play/pause, next and previous buttons work, here and "
-                               "for the music playing on in the background. Uses VitaPlex BG's "
+                               "for the music playing on in the background. Uses VitaPlex's "
                                "quick menu plugin (GPL-3.0, based on ElevenMPV-A's by GrapheneCt), "
-                               "which also plays that music, or ElevenMPV-A's own if that will "
-                               "not load; it stays loaded until the Vita restarts.");
+                               "which also plays that music; it stays loaded until the Vita "
+                               "restarts.");
         quickMenuInfo->setFontSize(14);
         quickMenuInfo->setMarginLeft(16);
         quickMenuInfo->setMarginTop(8);
         box->addView(quickMenuInfo);
-
-        // How the plugin switches the row's buttons on: ElevenMPV-A's way left
-        // them dimmed, though they worked, and so did switching them on
-        // (build 2022). Not saved: it is for trying each in turn.
-        box->addView(makePickerCell("Quick Menu Buttons (test)",
-            {"Enabled", "Enabled, normal state", "As ElevenMPV-A",
-             "Enabled, lit"},
-            bgaudio::quickMenuLook(),
-            [](int index) { bgaudio::setQuickMenuLook(index); }));
-
-        auto* lookInfo = new brls::Label();
-        lookInfo->setText("How the Music row's buttons are switched on. Each applies the next "
-                          "time the quick menu opens; ux0:data/VitaPlex/qm-plugin.log says "
-                          "what each did to them. The last also lights the buttons and "
-                          "their icons, which the system draws faded when it has no music "
-                          "of its own.");
-        lookInfo->setFontSize(14);
-        lookInfo->setMarginLeft(16);
-        lookInfo->setMarginTop(8);
-        box->addView(lookInfo);
-
-        // How VitaPlex BG takes the system's music port, against the quick
-        // menu's Music row: for its own player and for the system player tests
-        // below. Not saved: it is for trying each in turn.
-        box->addView(makePickerCell("Music Port (test)",
-            {"At 0x81, as now", "At 0x80", "Plain, no priority", "As a music player",
-             "Not taken"},
-            bgaudio::ownPortTest(),
-            [](int index) { bgaudio::setOwnPortTest(index); }));
-
-        auto* portInfo = new brls::Label();
-        portInfo->setText("Also used by the system player tests below. \"As a music player\" "
-                          "shows VitaPlex's icon in the quick menu, but the system player will "
-                          "not play with it. To try the "
-                          "system player with no port taken: pick \"Not taken\", run Test: "
-                          "System Player, Local File, hold PS and try the buttons. Then leave "
-                          "with a song playing, start a game, and try them there.");
-        portInfo->setFontSize(14);
-        portInfo->setMarginLeft(16);
-        portInfo->setMarginTop(8);
-        box->addView(portInfo);
-
-        // Which of the shell's services the two tests below go through. Not
-        // saved: it is for trying each in turn.
-        box->addView(makePickerCell("System Player Service (test)",
-            {"Music player, type 0", "Music player, type 1", "Music player, type 2",
-             "Music player, type 3", "Music player, type 4", "App background music"},
-            bgaudio::shellService(),
-            [](int index) { bgaudio::setShellService(index); }));
-
-        auto* fileTest = new brls::DetailCell();
-        fileTest->setText("Test: System Player, Local File");
-        fileTest->setDetailText("An MP3/M4A/WAV download, or test.mp3");
-        fileTest->registerClickAction([](brls::View*) {
-            brls::Application::notify("Trying the system player...");
-            bgaudio::runShellFileTest(showTestReport);
-            return true;
-        });
-        box->addView(fileTest);
-
-        auto* streamTest = new brls::DetailCell();
-        streamTest->setText("Test: System Player, Streaming");
-        streamTest->setDetailText("The current track, on all six services");
-        streamTest->registerClickAction([](brls::View*) {
-            brls::Application::notify("Trying links in the system player: about two minutes. "
-                                      "Stay in VitaPlex until the report shows.");
-            bgaudio::runShellStreamTest(showTestReport);
-            return true;
-        });
-        box->addView(streamTest);
-
-        auto* sceShellTest = new brls::DetailCell();
-        sceShellTest->setText("Test: SceShell Plays a File Itself");
-        sceShellTest->setDetailText("Through the quick menu plugin, for background music");
-        sceShellTest->registerClickAction([](brls::View*) {
-            brls::Application::notify("Asking SceShell to play a download itself: up to 45 s. "
-                                      "Stay in VitaPlex until the report shows.");
-            bgaudio::runPluginMusicTest(showTestReport);
-            return true;
-        });
-        box->addView(sceShellTest);
-
-        auto* fetchTest = new brls::DetailCell();
-        fetchTest->setText("Test: SceShell Fetches a Song Itself");
-        fetchTest->setDetailText("Its first 64 KB, over HTTPS, through the quick menu plugin");
-        fetchTest->registerClickAction([](brls::View*) {
-            brls::Application::notify("Asking SceShell to fetch the start of a song: up to a "
-                                      "minute. Stay in VitaPlex until the report shows.");
-            bgaudio::runPluginHttpTest(showTestReport);
-            return true;
-        });
-        box->addView(fetchTest);
-
-        auto* stopTest = new brls::DetailCell();
-        stopTest->setText("Stop System Player Test");
-        stopTest->registerClickAction([](brls::View*) {
-            brls::Application::notify(bgaudio::stopShellTest());
-            return true;
-        });
-        box->addView(stopTest);
-
-        auto* handoffTest = new brls::DetailCell();
-        handoffTest->setText("Test: Hand This Song to BG Test 11");
-        handoffTest->setDetailText("Pauses it here and starts BG Test 11 with it");
-        handoffTest->registerClickAction([](brls::View*) {
-            bgaudio::runHandoffTest(showTestReport);
-            return true;
-        });
-        box->addView(handoffTest);
-
-        auto* testInfoLabel = new brls::Label();
-        testInfoLabel->setText("Tests of the system player. With music playing, press PS and "
-                               "come back: a message says what happened, and the log has the "
-                               "detail.");
-        testInfoLabel->setFontSize(14);
-        testInfoLabel->setMarginLeft(16);
-        testInfoLabel->setMarginTop(8);
-        box->addView(testInfoLabel);
     }
 
     return box;

@@ -27,6 +27,7 @@ A native Plex client for PlayStation Vita and beyond. Stream movies, TV, music, 
 **Music**
 
 - Background music: keep audio playing when you leave the player
+- PS Vita: music plays on after you leave VitaPlex, and on beside games through the system's music player, with the song, its cover and working buttons in the quick menu's Music row
 - Configurable default track action (queue, play, ask)
 - Artist hubs grouped by Albums / Singles / EPs
 
@@ -107,6 +108,8 @@ A native Plex client for PlayStation Vita and beyond. Stream movies, TV, music, 
 3. Install using VitaShell
 4. On first launch, sign in via username/password or plex.tv/link
 
+VitaPlex BG (`VitaPlexBG.vpk`, title VPLEX0002), the test package for music after leaving the app, is no longer needed: VitaPlex itself does what it did. Delete it, and restart the Vita once after updating, so that only VitaPlex's own quick menu plugin is loaded.
+
 **Nintendo Switch:**
 
 1. Download the NRO file from [Releases](../../releases)
@@ -133,10 +136,7 @@ uses the [borealis](https://github.com/dragonflylee/borealis) UI library, both
 Apache-2.0. Media playback is provided by [libmpv](https://mpv.io) (LGPL-2.1+),
 which is linked dynamically.
 
-The PS Vita's VitaPlex BG package (`VitaPlexBG.vpk`) also carries two quick
-menu plugins, each a program of its own licensed under the GNU GPL, version
-3: VitaPlex's own, based on ElevenMPV-A's, with its source in
-[src/qm_plugin_psv](src/qm_plugin_psv); and, unchanged, the one of
-[ElevenMPV-A](https://github.com/GrapheneCt/ElevenMPV-A) by GrapheneCt, with
-its licence and source in
-[third_party/elevenmpva-shell-plugin](third_party/elevenmpva-shell-plugin).
+The PS Vita's package (`VitaPlex.vpk`) also carries VitaPlex's quick menu
+plugin, a program of its own licensed under the GNU GPL, version 3, based on
+the one of [ElevenMPV-A](https://github.com/GrapheneCt/ElevenMPV-A) by
+GrapheneCt, with its source in [src/qm_plugin_psv](src/qm_plugin_psv).

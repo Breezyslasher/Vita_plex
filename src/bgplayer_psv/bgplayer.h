@@ -1,11 +1,11 @@
 /**
- * VitaPlex BG handing its queue to SceShell: what the app and VitaPlex's
- * quick menu plugin, inside SceShell, say to each other through files.
+ * VitaPlex handing its queue to SceShell: what the app and VitaPlex's quick
+ * menu plugin, inside SceShell, say to each other through files.
  *
- * The system closes VitaPlex BG to start a game. SceShell, which no app or
- * game closes, carries the queue on: the plugin plays it through the shell's
+ * The system closes VitaPlex to start a game. SceShell, which no app or game
+ * closes, carries the queue on: the plugin plays it through the shell's
  * music player, which plays on beside games where VitaPlex cannot run
- * (docs/DESIGN_NOTES.md, BG Tests 10 to 21, builds 2032 to 2046), and fetches
+ * (docs/DESIGN_NOTES.md, BG Tests 10 to 21, builds 2032 to 2047), and fetches
  * the songs that are not on the memory card as they come up. The app tells
  * the plugin when through its pipes (qm_protocol.h); the rest goes through
  * files in the app's data directory, which both can reach. Each is written
@@ -20,7 +20,7 @@
  *            in the song, and whether it plays. Written by the plugin every
  *            few seconds and at every change; read by the app as it opens.
  *
- * The names are those of the background player VitaPlex BG had up to build
+ * The names are those of the background player VitaPlex had up to build
  * 2045, a program of its own in the package that played the queue the same
  * way, and wrote the same files, until the system ended it as an app with
  * extended memory opened.
@@ -36,9 +36,10 @@
 #define BGPLAYER_STATUS    BGPLAYER_DIR "bgplayer-status.txt"
 // The songs handed to the shell: the one playing and the next, named
 // "<ratingKey>.<extension>", with their covers. A file is written beside its
-// name, with ".part" on the end, and moved in once whole; VitaPlex BG writes
+// name, with ".part" on the end, and moved in once whole; VitaPlex writes
 // the song it makes ready for a hand-over with ".ready" on the end instead,
-// so that it never shares a file with the plugin's fetch of the same song.
+// so that it never shares a file with the plugin's fetch of the same song,
+// and the plugin a cover it copies with ".copy".
 #define BGPLAYER_SONGS     BGPLAYER_DIR "bgplayer"
 
 // The queue, one "key=value" a line:
@@ -64,9 +65,9 @@
 #define BGPLAYER_MAX_TRACKS 1000
 
 // A track line's fields, separated by '|', which the app leaves out of them.
-// The plugin reads all but the rating and the cover; the app all of them, to
-// set its queue up again without asking the server. A line with fewer, from
-// an older app, has the rest empty.
+// The plugin reads all but the rating; the app all but the cover, to set its
+// queue up again without asking the server. A line with fewer, from an older
+// app, has the rest empty.
 enum {
     BGPLAYER_TRACK_KEY,       // the ratingKey
     BGPLAYER_TRACK_DURATION,  // ms, as the server gives it
@@ -76,7 +77,7 @@ enum {
     BGPLAYER_TRACK_TITLE,
     BGPLAYER_TRACK_ARTIST,
     BGPLAYER_TRACK_ALBUM,
-    BGPLAYER_TRACK_COVER,     // the download's copy of its cover, or nothing
+    BGPLAYER_TRACK_COVER,     // the download's cover as a PNG of QM_ART_SIZE, or nothing
     BGPLAYER_TRACK_FIELDS
 };
 

@@ -33,6 +33,8 @@
 #include <psp2/io/stat.h>
 #include <psp2/io/dirent.h>
 #include <psp2/kernel/threadmgr.h>
+
+#include "qm_protocol.h"   // QM_ART_SIZE, for smallCoverPath's covers
 #endif
 
 namespace vitaplex {
@@ -478,6 +480,8 @@ bool DownloadsManager::deleteDownload(const std::string& ratingKey) {
             if (!item.thumbPath.empty()) {
 #ifdef __vita__
                 sceIoRemove(item.thumbPath.c_str());
+                const std::string small = smallCoverPath(item.thumbPath);
+                if (!small.empty()) sceIoRemove(small.c_str());
 #else
                 std::remove(item.thumbPath.c_str());
 #endif
@@ -663,6 +667,9 @@ void DownloadsManager::syncProgressBidirectional() {
     syncProgressToServer();
     syncProgressFromServer();
     brls::Logger::info("DownloadsManager: Bidirectional sync complete");
+#ifdef __vita__
+    fillSmallCovers();
+#endif
 }
 
 void DownloadsManager::resumeIncompleteDownloads() {
@@ -742,6 +749,8 @@ void DownloadsManager::clearCompleted() {
             if (!item.thumbPath.empty()) {
 #ifdef __vita__
                 sceIoRemove(item.thumbPath.c_str());
+                const std::string small = smallCoverPath(item.thumbPath);
+                if (!small.empty()) sceIoRemove(small.c_str());
 #else
                 std::remove(item.thumbPath.c_str());
 #endif
@@ -2114,6 +2123,9 @@ void DownloadsManager::downloadCoverArt(DownloadItem& item) {
 
     if (success) {
         brls::Logger::info("DownloadsManager: Cover art saved for {}", item.title);
+#ifdef __vita__
+        if (item.mediaType == "track") downloadSmallCover(item);
+#endif
     } else {
         brls::Logger::warning("DownloadsManager: Failed to download cover art for {}", item.title);
         // Clean up failed file
@@ -2125,6 +2137,73 @@ void DownloadsManager::downloadCoverArt(DownloadItem& item) {
         item.thumbPath.clear();
     }
 }
+
+#ifdef __vita__
+std::string DownloadsManager::smallCoverPath(const std::string& thumbPath) {
+    static const std::string kCover = "_cover.jpg";
+    if (thumbPath.size() <= kCover.size() ||
+        thumbPath.compare(thumbPath.size() - kCover.size(), kCover.size(), kCover) != 0)
+        return {};
+    return thumbPath.substr(0, thumbPath.size() - kCover.size()) + "_cover64.png";
+}
+
+bool DownloadsManager::downloadSmallCover(const DownloadItem& item) {
+    const std::string path = smallCoverPath(item.thumbPath);
+    if (path.empty() || item.thumbUrl.empty()) return false;
+    PlexClient& client = PlexClient::getInstance();
+    const std::string serverUrl = client.getServerUrl();
+    const std::string token = client.getAuthToken();
+    if (serverUrl.empty() || token.empty()) return false;
+    // As the plugin asks for the covers it fetches itself (its fetchCover).
+    const std::string url = convertToHttpForDownload(
+        serverUrl + "/photo/:/transcode?url=" + HttpClient::urlEncode(item.thumbUrl) +
+        "&width=" + std::to_string(QM_ART_SIZE) + "&height=" + std::to_string(QM_ART_SIZE) +
+        "&minSize=1&upscale=1&format=png&X-Plex-Token=" + token);
+    std::string png;
+    HttpClient http;
+    const bool fetched = http.downloadFile(url, [&](const char* data, size_t size) {
+        png.append(data, size);
+        return png.size() <= 256 * 1024;
+    });
+    static const char kSignature[8] = {'\x89', 'P', 'N', 'G', '\r', '\n', '\x1A', '\n'};
+    if (!fetched || png.size() < 8 || png.compare(0, 8, kSignature, 8) != 0) {
+        brls::Logger::warning("DownloadsManager: No small cover for {}", item.title);
+        return false;
+    }
+    const std::string part = path + ".part";
+    SceUID fd = sceIoOpen(part.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+    if (fd < 0) return false;
+    const bool wrote = sceIoWrite(fd, png.data(), png.size()) == (int)png.size();
+    sceIoClose(fd);
+    sceIoRemove(path.c_str());
+    if (!wrote || sceIoRename(part.c_str(), path.c_str()) < 0) {
+        sceIoRemove(part.c_str());
+        return false;
+    }
+    return true;
+}
+
+void DownloadsManager::fillSmallCovers() {
+    std::vector<DownloadItem> tracks;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& item : m_downloads) {
+            if (item.state != DownloadState::COMPLETED || item.mediaType != "track" ||
+                item.thumbUrl.empty())
+                continue;
+            const std::string path = smallCoverPath(item.thumbPath);
+            SceIoStat st;
+            if (!path.empty() && sceIoGetstat(path.c_str(), &st) < 0) tracks.push_back(item);
+        }
+    }
+    if (tracks.empty()) return;
+    int made = 0;
+    for (const auto& item : tracks) made += downloadSmallCover(item) ? 1 : 0;
+    brls::Logger::info("DownloadsManager: {} of {} track(s) given the small cover the quick menu "
+                       "shows",
+                       made, tracks.size());
+}
+#endif
 
 bool DownloadsManager::reportTimeline(const DownloadItem& item, const std::string& state) {
     PlexClient& client = PlexClient::getInstance();
@@ -2270,7 +2349,7 @@ void DownloadsManager::saveStateUnlocked() {
 
 #ifdef __vita__
     // Written beside it and moved in once whole: a process ended part-way
-    // through a write in place, as VitaPlex BG is 2 s after the system asks
+    // through a write in place, as VitaPlex on the Vita is 2 s after the system asks
     // it to quit, would leave the list cut short. The old one goes only once
     // the new one is whole, and loadState takes the new one if the move was
     // cut short in turn.

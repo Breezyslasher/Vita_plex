@@ -1,8 +1,8 @@
 /**
  * The song's cover for VitaPlex's quick menu plugin (qm_protocol.h,
- * QM_CMD_ART), from an image VitaPlex BG has fetched: decoded with
- * stb_image, its middle square scaled to QM_ART_SIZE, and written as a PNG
- * that PAF's decoder in SceShell reads. Plain C.
+ * QM_CMD_ART), from an image VitaPlex has fetched or has on the card:
+ * decoded with stb_image, its middle square scaled to QM_ART_SIZE, and
+ * written as a PNG that PAF's decoder in SceShell reads. Plain C.
  */
 
 #ifndef VITAPLEX_QM_COVER_H
@@ -18,12 +18,6 @@ extern "C" {
 // An image (JPEG or PNG) as the cover named serial, at QM_ART_PATH_FMT.
 // 0 when written; else -1, with what failed in why.
 int qmCoverWrite(const void* image, size_t len, uint32_t serial, char* why, size_t whySize);
-
-// The same at path, written beside it first and moved in once whole, so that
-// SceShell never loads half of one: a song's cover for SceShell to show as it
-// carries the queue on (qm_protocol.h's QM_SONG_COVER_FMT).
-int qmCoverWriteFile(const void* image, size_t len, const char* path, char* why,
-                     size_t whySize);
 
 // The serial for the next cover, the last one made being last (0 for none),
 // at nowUs on the system clock (sceKernelGetSystemTimeWide): the

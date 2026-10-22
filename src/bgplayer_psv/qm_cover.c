@@ -1,6 +1,6 @@
 /**
  * The song's cover for VitaPlex's quick menu plugin: qm_cover.h. stb_image
- * comes with nanovg in VitaPlex BG (borealis).
+ * comes with nanovg in VitaPlex (borealis).
  */
 
 #include "qm_cover.h"
@@ -189,25 +189,4 @@ int qmCoverWrite(const void* image, size_t len, uint32_t serial, char* why, size
     char path[64];
     snprintf(path, sizeof(path), QM_ART_PATH_FMT, (unsigned)(serial & 1));
     return writeCover(image, len, path, why, whySize);
-}
-
-int qmCoverWriteFile(const void* image, size_t len, const char* path, char* why,
-                     size_t whySize) {
-    char part[192];
-    if (snprintf(part, sizeof(part), "%s.part", path) >= (int)sizeof(part)) {
-        snprintf(why, whySize, "not written: the path is too long");
-        return -1;
-    }
-    if (writeCover(image, len, part, why, whySize) != 0) {
-        remove(part);
-        return -1;
-    }
-    // rename does not replace a file on every target (platform_common.cpp).
-    remove(path);
-    if (rename(part, path) != 0) {
-        remove(part);
-        snprintf(why, whySize, "not moved to %s", path);
-        return -1;
-    }
-    return 0;
 }

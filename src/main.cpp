@@ -153,7 +153,7 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     // the Start Menu shortcut that toasts are keyed on. Windows-only in effect.
     vitaplex::shell::setShortcutAllowed(app.getSettings().windowsStartMenuShortcut);
 
-    // VitaPlex BG's music outside the app starts watching here, and takes the
+    // The Vita's music outside the app starts watching here, and takes the
     // music back from SceShell. No-op on every other platform.
     vitaplex::bgaudio::init(app.getSettings().vitaOutsideMusic);
     vitaplex::bgaudio::setQuickMenuControls(app.getSettings().vitaQuickMenuControls);

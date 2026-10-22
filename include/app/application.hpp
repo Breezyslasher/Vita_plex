@@ -224,15 +224,14 @@ struct AppSettings {
     // song on a handheld is where that shows.
     bool lyricsWordByWord = true;
     bool backgroundMusic = true;       // Allow leaving player without stopping music
-    // VitaPlex BG only: what music playing does as the user leaves the app
+    // Vita only: what music playing does as the user leaves the app
     // (bgaudio::OutsideMusic). 0 stops it; 1 plays on in the app through the
     // system's background-music port, handed to SceShell, through the
     // package's quick menu plugin, when the system closes the app for a game;
     // 2 hands it to SceShell at once. See utils/background_audio.hpp.
     int vitaOutsideMusic = 1;
-    // VitaPlex BG only: the song and its buttons in the quick menu's Music
-    // row, through ElevenMPV-A's shell plugin, which needs ElevenMPV-A
-    // installed (bgaudio::setQuickMenuControls).
+    // Vita only: the song and its buttons in the quick menu's Music row,
+    // through VitaPlex's quick menu plugin (bgaudio::setQuickMenuControls).
     bool vitaQuickMenuControls = true;
     // Turn shuffle on whenever a new music queue starts. Mainly for remote
     // controllers: the framework MediaSession this app uses has no

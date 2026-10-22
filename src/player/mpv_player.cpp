@@ -502,7 +502,7 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "5");  // Read 5 seconds ahead
         mpv_set_option_string(m_mpv, "demuxer-max-bytes", "512KiB");  // Allow some buffering for audio
 
-        // The background-audio experiment (utils/background_audio.hpp).
+        // Music after leaving the app (utils/background_audio.hpp).
         // ao_vita opens the BGM port for anything under 48 kHz and the MAIN
         // port at 48 kHz, and the BGM port is the one an app may keep once it
         // is not in front. Most music is 44.1 kHz already; this makes it all.
@@ -913,7 +913,6 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
 #endif
 
     brls::Logger::info("MpvPlayer: Loading URL: {}", redactTokensInUrl(normalizedUrl));
-    if (m_audioOnly) bgaudio::onTrackLoad();
 
     m_currentUrl = normalizedUrl;
     m_playbackInfo = MpvPlaybackInfo();

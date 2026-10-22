@@ -100,7 +100,7 @@ public:
     // Called when a new track is loaded — the next stream starts at the top
     // again. PlayerActivity's own load path calls this too.
     void resetStreamStartOffset() { m_streamStartOffsetMs = 0; }
-    // A track loaded as a transcode started part-way in: a queue VitaPlex BG
+    // A track loaded as a transcode started part-way in: a queue VitaPlex
     // takes back from SceShell goes on where its song had got to.
     void setStreamStartOffset(long long ms) { m_streamStartOffsetMs = ms > 0 ? ms : 0; }
     void stopPlayback();                       // Stop key: halt mpv + clear session

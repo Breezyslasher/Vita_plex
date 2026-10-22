@@ -192,6 +192,14 @@ public:
     // Get downloads directory path
     std::string getDownloadsPath() const;
 
+#ifdef __vita__
+    // Beside a download's cover (thumbPath): the same as the PNG of
+    // QM_ART_SIZE that VitaPlex's quick menu plugin shows in SceShell, which
+    // can make none of the JPEG (bgplayer_psv/qm_protocol.h); the server
+    // makes it as the track is downloaded. "" for a cover of another name.
+    static std::string smallCoverPath(const std::string& thumbPath);
+#endif
+
 private:
     DownloadsManager() = default;
     ~DownloadsManager() = default;
@@ -203,6 +211,13 @@ private:
 
     // Download cover art for a music track
     void downloadCoverArt(DownloadItem& item);
+#ifdef __vita__
+    // The small PNG beside it (smallCoverPath), made by the server; true
+    // when it is on the card. And those of the tracks downloaded before it
+    // was made, once.
+    bool downloadSmallCover(const DownloadItem& item);
+    void fillSmallCovers();
+#endif
 
     // Report timeline to server
     bool reportTimeline(const DownloadItem& item, const std::string& state);

@@ -544,7 +544,12 @@ Matching that would mean a proprietary toolchain, a kernel plugin, and a
 different distribution model for an Apache-2.0 repo. Notifications are the part
 that is reachable with open vitasdk, so notifications are the part we do.
 
-### Vita: background audio (an experiment, not yet settled)
+### Vita: background audio (settled in build 2047)
+
+Where it ended up (build 2047, below): VitaPlex.vpk is a non-game app that
+plays on after PS, and as the system closes it for a game, its quick menu
+plugin plays the queue on from inside SceShell. What follows is how that was
+found, test by test, in the order it was.
 
 The "Background Music" setting covers leaving the *player screen*; leaving the
 app, for the LiveArea or another app, still stops the music. ElevenMPV-A plays on
@@ -3001,6 +3006,95 @@ that handed over was written over).
   Its tests now begin from a queue handed over. The pipe test passes 35.
   The plugin builds for the Vita at 51125 bytes, with the same imports as
   build 2042.
+
+**Build 2046 on the console** (logs `8e7a4b23`, the plugin's, and `89506fa9`
+and `5ab8fb2f`, VitaPlex BG's; then `e18b5831`, `4e8bcb05` and `dd6a5eb9`
+across a restart and the power button).
+
+- Everything the build added worked: songs in other formats as the server's
+  MP3, the song taken back keeping its file for the next hand-over, the
+  row's next, previous and play/pause, repeat one, songs marked played.
+- The first hand-over was of an OGG song, which VitaPlex BG does not make
+  ready, so SceShell fetched the server's MP3 of it. It played 23.3 s after
+  the hand-over:
+  - 0.3 s for the decision, then 9.58 MB in 12.5 s (781 KB/s);
+  - then 9.6 s for the two passes over it, counting the frames and copying
+    them behind the header. The next song, OGG too, took 9.0 s for them
+    after its 14.5 s fetch. At the card's speed they would take about 2 s;
+    the fetch thread is SceShell's lowest priority, with a game running.
+- The second hand-over named the file kept from the first (file=). SceShell
+  played it 0.6 s after, from 0:00, and was taken to 1:13 1.3 s after that.
+- The take-back's silence was 7.3 s: 1.4 s to the player, 0.6 s for the
+  decision, 2.2 s between mpv's start and its load, and 2.8 s for the
+  server's transcode from 1:03 to begin. The song's whole file was on the
+  card, kept for the next hand-over, but mpv streamed it from the server.
+- Next from the row waited 22.6 s for song 2. SceShell had fetched it ahead
+  in the first carry-on, and removed it as the music was taken back.
+- Previous from the row waited 37.5 s for song 1, whose file had gone as
+  song 2 began: 23.0 s at 425 KB/s, and the two passes.
+- Covers:
+  - The two songs were of one album, and its 9190-byte cover was fetched
+    for each, three times in all.
+  - While a song was waited for, the row showed the heading's own icon:
+    its cover comes after its file.
+  - The downloads' covers were never used: they are JPEGs, and nothing in
+    the plugin decodes one, so it fetches the server's PNG instead.
+- A restart with SceShell playing: VitaPlex BG found SceShell's status from
+  before it, took nothing back, and removed the 4 files left.
+- "9 to 5", an MP3, came whole in 3.9 s as it played, 4.2 s before the
+  hand-over, and was thrown away: 4,343,040 bytes against the 4,418,566 of
+  the server's details, older than the file. SceShell fetched it again,
+  with 11.5 s of silence.
+- The power button with SceShell playing: four times the shell's music
+  stopped (state 2) as the screen went off or on, and the plugin played it
+  again, 0.5 s after, once 2.6 s (5 s between replays). The Vita stayed
+  awake for it: the plugin's watch never missed a beat.
+
+**Build 2047: VitaPlex itself.** VitaPlex.vpk takes VitaPlex BG's packaging,
+and the tests go.
+
+- VitaPlex.vpk (VPLEX0001) is a non-game app as VitaPlex BG was: category
+  gdc, ATTRIBUTE 0x01089088, ATTRIBUTE_MINOR 16, ATTRIBUTE2 12. It carries
+  the quick menu plugin in module/. VitaPlexBG.vpk goes; the updater stub's
+  package stays a game, as it was.
+  - Nothing is gated on the title id any more: music after leaving the app,
+    by the setting, and the quick menu row are VitaPlex's on the Vita.
+  - Leaving the app now pauses a video, which a game's freeze used to do,
+    and music too with the setting at "Stops".
+  - VitaPlex BG, if still installed, should be deleted, and the Vita
+    restarted once, so that only the new plugin is in SceShell.
+- What went:
+  - The background tests: src/bgtest_psv and its 21 packages.
+  - ElevenMPV-A's plugin as a fallback (third_party/elevenmpva-shell-plugin):
+    without VitaPlex's own, there is no hand-over at all.
+  - In settings: the system player tests, the SceShell play and fetch tests,
+    BG Test 11's hand-off, and the music port, service and button pickers.
+  - The watcher's reports: "Away 0:03…" and "frozen" on screen, the UI
+    loop's count, the BGM owner, each power callback and app event.
+  - appmgr_bgm_stub.S, which only those used, and mp3_info.c, whose logic
+    the plugin has.
+  - In the plugin, protocol 12 (module VitaPlexQM12): QM_CMD_LOOK,
+    QM_CMD_MUSIC_TEST and QM_CMD_HTTP_TEST, the widget timeline, the BGM
+    reads' log, and the logs of each step of the row. The buttons are always
+    switched on and lit, the way build 2028 found to work.
+- Covers:
+  - A song whose cover on the server is the one before's, its album's, gets
+    a copy of that one's: as it is fetched ahead, as it is waited for, and
+    as the shell gets it.
+  - The server makes a 64-pixel PNG of a download's cover as the track is
+    downloaded, beside its JPEG (`<key>_cover64.png`). Tracks downloaded
+    before get theirs once, after the progress sync at start. The queue
+    names it (BGPLAYER_TRACK_COVER), and the plugin shows it as it is, with
+    no server too.
+- The song made ready is taken as whole by the length the server's answer
+  gives, the details' size only with none.
+- Still to do, from build 2046's logs: the passes over a server MP3, which
+  could be made as it comes; the song before, kept for previous; songs
+  fetched ahead, kept at a take-back; and the take-back playing the song's
+  file from the card, not the server's stream.
+- On a host, the plugin's harness passes 167 checks, the HTTP test's gone
+  and the covers' added; the pipe test passes 23. The plugin builds at
+  40361 bytes, with build 2042's imports less three.
 
 ### PS4: the popup, and nothing to hang progress on
 

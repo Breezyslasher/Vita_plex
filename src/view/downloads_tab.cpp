@@ -171,7 +171,7 @@ DownloadsTab::Type itemType(const DownloadItem& it) {
 
 // A download as an item for the player's queue, with its kind: a queue of
 // downloaded songs is then a music queue (MusicQueue::isMusicQueue), which
-// the music layout and VitaPlex BG's hand-over to SceShell go by.
+// the music layout and the Vita's hand-over to SceShell go by.
 // Without it, a queue started here was not handed over (log b8cde643:
 // "queue=true music=false", then "nothing handed over"). A track's artist
 // and album are its own (downloadArtist), not the parent title, which named

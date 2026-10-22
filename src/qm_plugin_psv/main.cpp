@@ -1,55 +1,41 @@
 /**
  * VitaPlex's quick menu plugin: the song, its cover, and buttons that work,
- * in the Music row of the quick menu (hold PS), for VitaPlex BG; and VitaPlex
- * BG's queue played on from inside SceShell once it has gone.
+ * in the Music row of the quick menu (hold PS), while VitaPlex plays; and
+ * VitaPlex's queue played on from inside SceShell once VitaPlex has gone.
  *
  * The row is SceShell's, and only code inside SceShell can change it. VitaPlex
- * BG loads this module into SceShell with taiHEN (qm_link.c) the first time
- * it wants the row in a boot, and it stays until the Vita restarts. The two
- * talk through the message pipes qm_protocol.h lays out.
+ * loads this module into SceShell with taiHEN (qm_link.c) the first time it
+ * wants the row in a boot, and it stays until the Vita restarts. The two talk
+ * through the message pipes qm_protocol.h lays out.
  *
  * It does what ElevenMPV-A's shell plugin does (GrapheneCt/ElevenMPV-A,
- * GPL-3.0, third_party/elevenmpva-shell-plugin), in its way: it finds the
- * quick menu through power_manage_plugin, the row's buttons and two lines of
- * text by their id hashes, and while the quick menu is open puts the song on
- * the lines and its own callbacks on the buttons. It differs where that
- * plugin fell short (docs/DESIGN_NOTES.md):
+ * GPL-3.0), in its way: it finds the quick menu through power_manage_plugin,
+ * the row's buttons and two lines of text by their id hashes, and while the
+ * quick menu is open puts the song on the lines and its own callbacks on the
+ * buttons. It differs where that plugin fell short (docs/DESIGN_NOTES.md):
  *
  * - It changes SceShell's widgets on SceShell's own UI thread, through PAF's
  *   main thread call list, as ElevenMPV-A's app does its own. Its own threads
  *   watch the quick menu, take VitaPlex's messages and write the log.
- * - The buttons, switched on, kept their off look, with ElevenMPV-A's plugin
- *   and with this one (builds 2019 to 2026), though nothing the timeline read
- *   of them differed from SceShell's lit row. Build 2026's byte dumps found
- *   the icons' own alpha at 0.3, a field the timeline did not read. The
- *   plugin sets it to 1, which lights them (build 2028), and puts it back
- *   when the row is SceShell's again.
+ * - It switches the buttons on and lights them and their icons, which
+ *   SceShell draws faded with no music of its own: the icons' own alpha,
+ *   0.3, is set to 1 (build 2028), and put back when the row is SceShell's
+ *   again.
  * - It takes the row 200 ms after the quick menu opens, as ElevenMPV-A's
- *   plugin about does: the song this one put on the lines at once did not
- *   show (build 2022). While the quick menu stays open it puts back what
- *   SceShell changes: buttons switched off, other text.
+ *   plugin about does: the song put on the lines at once did not show (build
+ *   2022). While the quick menu stays open it puts back what SceShell
+ *   changes: buttons switched off, other text.
  * - While VitaPlex plays, the play icon shows ⏸; and the Music heading's icon
  *   shows the song's cover, which VitaPlex writes to a file (QM_ART_PATH_FMT).
  * - A press is sent without waiting, so a process that stopped reading cannot
  *   hold SceShell up, and the row is given back by itself when no process has
  *   asked for it again in QM_ACTIVE_TIMEOUT_S.
- * - It logs the row's widgets as the quick menu opens and their changes for
- *   3 s, for the first opens of a boot, whoever has the row.
- * - When the system ended VitaPlex BG's background player, as an app with
- *   extended memory started, SceShell carried its queue on: this played the
- *   queue's songs that are on the memory card through SceShell's music
- *   service, from inside SceShell, and kept the row (qm_protocol.h, builds
- *   2033 to 2045).
- * - For a test, it fetches the start of a song from the server through Sony's
- *   HTTP library as SceShell has it (QM_CMD_HTTP_TEST, build 2040): whether
- *   SceShell can fetch the queue's songs that are not on the memory card.
- * - As it carries the queue on, it fetches those songs that way, each while
- *   the one before plays, when the shell plays their format (build 2042).
- * - VitaPlex BG hands its queue to it as it goes (QM_CMD_PLAY_QUEUE, build
- *   2043): it plays from the queue's song and place, fetches covers and marks
- *   songs played, as the player did. From build 2046 there is no background
- *   player, and songs in formats the shell does not play come as the
- *   server's MP3s.
+ * - VitaPlex hands its queue to it as it goes (QM_CMD_PLAY_QUEUE): it plays
+ *   the queue on through SceShell's music service, from the song and place
+ *   VitaPlex had got to, fetches the songs that are not on the memory card
+ *   from the server through Sony's HTTP library as SceShell has it, the
+ *   server's MP3 of those in formats the shell does not play, and their
+ *   covers, and marks the songs it played to their end played.
  *
  * Built with vitasdk against the PAF headers scripts/vita/fetch_paf_headers.sh
  * fetches; its PAF imports are in paf_stubs.S. Logs to
@@ -199,41 +185,11 @@ void logOpen() {
     g_log = sceIoOpen(kLogPath, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
 }
 
-// A line put together a piece at a time, as far as it fits.
-struct Line {
-    char buf[224];
-    int n;
-    Line() : n(0) {
-        buf[0] = 0;
-    }
-    void add(const char* fmt, ...) __attribute__((format(printf, 2, 3)));
-};
-void Line::add(const char* fmt, ...) {
-    if (n >= (int)sizeof(buf) - 1) return;
-    va_list ap;
-    va_start(ap, fmt);
-    const int w = sceClibVsnprintf(buf + n, sizeof(buf) - n, fmt, ap);
-    va_end(ap);
-    if (w > 0) n = n + w < (int)sizeof(buf) - 1 ? n + w : (int)sizeof(buf) - 1;
-}
-
-// UTF-16 as ASCII for the log, anything else as '?'.
-void toLog(const uint16_t* s, char* out, int cap) {
-    int n = 0;
-    for (; s && *s && n + 1 < cap; s++) out[n++] = (*s >= 0x20 && *s < 0x7F) ? (char)*s : '?';
-    out[n] = 0;
-}
-
 // FNV-1a over UTF-16, to tell texts apart.
 uint32_t hashText(const uint16_t* s) {
     uint32_t h = 2166136261u;
     for (; s && *s; s++) h = (h ^ *s) * 16777619u;
     return h;
-}
-
-// An alpha as a whole per cent, for the log (its printf has no %f).
-int percent(float f) {
-    return (int)(f * 100.0f + (f < 0.0f ? -0.5f : 0.5f));
 }
 
 bool startsWith(const char* s, const char* prefix) {
@@ -245,7 +201,7 @@ bool startsWith(const char* s, const char* prefix) {
 // ── State ───────────────────────────────────────────────────────────────────
 // The Music row's parts, by the id hashes SceShell's quick menu gives them:
 // the buttons and lines as ElevenMPV-A's main.h and main.cpp have them, the
-// rest as qm-plugin.log listed the row (build 2022).
+// rest as the plugin's log listed the row (build 2022).
 const uint32_t kHashRew = 0x9F6A44DA;
 const uint32_t kHashPlay = 0x56734CD1;
 const uint32_t kHashFf = 0x6CA674D6;
@@ -260,10 +216,8 @@ const uint32_t kHashIconFf = 0x6FA104CC;
 // own row shows it in play's stead, by size, while its Music app plays
 // (build 2025).
 const uint32_t kHashIconPause = 0xB26E4562;
-// The row's heading, "Music", in a group of its own above it, with its icon:
-// a plane at the group's left, 0x0 and drawn at its texture's 80x80, as the
-// other rows' icons are.
-const uint32_t kHashHeading = 0x90E6251E;
+// The row's heading's icon, "Music"'s: a plane at its group's left, 0x0 and
+// drawn at its texture's 80x80, as the other rows' icons are.
 const uint32_t kHashHeadingIcon = 0xE219E0DE;
 
 // SceAppMgr's app state, as ElevenMPV-A's plugin asks for it (its build of
@@ -297,9 +251,9 @@ paf::graph::SurfacePool* g_surfacePool;  // power_manage_plugin's, for the cover
 SceUID g_toPlugin = -1, g_fromPlugin = -1;
 SceUID g_lock = -1;  // everything below, and the widgets
 
-// The row's owner while SceShell itself plays the queue VitaPlex BG handed it
-// (qm_protocol.h), beside QM_OWNER_APP. 2 was the background player's, up to
-// build 2045.
+// The row's owner while SceShell itself plays the queue VitaPlex handed it
+// (qm_protocol.h), beside QM_OWNER_APP. 2 was VitaPlex's background player's,
+// up to build 2045.
 const uint32_t kOwnerShell = 3;
 // The serials of the covers SceShell shows as it carries the queue on: from
 // a file named by path (g_artPath), not by QM_ART_PATH_FMT. VitaPlex's
@@ -311,14 +265,13 @@ const uint32_t kShellArt = 0x80000000u;
 int g_active;
 uint32_t g_owner;
 SceUInt64 g_activatedUs;  // the last QM_CMD_ACTIVATE
-int g_look = QM_LOOK_LIT;
 int g_playing = -1;
 uint16_t g_title[256], g_artist[256], g_album[256];
 uint32_t g_artSerial;  // the cover at QM_ART_PATH, 0 for none
 char g_artPath[160];   // the file a kShellArt serial names
 int g_releaseDue;      // the row given back, to be left as SceShell had it
-// The music thread's (startMusicThread), woken for a test, for a press while
-// SceShell carries the queue on, and to stop that.
+// The music thread's (startMusicThread), woken for a queue handed over, for a
+// press while SceShell carries the queue on, and to stop that.
 SceUID g_musicSema = -1;
 // From SceShell's UI thread (onPress), atomic: a press on the row for the
 // music thread while SceShell carries the queue on, QM_PRESS_*.
@@ -328,7 +281,6 @@ int g_carryPress;
 int g_open;            // it is open
 SceUInt64 g_openedUs;  // when it was seen open
 int g_openSerial;      // opens so far; the row's tick sees a new one by it
-int g_timelineDue;     // this open's changes are to be logged
 
 // The row, by its tick (rowTick), on SceShell's UI thread: found anew each
 // tick, so that nothing is kept of a row SceShell has since done away with.
@@ -338,18 +290,10 @@ uint32_t g_topHash, g_bottomHash;  // the lines as this plugin set them
 int g_tickOpenSerial;              // the open this tick's state is for
 SceUInt64 g_lastTickUs;
 int g_applied;    // the row is ours this time it is open
-int g_findTries;  // looks for the buttons this time
 int g_mainTicks;  // times SceShell's UI thread has called mainTick
 int g_fallback;   // it never has: the watch thread ticks the row itself
-// Once a boot:
-int g_layoutChecked, g_layoutOk;  // PAF's widget layout is its headers' (checkLayout)
-int g_opens;                      // times the quick menu opened
-int g_takesLogged;                // the first takes are logged in full
-int g_lookLogged = -1;            // ... and the first with each look
-int g_revertsLogged;              // buttons found switched off again, logged
-int g_textsLogged;                // lines found changed, logged
-int g_dimsLogged;                 // icons and buttons found dimmed, logged
-int g_sawLitRow;                  // SceShell's own row seen lit, its music in it
+// Once a boot: PAF's widget layout is its headers' (checkLayout).
+int g_layoutChecked, g_layoutOk;
 
 void lock() {
     sceKernelLockMutex(g_lock, 1, NULL);
@@ -358,45 +302,20 @@ void unlock() {
     sceKernelUnlockMutex(g_lock, 1);
 }
 
-// Milliseconds since the quick menu was seen open, for the log. In 32 bits:
-// a 64-bit division would bring in libgcc's, built for another wchar_t.
-int msOpen(SceUInt64 now) {
-    return (int)((uint32_t)(now - g_openedUs) / 1000u);
-}
-
 const char* ownerName(uint32_t owner) {
-    return owner == QM_OWNER_APP ? "VitaPlex BG"
+    return owner == QM_OWNER_APP ? "VitaPlex"
          : owner == kOwnerShell  ? "SceShell"
                                  : "?";
 }
-const char* lookName(int look) {
-    return look == QM_LOOK_ENABLE_NORMAL ? "Enable(true) and normal state"
-         : look == QM_LOOK_AS_ELEVENMPVA ? "Enable(false), as ElevenMPV-A"
-         : look == QM_LOOK_LIT           ? "Enable(true), normal state, buttons and icons lit"
-                                         : "Enable(true)";
-}
 
-// Members PAF's headers keep protected: read for the log, and a dimmed icon's
-// meta alpha written, only once the layout has been checked (checkLayout).
+// Members PAF's headers keep protected: read, and a dimmed icon's alphas
+// written, only once the layout has been checked (checkLayout).
 struct WidgetPeek : paf::ui::Widget {
     static WidgetPeek* of(paf::ui::Widget* w) {
         return static_cast<WidgetPeek*>(w);
     }
     static const paf::math::v4& size(paf::ui::Widget* w) {
         return of(w)->m_size;
-    }
-    static uint32_t state(paf::ui::Widget* w) {
-        return of(w)->m_state;
-    }
-    // Its alphas times its parents': what it is drawn with.
-    static float showSum(paf::ui::Widget* w) {
-        return of(w)->m_show_a_sum;
-    }
-    static float metaSum(paf::ui::Widget* w) {
-        return of(w)->m_meta_a_sum;
-    }
-    static int activated(paf::ui::Widget* w) {
-        return of(w)->m_activated;
     }
     // Its meta alpha, and the product with its parents' that it is drawn
     // with, as Widget::SetMetaAlpha_core would set them. That export is not
@@ -453,36 +372,12 @@ struct DrawPeek : paf::graph::DrawObj {
     static int size(paf::graph::DrawObj* d, int i) {
         return (int)reinterpret_cast<const float*>(&of(d)->m_size)[i];
     }
-    // Its class (its vtable) and its shader: a SharedPtr's first word.
-    static const void* vtable(paf::graph::DrawObj* d) {
-        return *reinterpret_cast<const void* const*>(d);
-    }
-    static const void* shader(paf::graph::DrawObj* d) {
-        return *reinterpret_cast<const void* const*>(&of(d)->m_shader);
-    }
 };
 
 // A vector's x or y, rounded: vitasdk-paf-component's v4 keeps its four floats
 // to itself.
 int coord(const paf::math::v4& v, int i) {
     return (int)reinterpret_cast<const float*>(&v)[i];
-}
-
-// A colour (red, green, blue, alpha) as the console keeps one in 32 bits,
-// alpha first (kLitColor).
-uint32_t argb(const paf::math::v4& v) {
-    const float* f = reinterpret_cast<const float*>(&v);
-    const int order[4] = {3, 0, 1, 2};
-    uint32_t c = 0;
-    for (int i = 0; i < 4; i++) {
-        const float x = f[order[i]] < 0.0f ? 0.0f : f[order[i]] > 1.0f ? 1.0f : f[order[i]];
-        c = (c << 8) | (uint32_t)(x * 255.0f + 0.5f);
-    }
-    return c;
-}
-
-bool isA(paf::ui::Widget* w, const char* type) {
-    return w && type && w->IsInherit(type);
 }
 
 // ── Textures ────────────────────────────────────────────────────────────────
@@ -502,20 +397,6 @@ union TexRef {
     ~TexRef() {}
 };
 
-// A widget's texture in slot `index` of its first draw object, for the log:
-// where it is and its size. The reference GetTexture adds is dropped again
-// without ever freeing the texture from this thread, should SceShell have let
-// go of it meanwhile. Slot 0 by the call the console has run since build 2023.
-void textureOf(paf::ui::Widget* w, int index, const void** tex, int* width, int* height) {
-    TexRef ref(NULL);
-    if (index == 0) w->GetTexture(ref.ptr);
-    else w->GetTexture(ref.ptr, 0, (uint32_t)index);
-    paf::graph::Surface* s = ref.ptr.get();
-    *tex = s;
-    *width = s ? s->GetWidth() : 0;
-    *height = s ? s->GetHeight() : 0;
-    if (s) s->UnsafeRelease();
-}
 
 // A widget's texture, with the reference GetTexture adds kept for good: the
 // plugin's own hold on it, so it outlives any row SceShell makes.
@@ -525,11 +406,15 @@ paf::graph::Surface* holdTexture(paf::ui::Widget* w) {
     return ref.ptr.get();
 }
 
+// A widget's texture in its first draw object, to compare with: the
+// reference GetTexture adds is dropped again without ever freeing the
+// texture from this thread, should SceShell have let go of it meanwhile.
 paf::graph::Surface* currentTexture(paf::ui::Widget* w) {
-    const void* tex;
-    int width, height;
-    textureOf(w, 0, &tex, &width, &height);
-    return (paf::graph::Surface*)tex;
+    TexRef ref(NULL);
+    w->GetTexture(ref.ptr);
+    paf::graph::Surface* s = ref.ptr.get();
+    if (s) s->UnsafeRelease();
+    return s;
 }
 
 // Gives a widget a texture; the widget adds a reference of its own.
@@ -542,11 +427,6 @@ void giveTexture(paf::ui::Widget* w, paf::graph::Surface* s) {
 paf::ui::Widget* find(uint32_t hash) {
     return g_impose->FindChild(paf::IDParam(hash), 0);
 }
-
-paf::ui::Widget* g_rowGroup;      // the play button's parent
-paf::ui::Widget* g_headingGroup;  // the heading's
-int g_timeline;                   // this open's changes are being logged
-int g_snapCount;
 
 // The row's widgets, by their ids: on its tick. true when its buttons are
 // there; they come a moment after the quick menu.
@@ -626,7 +506,6 @@ struct Lit {
 };
 Lit g_lit[kLitMax];  // what the plugin lit, while it is to be put back
 int g_litCount;
-int g_drawLayoutLogged;
 
 // Whether a draw object's layout is the headers' as far as its colour goes:
 // its size reads as its widget's, which sits just before it.
@@ -657,9 +536,9 @@ Lit* litEntry(paf::ui::Widget* w) {
     return &l;
 }
 
-// One button or icon lit, logged if asked; true when it changed anything.
-// A widget hidden by its colour or an alpha is left so.
-bool light(paf::ui::Widget* w, const char* name, int logIt) {
+// One button or icon lit; true when it changed anything. A widget hidden by
+// its colour or an alpha is left so.
+bool light(paf::ui::Widget* w) {
     if (!w || !g_layoutOk) return false;
     const uint32_t color = w->GetColor32();
     const float meta = w->GetMetaAlpha();
@@ -680,10 +559,9 @@ bool light(paf::ui::Widget* w, const char* name, int logIt) {
         if (l && l->alphaWas < 0.0f) l->alphaWas = own;
         WidgetPeek::setOwnAlpha(w, 1.0f);
     }
-    const uint32_t passed = d ? DrawPeek::color(d) : 0;
     // A draw object that was faded is set by hand even if SetColor_core lit
-    // it: kLitColor marks it as the plugin's, to be put back.
-    bool direct = false;
+    // it: kLitColor marks it as the plugin's, to be put back. One whose
+    // layout is not the headers' is left faded.
     if (dimDrawn) {
         Lit* l = drawLayoutOk(w, d) ? litEntry(w) : NULL;
         if (l) {
@@ -692,30 +570,18 @@ bool light(paf::ui::Widget* w, const char* name, int logIt) {
                 l->was = drawn;
             }
             DrawPeek::setColor(d, kLitColor);
-            direct = true;
-        } else if (g_drawLayoutLogged < 3) {
-            g_drawLayoutLogged++;
-            logLine("row: %s's draw object reads %dx%d against its %dx%d: left faded", name,
-                    DrawPeek::size(d, 0), DrawPeek::size(d, 1), coord(WidgetPeek::size(w), 0),
-                    coord(WidgetPeek::size(w), 1));
         }
     }
-    if (logIt)
-        logLine("row: %s lit: color %08X, meta alpha %d%%, own alpha %d%%, drawn %08X; after "
-                "SetColor_core drawn %08X%s%s",
-                name, (unsigned)color, percent(meta), percent(own), (unsigned)drawn,
-                (unsigned)passed, dimOwn ? ", own alpha set to 100%" : "",
-                direct ? ", drawn set to FFFFFFFE" : "");
     return true;
 }
 
-bool lightAll(int logIt) {
-    bool changed = light(g_iconRew, "previous's icon", logIt);
-    changed |= light(g_iconPlay, "play/pause's icon", logIt);
-    changed |= light(g_iconFf, "next's icon", logIt);
-    changed |= light(g_rew, "previous", logIt);
-    changed |= light(g_play, "play/pause", logIt);
-    changed |= light(g_ff, "next", logIt);
+bool lightAll() {
+    bool changed = light(g_iconRew);
+    changed |= light(g_iconPlay);
+    changed |= light(g_iconFf);
+    changed |= light(g_rew);
+    changed |= light(g_play);
+    changed |= light(g_ff);
     return changed;
 }
 
@@ -723,27 +589,19 @@ bool lightAll(int logIt) {
 // where they are still its: with the row's widgets found this tick
 // (findRow). They must be the widgets lit, so a row SceShell made anew is
 // left alone.
-void unlightAll(const char* why) {
+void unlightAll() {
     if (!g_litCount) return;
-    int back = 0;
     for (int i = 0; i < g_litCount; i++) {
         const Lit& l = g_lit[i];
         paf::ui::Widget* const found[6] = {g_iconRew, g_iconPlay, g_iconFf, g_rew, g_play, g_ff};
         bool same = false;
         for (int j = 0; j < 6 && !same; j++) same = found[j] == l.w;
         if (!same) continue;
-        bool put = false;
-        if (l.alphaWas >= 0.0f && WidgetPeek::ownAlpha(l.w) >= 0.99f) {
+        if (l.alphaWas >= 0.0f && WidgetPeek::ownAlpha(l.w) >= 0.99f)
             WidgetPeek::setOwnAlpha(l.w, l.alphaWas);
-            put = true;
-        }
-        if (l.d && l.w->GetDrawObj(0) == l.d && DrawPeek::color(l.d) == kLitColor) {
+        if (l.d && l.w->GetDrawObj(0) == l.d && DrawPeek::color(l.d) == kLitColor)
             DrawPeek::setColor(l.d, l.was);
-            put = true;
-        }
-        if (put) back++;
     }
-    logLine("row: %d of %d faded again as SceShell had them (%s)", back, g_litCount, why);
     g_litCount = 0;
 }
 
@@ -752,7 +610,6 @@ void unlightAll(const char* why) {
 // its own back when paused or when the row is SceShell's again (build 2025).
 paf::graph::Surface *g_playTex, *g_pauseTex;  // held for good (holdTexture)
 int g_pauseShown;  // the play icon has the pause icon's texture
-int g_pauseLogged;
 
 // Holds the two icons' textures, the first time the row is taken in a boot:
 // SceShell's own then, before the plugin has changed either.
@@ -760,7 +617,6 @@ void holdPlayTextures() {
     if (g_playTex || !g_iconPlay || !g_iconPause) return;
     g_playTex = holdTexture(g_iconPlay);
     g_pauseTex = holdTexture(g_iconPause);
-    logLine("row: play icon %p, pause icon %p, held", (void*)g_playTex, (void*)g_pauseTex);
 }
 
 // The play icon as VitaPlex's music is, or as SceShell's own row had it:
@@ -771,10 +627,6 @@ bool showPlaying(bool pause) {
     if (currentTexture(g_iconPlay) == want) return false;
     giveTexture(g_iconPlay, want);
     g_pauseShown = pause;
-    if (g_pauseLogged < 6) {
-        g_pauseLogged++;
-        logLine("row: play icon now shows %s", pause ? "pause" : "play");
-    }
     return true;
 }
 
@@ -796,7 +648,6 @@ int g_artLogged;
 void holdHeadingTexture() {
     if (g_headingTex || !g_headingIcon) return;
     g_headingTex = holdTexture(g_headingIcon);
-    logLine("art: the heading's icon %p, held", (void*)g_headingTex);
 }
 
 // A cover's file as a texture, with one reference: the caller's.
@@ -841,12 +692,11 @@ paf::graph::Surface* loadArt(uint32_t serial) {
 
 // The heading's own icon on it again, if it has a cover. true when it
 // changed it.
-bool showOwnIcon(const char* why) {
+bool showOwnIcon() {
     g_artShown = 0;
     if (!g_headingIcon || !g_headingTex || currentTexture(g_headingIcon) == g_headingTex)
         return false;
     giveTexture(g_headingIcon, g_headingTex);
-    logLine("art: the heading's own icon back (%s)", why);
     return true;
 }
 
@@ -858,78 +708,52 @@ bool showArt() {
     holdHeadingTexture();
     if (!g_headingTex) return false;
     const uint32_t want = g_artSerial;
-    if (want == 0) return showOwnIcon("no cover");
+    if (want == 0) return showOwnIcon();
     const bool own = currentTexture(g_headingIcon) == g_headingTex;
     if (!own && g_artShown == want) return false;
-    if (g_artFailed == want) return own ? false : showOwnIcon("the cover would not load");
-    const SceUInt64 start = sceKernelGetSystemTimeWide();
+    if (g_artFailed == want) return own ? false : showOwnIcon();
     paf::graph::Surface* art = loadArt(want);
     if (!art) {
         g_artFailed = want;
         logLine("art: %u not loaded", (unsigned)want);
-        return own ? false : showOwnIcon("the cover would not load");
+        return own ? false : showOwnIcon();
     }
     giveTexture(g_headingIcon, art);
     art->UnsafeRelease();  // the icon's reference is the one left
     g_artShown = want;
-    logLine("art: %u, %dx%d, shown in %u ms", (unsigned)want, art->GetWidth(), art->GetHeight(),
-            (unsigned)((uint32_t)(sceKernelGetSystemTimeWide() - start) / 1000u));
     return true;
 }
 
 // ── Switching the buttons on ────────────────────────────────────────────────
-// Switches a button on the way g_look says, logged before and after if asked.
-void applyLook(paf::ui::Widget* w, const char* name, int logIt) {
+// Each button switched on and put in its normal state: PlaneButton has a
+// ChangeButtonState of its own, which may also put the button's normal look
+// on it. ElevenMPV-A's way, Enable(false), and Enable(true) alone left them
+// dimmed (builds 2019 to 2022).
+void switchOn(paf::ui::Widget* w) {
     paf::ui::ButtonBase* b = static_cast<paf::ui::ButtonBase*>(w);
-    const int enabledBefore = buttonEnabled(b);
-    const int stateBefore = buttonState(b);
-    switch (g_look) {
-    case QM_LOOK_AS_ELEVENMPVA:
-        b->Enable(false);
-        break;
-    case QM_LOOK_ENABLE_NORMAL:
-    case QM_LOOK_LIT:
-        // PlaneButton has a ChangeButtonState of its own, which may also put
-        // the button's normal look on it.
-        b->Enable(true);
-        b->ChangeButtonState(paf::ui::ButtonBase::ST_BTN_NORMAL);
-        break;
-    default:
-        b->Enable(true);
-        break;
-    }
-    if (logIt)
-        logLine("  %s: enabled %d, state %d; now enabled %d, state %d", name, enabledBefore,
-                stateBefore, buttonEnabled(b), buttonState(b));
+    b->Enable(true);
+    b->ChangeButtonState(paf::ui::ButtonBase::ST_BTN_NORMAL);
 }
 
-void applyLookToAll(int logIt) {
-    applyLook(g_rew, "previous", logIt);
-    applyLook(g_play, "play/pause", logIt);
-    applyLook(g_ff, "next", logIt);
-    if (g_look == QM_LOOK_LIT) lightAll(logIt);
+void switchOnAll() {
+    switchOn(g_rew);
+    switchOn(g_play);
+    switchOn(g_ff);
+    lightAll();
 }
 
-// While the row is ours: a button SceShell has switched off again since, as
-// its own set-up of the row may do after ours, is switched on again, and the
-// first few times logged. true when it changed anything.
+// While the row is ours: a button SceShell has switched off or dimmed again
+// since, as its own set-up of the row may do after ours, is switched on
+// again. true when it changed anything.
 bool watchButtons() {
-    if (!g_layoutOk || g_look == QM_LOOK_AS_ELEVENMPVA) return false;
+    if (!g_layoutOk) return false;
     paf::ui::Widget* const buttons[3] = {g_rew, g_play, g_ff};
-    const char* const names[3] = {"previous", "play/pause", "next"};
     bool changed = false;
     for (int i = 0; i < 3; i++) {
         paf::ui::ButtonBase* b = static_cast<paf::ui::ButtonBase*>(buttons[i]);
         // State 1 is dimmed; 2 to 4 are a press under way, left alone.
-        const bool normalToo = g_look == QM_LOOK_ENABLE_NORMAL || g_look == QM_LOOK_LIT;
-        if (buttonEnabled(b) == 1 && (!normalToo || buttonState(b) != 1)) continue;
-        const int logIt = g_revertsLogged < 6;
-        if (logIt) {
-            g_revertsLogged++;
-            logLine("row: %s found switched off again (enabled %d, state %d)", names[i],
-                    buttonEnabled(b), buttonState(b));
-        }
-        applyLook(buttons[i], names[i], logIt);
+        if (buttonEnabled(b) == 1 && buttonState(b) != 1) continue;
+        switchOn(buttons[i]);
         changed = true;
     }
     return changed;
@@ -971,14 +795,6 @@ bool keepTexts() {
         hashText((const uint16_t*)bottom.c_str()) == g_bottomHash && topColor == 0xFFFFFFFF &&
         bottomColor == 0xFFFFFFFF)
         return false;
-    if (!newSong && g_textsLogged < 6) {
-        g_textsLogged++;
-        char a[48], b[48];
-        toLog((const uint16_t*)top.c_str(), a, sizeof(a));
-        toLog((const uint16_t*)bottom.c_str(), b, sizeof(b));
-        logLine("row: lines found changed (\"%s\", color %08X; \"%s\", color %08X): set again", a,
-                (unsigned)topColor, b, (unsigned)bottomColor);
-    }
     setTexts();
     return true;
 }
@@ -995,266 +811,20 @@ void checkLayout(paf::ui::Widget* play) {
     if (siblings > 0 && siblings <= 64)
         for (int i = 0; i < siblings && !found; i++) found = parent->GetChild(i) == play;
     g_layoutOk = found;
-    if (found)
-        logLine("row: widget layout as the headers have it (play button among %d children)",
-                siblings);
-    else
+    if (!found)
         logLine("row: the play button reports id 0x%08X and its parent %p has %d children: "
                 "the widget layout is not the headers', so nothing is read from it",
                 (unsigned)id, (void*)parent, siblings);
 }
 
-// ── The row over time, for the log ──────────────────────────────────────────
-// For the first kTimelineOpens opens of a boot: the widgets of the Music row
-// and of its heading as the quick menu opens, then whatever changes in them,
-// ten times a second for kTimelineUs. What this plugin changes is logged as
-// it does it and not again here, so these are SceShell's changes: its set-up
-// of the row, and what it puts back of what this plugin did. With the row
-// SceShell's, they are the look it gives the row itself: faded with no music
-// of its own, lit with its Music app playing.
-const int kTimelineOpens = 12;
-const SceUInt64 kTimelineUs = 3000000;
-const int kSnapMax = 24;
-
-struct Snap {
-    paf::ui::Widget* w;
-    const char* type;
-    uint32_t hash;
-    uint32_t state;  // Widget::STATE_*
-    uint32_t color;
-    int show, showSum, meta, metaSum;  // per cent: its own, then times its parents'
-    int activated;
-    int width, height;
-    int enabled, btnState;  // -1 if not a button
-    uint32_t disableColor;  // a button's colour for dimmed, 0 for none
-    uint32_t ownAlpha;      // its own alpha's bits (WidgetPeek::ownAlpha)
-    const void* tex;
-    int texWidth, texHeight;
-    int isText;
-    uint32_t textHash;
-    char text[40];
-    const void* draw;  // its first draw object, and that one's colour, size, class and shader
-    uint32_t drawColor;
-    int drawWidth, drawHeight;
-    const void* drawClass;
-    const void* shader;
-    const void* moreTex[3];  // a plane's or plane button's textures in slots 1 to 3
-    int moreWidth[3], moreHeight[3];
-};
-Snap g_snaps[kSnapMax], g_next[kSnapMax];
-
-void snapWidget(paf::ui::Widget* w, Snap* s) {
-    sceClibMemset(s, 0, sizeof(*s));
-    s->w = w;
-    s->type = w->GetTypeName();
-    s->hash = w->GetName().GetIDHash();
-    s->state = WidgetPeek::state(w);
-    s->color = w->GetColor32();
-    s->show = percent(w->GetShowAlpha());
-    s->showSum = percent(WidgetPeek::showSum(w));
-    s->meta = percent(w->GetMetaAlpha());
-    s->metaSum = percent(WidgetPeek::metaSum(w));
-    s->activated = WidgetPeek::activated(w);
-    s->ownAlpha = WidgetPeek::ownAlphaRaw(w);
-    s->width = coord(WidgetPeek::size(w), 0);
-    s->height = coord(WidgetPeek::size(w), 1);
-    s->enabled = s->btnState = -1;
-    paf::graph::DrawObj* d = w->GetDrawObj(0);
-    if (d) {
-        s->draw = d;
-        s->drawColor = DrawPeek::color(d);
-        s->drawWidth = DrawPeek::size(d, 0);
-        s->drawHeight = DrawPeek::size(d, 1);
-        s->drawClass = DrawPeek::vtable(d);
-        s->shader = DrawPeek::shader(d);
-    }
-    if (isA(w, paf::ui::Text::TypeName())) {
-        paf::wstring str;
-        w->GetString(str);
-        s->isText = 1;
-        s->textHash = hashText((const uint16_t*)str.c_str());
-        toLog((const uint16_t*)str.c_str(), s->text, sizeof(s->text));
-        return;
-    }
-    const bool button = isA(w, paf::ui::ButtonBase::TypeName());
-    if (button) {
-        paf::ui::ButtonBase* b = static_cast<paf::ui::ButtonBase*>(w);
-        s->enabled = b->IsEnable();
-        s->btnState = ButtonPeek::state(b);
-        const paf::math::v4* dimmed = b->GetDisableColor();
-        s->disableColor = dimmed ? argb(*dimmed) : 0;
-    }
-    // Planes and app icons by their type's name: Plane::TypeName, which
-    // IsInherit would want, is an import the plugin does without.
-    const bool plane = startsWith(s->type, "plane");
-    if (button || plane || startsWith(s->type, "app_icon"))
-        textureOf(w, 0, &s->tex, &s->texWidth, &s->texHeight);
-    // A plane's draw object has four texture slots (PlaneObj); none of the
-    // row's had a second one in build 2025.
-    if (plane)
-        for (int i = 0; i < 3; i++)
-            textureOf(w, i + 1, &s->moreTex[i], &s->moreWidth[i], &s->moreHeight[i]);
-}
-
-// The children of the heading's group and of the row's, as they are now.
-int snapAll(Snap* out) {
-    int n = 0;
-    paf::ui::Widget* const groups[2] = {g_headingGroup, g_rowGroup};
-    for (int g = 0; g < 2; g++) {
-        paf::ui::Widget* group = groups[g];
-        const int children = group ? group->GetChildrenNum() : 0;
-        for (int i = 0; i < children && i < 16 && n < kSnapMax; i++) {
-            paf::ui::Widget* w = group->GetChild(i);
-            if (w) snapWidget(w, &out[n++]);
-        }
-    }
-    return n;
-}
-
-// A widget's own alpha for the log, if it is not 1: as a per cent, or its bits
-// if it is not a float from 0 to 1.
-void addOwnAlpha(Line& l, uint32_t raw) {
-    float f;
-    sceClibMemcpy(&f, &raw, sizeof(f));
-    if (f >= 0.0f && f <= 1.0f) l.add(", own alpha %d%%", percent(f));
-    else l.add(", own alpha field %08X", (unsigned)raw);
-}
-
-void logSnap(const char* when, const Snap& s) {
-    Line l;
-    if (s.ownAlpha != 0x3F800000) addOwnAlpha(l, s.ownAlpha);
-    if (s.enabled >= 0) {
-        l.add(", button enabled %d state %d", s.enabled, s.btnState);
-        if (s.disableColor) l.add(", dimmed color %08X", (unsigned)s.disableColor);
-    }
-    if (s.tex) l.add(", texture %p %dx%d", s.tex, s.texWidth, s.texHeight);
-    for (int i = 0; i < 3; i++)
-        if (s.moreTex[i])
-            l.add(", slot %d %p %dx%d", i + 1, s.moreTex[i], s.moreWidth[i], s.moreHeight[i]);
-    if (s.draw)
-        l.add(", drawn %08X %dx%d by %p, shader %p", (unsigned)s.drawColor, s.drawWidth,
-              s.drawHeight, s.drawClass, s.shader);
-    if (s.isText) l.add(", text \"%s\"", s.text);
-    logLine("%s %s 0x%08X at %p: state %u, color %08X, show %d%%/%d%%, meta %d%%/%d%%%s, "
-            "size %dx%d%s",
-            when, s.type, (unsigned)s.hash, (void*)s.w, (unsigned)s.state, (unsigned)s.color,
-            s.show, s.showSum, s.meta, s.metaSum, s.activated ? "" : ", off", s.width, s.height,
-            l.buf);
-}
-
-void logChange(int ms, const Snap& was, const Snap& now) {
-    Line l;
-    if (was.state != now.state) l.add(", state %u", (unsigned)now.state);
-    if (was.color != now.color) l.add(", color %08X", (unsigned)now.color);
-    if (was.show != now.show || was.showSum != now.showSum)
-        l.add(", show %d%%/%d%%", now.show, now.showSum);
-    if (was.meta != now.meta || was.metaSum != now.metaSum)
-        l.add(", meta %d%%/%d%%", now.meta, now.metaSum);
-    if (was.ownAlpha != now.ownAlpha) addOwnAlpha(l, now.ownAlpha);
-    if (was.activated != now.activated) l.add(", %s", now.activated ? "on" : "off");
-    if (was.width != now.width || was.height != now.height)
-        l.add(", size %dx%d", now.width, now.height);
-    if (was.enabled != now.enabled || was.btnState != now.btnState)
-        l.add(", button enabled %d state %d", now.enabled, now.btnState);
-    if (was.disableColor != now.disableColor)
-        l.add(", dimmed color %08X", (unsigned)now.disableColor);
-    if (was.tex != now.tex || was.texWidth != now.texWidth || was.texHeight != now.texHeight)
-        l.add(", texture %p %dx%d", now.tex, now.texWidth, now.texHeight);
-    for (int i = 0; i < 3; i++)
-        if (was.moreTex[i] != now.moreTex[i])
-            l.add(", slot %d %p %dx%d", i + 1, now.moreTex[i], now.moreWidth[i],
-                  now.moreHeight[i]);
-    if (was.draw != now.draw || was.drawColor != now.drawColor ||
-        was.drawWidth != now.drawWidth || was.drawHeight != now.drawHeight ||
-        was.drawClass != now.drawClass || was.shader != now.shader)
-        l.add(", drawn %08X %dx%d by %p, shader %p", (unsigned)now.drawColor, now.drawWidth,
-              now.drawHeight, now.drawClass, now.shader);
-    if (was.textHash != now.textHash) l.add(", text \"%s\"", now.text);
-    if (l.n) logLine("+%d ms %s 0x%08X%s", ms, now.type, (unsigned)now.hash, l.buf);
-}
-
-// Ten times a second while the quick menu is open, the row found this tick.
-void timelineTick(SceUInt64 now, bool found) {
-    if (!g_timeline || !found) return;
-    const int ms = msOpen(now);
-    if (now - g_openedUs > kTimelineUs) {
-        logLine("+%d ms row: changes no longer logged this time", ms);
-        g_timeline = 0;
-        return;
-    }
-    if (!g_layoutChecked) checkLayout(g_play);
-    if (!g_layoutOk) {
-        g_timeline = 0;
-        return;
-    }
-    paf::ui::Widget* heading = find(kHashHeading);
-    paf::ui::Widget* rowGroup = g_play->GetParent();
-    paf::ui::Widget* headingGroup = heading ? heading->GetParent() : NULL;
-    if (!g_snapCount || rowGroup != g_rowGroup || headingGroup != g_headingGroup) {
-        g_rowGroup = rowGroup;
-        g_headingGroup = headingGroup;
-        g_snapCount = snapAll(g_snaps);
-        // SceShell's own row with its play button on has its own music in it:
-        // the lit look the plugin is after.
-        if (!g_active && static_cast<paf::ui::ButtonBase*>(g_play)->IsEnable()) {
-            g_sawLitRow = 1;
-            logLine("+%d ms row: SceShell's own, lit: its own music is in it", ms);
-        }
-        // The groups' places tell whether SceShell keeps the row from one
-        // open to the next or makes it anew.
-        logLine("+%d ms row: %d widgets, %s (groups at %p and %p)", ms, g_snapCount,
-                g_active ? (g_applied ? "the row ours" : "the row to be ours")
-                         : "the row SceShell's",
-                (void*)g_headingGroup, (void*)g_rowGroup);
-        for (int i = 0; i < g_snapCount; i++) logSnap(" ", g_snaps[i]);
-        return;
-    }
-    const int n = snapAll(g_next);
-    for (int i = 0; i < n; i++) {
-        int j = 0;
-        while (j < g_snapCount && g_snaps[j].w != g_next[i].w) j++;
-        if (j < g_snapCount) {
-            logChange(ms, g_snaps[j], g_next[i]);
-        } else {
-            char when[24];
-            sceClibSnprintf(when, sizeof(when), "+%d ms new:", ms);
-            logSnap(when, g_next[i]);
-        }
-    }
-    for (int j = 0; j < g_snapCount; j++) {
-        int i = 0;
-        while (i < n && g_next[i].w != g_snaps[j].w) i++;
-        if (i == n) logLine("+%d ms gone: %s 0x%08X", ms, g_snaps[j].type, (unsigned)g_snaps[j].hash);
-    }
-    sceClibMemcpy(g_snaps, g_next, sizeof(Snap) * n);
-    g_snapCount = n;
-}
-
-// What this plugin has just changed, taken in without logging it again.
-void timelineQuiet() {
-    if (g_timeline && g_rowGroup) g_snapCount = snapAll(g_snaps);
-}
-
 // ── Taking, keeping and giving back the row ─────────────────────────────────
-// Takes the row, the quick menu having been open kTakeAfterUs. true when
-// taken.
-bool takeRow(SceUInt64 now, bool found) {
-    if (!found) {
-        // Another of SceShell's overlays, such as the LiveArea's, reads as the
-        // quick menu open too.
-        if (++g_findTries == 30) logLine("row: its buttons not found in 3 s: not the quick menu");
-        return false;
-    }
+// Takes the row, the quick menu having been open kTakeAfterUs. Another of
+// SceShell's overlays, such as the LiveArea's, reads as the quick menu open
+// too, with no row's buttons to be found. true when taken.
+bool takeRow(bool found) {
+    if (!found) return false;
     if (!g_layoutChecked) checkLayout(g_play);
-    const int logIt = g_takesLogged < 3 || g_lookLogged != g_look;
-    if (logIt) {
-        g_takesLogged++;
-        g_lookLogged = g_look;
-        logLine("row: taking it %d ms after the quick menu opened, on %s's thread, buttons "
-                "switched on with %s",
-                msOpen(now), g_fallback ? "the plugin" : "SceShell's UI", lookName(g_look));
-    }
-    applyLookToAll(logIt);
+    switchOnAll();
     holdPlayTextures();
     showPlaying(g_playing == 1);
     g_rew->SetEventCallback(paf::ui::ButtonBase::CB_BTN_DECIDE, onPress,
@@ -1266,10 +836,6 @@ bool takeRow(SceUInt64 now, bool found) {
     setTexts();
     showArt();
     g_applied = 1;
-    if (logIt)
-        logLine("row: taken for %s%s%s", ownerName(g_owner),
-                g_textTop ? "" : " (no text lines found)",
-                g_iconRew && g_iconPlay && g_iconFf ? "" : " (not all icons found)");
     return true;
 }
 
@@ -1281,42 +847,35 @@ bool keepRow() {
     changed |= keepTexts();
     changed |= showPlaying(g_playing == 1);
     changed |= showArt();
-    if (g_look == QM_LOOK_LIT) {
-        const int logIt = g_dimsLogged < 6;
-        if (lightAll(logIt)) {
-            changed = true;
-            if (logIt) g_dimsLogged++;
-        }
-    }
+    changed |= lightAll();
     return changed;
 }
 
 // The row given back with the quick menu open: it is left as SceShell's own
 // set-up had it with no music of its own (build 2023's log): the lines empty,
 // the buttons off and faded, play showing ▶ and the heading its own icon.
-void releaseRow(const char* why) {
-    unlightAll(why);
+void releaseRow() {
+    unlightAll();
     if (g_pauseShown) showPlaying(false);
-    showOwnIcon(why);
+    showOwnIcon();
     const paf::wstring empty;
     if (g_textTop) g_textTop->SetString(empty);
     if (g_textBottom) g_textBottom->SetString(empty);
     paf::ui::Widget* const buttons[3] = {g_rew, g_play, g_ff};
     for (int i = 0; i < 3; i++) static_cast<paf::ui::ButtonBase*>(buttons[i])->Enable(false);
     g_applied = 0;
-    logLine("row: left as SceShell had it: lines empty, buttons off");
 }
 
 // The row SceShell's, with something of the plugin's left on it since it was
 // last ours. true when it changed anything.
 bool restoreRow() {
     if (!g_litCount && !g_pauseShown && !g_artShown) return false;
-    unlightAll("the row SceShell's");
+    unlightAll();
     // Its play icon is put back only with the button off: with it on,
     // SceShell's own music is in the row, and ⏸ may be SceShell's.
     if (g_pauseShown && !static_cast<paf::ui::ButtonBase*>(g_play)->IsEnable()) showPlaying(false);
     g_pauseShown = 0;
-    if (g_artShown) showOwnIcon("the row SceShell's");
+    if (g_artShown) showOwnIcon();
     return true;
 }
 
@@ -1328,10 +887,6 @@ void rowTick(SceUInt64 now) {
         // Opened since the last tick: what was kept of the last open goes.
         g_tickOpenSerial = g_openSerial;
         g_applied = 0;
-        g_findTries = 0;
-        g_rowGroup = g_headingGroup = NULL;
-        g_snapCount = 0;
-        g_timeline = g_timelineDue;
         g_lastTickUs = 0;
     }
     if (!g_open) {
@@ -1342,30 +897,22 @@ void rowTick(SceUInt64 now) {
     g_lastTickUs = now;
     const bool found = findRow();
     if (!found) g_applied = 0;  // a row SceShell has done away with is not ours
-    timelineTick(now, found);
-    bool changed = false;
     if (g_releaseDue) {
         g_releaseDue = 0;
-        if (g_applied) {
-            releaseRow("given back");
-            changed = true;
-        }
+        if (g_applied) releaseRow();
     }
     if (g_active && !g_applied && now - g_openedUs >= kTakeAfterUs)
-        changed |= takeRow(now, found);
+        takeRow(found);
     else if (g_active && g_applied)
-        changed |= keepRow();
+        keepRow();
     else if (!g_active && found)
-        changed |= restoreRow();
-    if (changed) timelineQuiet();
+        restoreRow();
 }
 
 // PAF's main thread call list's: SceShell's UI thread, each time round its
 // loop. It never waits for the plugin's lock, so SceShell is never held up.
 void mainTick(void* data) {
     (void)data;
-    if (!g_mainTicks) logLine("SceShell's UI thread ticks the row (thread 0x%08X)",
-                              (unsigned)sceKernelGetThreadId());
     g_mainTicks++;
     if (g_fallback) return;
     if (sceKernelTryLockMutex(g_lock, 1) < 0) return;
@@ -1374,11 +921,11 @@ void mainTick(void* data) {
 }
 
 // ── SceShell's music service ────────────────────────────────────────────────
-// The background player played through SceShell's music service from a
-// process of its own, which the system ended as an app with extended memory
-// started. Code in SceShell drives the same service (build 2032's test,
-// docs/DESIGN_NOTES.md), so the queue is played from here once VitaPlex BG
-// has gone (qm_protocol.h). The service's client object (sceShellSvcGetSvcObj)
+// VitaPlex's background player, up to build 2045, played through SceShell's
+// music service from a process of its own, which the system ended as an app
+// with extended memory started. Code in SceShell drives the same service
+// (build 2032's test, docs/DESIGN_NOTES.md), so the queue is played from here
+// once VitaPlex has gone (qm_protocol.h). The service's client object (sceShellSvcGetSvcObj)
 // is found with taiHEN, so that the plugin does not import it and takes
 // whatever SceShell has: in build 2032 SceShell's own module SceShellSvc had
 // it. It is spoken to with libShellAudio's calls (lib/libshellaudio), as the
@@ -1410,9 +957,6 @@ struct SvcTracking {
 };
 
 GetSvcObj g_getSvcObj;
-char g_musicPath[256];   // the file the test plays; under g_lock
-int g_musicTestDue;      // a test asked for, not yet begun; under g_lock
-int g_musicBusy;         // a test runs, or is asked for
 int g_musicThread;       // its thread started
 
 void setArg(SvcParams* a, int i, const void* p, uint32_t size) {
@@ -1522,8 +1066,6 @@ bool findSvcObj(const char* who) {
     uintptr_t fn = 0;
     const char* name = "";
     int rc = findGetSvcObj(&fn, &name);
-    logLine("%s: sceShellSvcGetSvcObj in SceShell already: 0x%08X%s%s", who, (unsigned)rc,
-            rc >= 0 ? ", in module " : "", rc >= 0 ? name : "");
     if (rc < 0) {
         int status = 0;
         const SceUID mod = sceKernelLoadStartModule(kShellSvcPath, 0, NULL, 0, NULL, &status);
@@ -1540,89 +1082,13 @@ bool findSvcObj(const char* who) {
     return true;
 }
 
-// ── Playing a file from inside SceShell (a test) ────────────────────────────
-// QM_CMD_MUSIC_TEST: the first thing the queue needed here, tried on its own.
-// Every code logged, each line with "music test:" in it.
-
-// Watches the service's clock for `seconds`, logging what changes. true when
-// it ran on by 2 s or more, counting only the small steps between readings,
-// not a jump to where an earlier song left it; with `untilMoving`, it stops
-// watching then.
-bool watchMusic(int seconds, bool untilMoving) {
-    int lastState = -1000, havePrev = 0;
-    uint32_t prev = 0, ran = 0, lastSecond = 0xFFFFFFFF;
-    bool moved = false;
-    for (int i = 0; i < seconds * 4; i++) {
-        int state = 0;
-        uint32_t timeMs = 0;
-        const int rc = musicStatus(&state, &timeMs);
-        if (rc < 0) {
-            logLine("music test: status: 0x%08X", (unsigned)rc);
-        } else {
-            if (havePrev && timeMs > prev && timeMs - prev < 1000) ran += timeMs - prev;
-            prev = timeMs;
-            havePrev = 1;
-            if (state != lastState || timeMs / 1000 != lastSecond)
-                logLine("music test: state %d, at %u.%u s", state, (unsigned)(timeMs / 1000),
-                        (unsigned)((timeMs % 1000) / 100));
-            lastState = state;
-            lastSecond = timeMs / 1000;
-            if (ran >= 2000) moved = true;
-        }
-        if (untilMoving && moved) break;
-        sceKernelDelayThread(250 * 1000);
-    }
-    return moved;
-}
-
-void musicTest(const char* path) {
-    logLine("music test: %s, from inside SceShell", path);
-    if (!findSvcObj("music test")) {
-        logLine("music test: done: no client for SceShell's music service");
-        return;
-    }
-    void* obj = g_getSvcObj();
-    logLine("music test: client object %p, its methods at %p", obj,
-            obj ? *(void* const*)obj : NULL);
-    if (!obj) {
-        logLine("music test: done: no client object");
-        return;
-    }
-    const int rcStart = musicTracked(0x30000);
-    logLine("music test: start the music player service (type 0): 0x%08X", (unsigned)rcStart);
-    if (rcStart < 0) {
-        logLine("music test: done: the service would not start");
-        return;
-    }
-    const int rcStop = musicEvent(kEventStop), rcOpen = musicOpen(path),
-              rcPlay = musicEvent(kEventPlay);
-    const SceUInt64 playAt = sceKernelGetSystemTimeWide();
-    logLine("music test: stop 0x%08X, open 0x%08X, play 0x%08X", (unsigned)rcStop,
-            (unsigned)rcOpen, (unsigned)rcPlay);
-    const bool played = watchMusic(8, true);
-    if (played) {
-        // In 32 bits, as msOpen: the test is over in well under 71 minutes.
-        const int left = QM_MUSIC_TEST_S -
-                         (int)((uint32_t)(sceKernelGetSystemTimeWide() - playAt) / 1000000u);
-        logLine("music test: playing; on for %d s more", left);
-        watchMusic(left, false);
-    }
-    const int rcEnd = musicEvent(kEventStop), rcFinish = musicTracked(0x30001);
-    logLine("music test: stop 0x%08X, end the service 0x%08X", (unsigned)rcEnd,
-            (unsigned)rcFinish);
-    logLine("music test: done: %s", played ? "SceShell played it" : "its clock never moved");
-}
-
-// ── Fetching from inside SceShell (a test) ──────────────────────────────────
-// QM_CMD_HTTP_TEST: what SceShell needs to fetch the queue's songs that are
-// not on the memory card, tried on its own. Sony's SSL and HTTP libraries, as
-// SceShell has them, are found with taiHEN as the music service is: imported,
-// a library SceShell did not have would keep the whole plugin out. What holds
-// for all of SceShell is left as it is: the TLS options and certificates, and
-// the libraries' start, ended only when this test began them. On a thread of
-// its own with a 64 KB stack, which it measures, so that the fetching to come
-// knows whether the music thread's 32 KB would do. Every code logged, each
-// line with "http test:" in it; the token goes as a header, never logged.
+// ── Sony's SSL and HTTP libraries, as SceShell has them ─────────────────────
+// What SceShell fetches the queue's songs that are not on the memory card
+// with (build 2040's test found them working there). Found with taiHEN as the
+// music service is: imported, a library SceShell did not have would keep the
+// whole plugin out. What holds for all of SceShell is left as it is: the TLS
+// options and certificates, and the libraries' start, ended only when the
+// plugin began them. The token goes as a header, never logged.
 struct LibFn {
     const char* name;
     uint32_t nid;
@@ -1696,19 +1162,8 @@ const int kHttpGet = 0;                          // SCE_HTTP_METHOD_GET
 const unsigned kHeaderOverwrite = 0;             // SCE_HTTP_HEADER_OVERWRITE
 const int kHttpAlreadyInited = (int)0x80431020;  // SCE_HTTP_ERROR_ALREADY_INITED
 const int kSslAlreadyInited = (int)0x80435020;   // what SceShell's gave (build 2040)
-// The pools, should this test be what starts the libraries.
+// The pools, should the plugin be what starts the libraries.
 const unsigned kSslPool = 256 * 1024, kHttpPool = 64 * 1024;
-const char* const kHttpTestFile = "ux0:data/VitaPlex/qm-http-test.bin";
-const int kHttpStack = 0x10000;
-const uint32_t kPaintBytes = 40 * 1024;  // of it painted, below where the thread begins
-const uint32_t kPaint = 0x56504C58;
-
-// From QM_CMD_HTTP_TEST: set under g_lock while g_httpBusy is 0, then the
-// test thread's until it sets it back.
-char g_httpBase[256], g_httpPath[256], g_httpToken[256];
-uint32_t g_httpBytes;
-int g_httpBusy;
-uint8_t g_httpBuf[8192];  // the test thread's
 
 // A library's functions, from SceShell's module of it, else from its file
 // loaded into SceShell now. `who` begins each line it logs. true when every
@@ -1717,7 +1172,6 @@ bool findLibrary(const char* who, const char* module, uint32_t libnid, const cha
                  LibFn* fns, int count) {
     uintptr_t fn = 0;
     int rc = vitaplexQmGetModuleExportFunc(module, libnid, fns[0].nid, &fn);
-    logLine("%s: %s in SceShell already: 0x%08X", who, module, (unsigned)rc);
     if (rc < 0) {
         int status = 0;
         const SceUID mod = sceKernelLoadStartModule(path, 0, NULL, 0, NULL, &status);
@@ -1747,34 +1201,28 @@ bool findLibraries(const char* who) {
 }
 
 // Both libraries started, unless SceShell has started them: their starts'
-// codes, which say what is to be ended after (httpEnd). Logged always, or
-// only when SceShell had not started them. true when the HTTP library can be
-// used.
-bool httpStart(const char* who, const char* what, bool always, int* rcSsl, int* rcHttp) {
+// codes, which say what is to be ended after (httpEnd). A start that failed
+// otherwise than as begun already is logged. true when the HTTP library can
+// be used.
+bool httpStart(const char* who, int* rcSsl, int* rcHttp) {
     *rcSsl = ((FnUnsigned)g_ssl[kSslInit].fn)(kSslPool);
-    if (always || *rcSsl != kSslAlreadyInited)
-        logLine("%s: SSL library started: 0x%08X%s%s", who, (unsigned)*rcSsl,
-                *rcSsl >= 0 ? ", here, for this " : "", *rcSsl >= 0 ? what : "");
+    if (*rcSsl < 0 && *rcSsl != kSslAlreadyInited)
+        logLine("%s: SSL library not started: 0x%08X", who, (unsigned)*rcSsl);
     *rcHttp = httpFn<FnUnsigned>(kHttpInit)(kHttpPool);
-    if (always || *rcHttp != kHttpAlreadyInited)
-        logLine("%s: HTTP library started: 0x%08X%s%s", who, (unsigned)*rcHttp,
-                *rcHttp >= 0                    ? ", here, for this "
-                : *rcHttp == kHttpAlreadyInited ? ", SceShell's already"
-                                                : "",
-                *rcHttp >= 0 ? what : "");
+    if (*rcHttp < 0 && *rcHttp != kHttpAlreadyInited)
+        logLine("%s: HTTP library not started: 0x%08X", who, (unsigned)*rcHttp);
     return *rcHttp >= 0 || *rcHttp == kHttpAlreadyInited;
 }
 
 // What httpStart started, ended.
-void httpEnd(const char* who, int rcSsl, int rcHttp) {
-    if (rcHttp >= 0)
-        logLine("%s: HTTP library ended: 0x%08X", who, (unsigned)httpFn<FnVoid>(kHttpTerm)());
-    if (rcSsl >= 0)
-        logLine("%s: SSL library ended: 0x%08X", who, (unsigned)((FnVoid)g_ssl[kSslTerm].fn)());
+void httpEnd(int rcSsl, int rcHttp) {
+    if (rcHttp >= 0) httpFn<FnVoid>(kHttpTerm)();
+    if (rcSsl >= 0) ((FnVoid)g_ssl[kSslTerm].fn)();
 }
 
-// A template with the time-outs the test found to do: 5 s to resolve and to
-// connect, 10 s to send and to receive. Its id, or the code it failed with.
+// A template with the time-outs build 2040's test found to do: 5 s to resolve
+// and to connect, 10 s to send and to receive. Its id, or the code it failed
+// with.
 int httpTemplate(const char* who) {
     const int tmpl = httpFn<FnTemplate>(kHttpCreateTemplate)("VitaPlex (SceShell)", kHttpVersion11, 1);
     if (tmpl < 0) {
@@ -1851,150 +1299,21 @@ int httpOpen(int tmpl, const char* who, const char* what, const char* url, const
     return 0;
 }
 
-// One GET of url with the template tmpl, `what` naming it in the log: the
-// token as a header when given, and only the first `bytes` asked for and read
-// when non-0, the body written to kHttpTestFile when `save`. The status code,
-// or the code of the call that failed (< 0); the body's size in *got.
-int httpGet(int tmpl, const char* what, const char* url, const char* token, uint32_t bytes,
-            bool save, uint32_t* got) {
-    *got = 0;
-    char range[32];
-    if (bytes) sceClibSnprintf(range, sizeof(range), "bytes=0-%u", (unsigned)(bytes - 1));
-    const SceUInt64 t0 = sceKernelGetSystemTimeWide();
-    int conn, req;
-    const int rc = httpOpen(tmpl, "http test", what, url, token, bytes ? range : NULL, &conn, &req);
-    if (rc < 0) return rc;
-    int status = 0;
-    unsigned long long length = 0;
-    const int rcStatus = httpFn<FnStatus>(kHttpStatus)(req, &status);
-    const int rcLength = httpFn<FnLength>(kHttpLength)(req, &length);
-    const SceUID fd =
-        save ? sceIoOpen(kHttpTestFile, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666) : -1;
-    uint8_t first[8];
-    sceClibMemset(first, 0, sizeof(first));
-    int rcRead = 0, rcWrite = 0;
-    for (;;) {
-        uint32_t want = sizeof(g_httpBuf);
-        if (bytes && bytes - *got < want) want = bytes - *got;
-        if (want == 0) break;
-        rcRead = httpFn<FnRead>(kHttpRead)(req, g_httpBuf, want);
-        if (rcRead <= 0) break;
-        if (*got == 0) sceClibMemcpy(first, g_httpBuf, rcRead < 8 ? rcRead : 8);
-        if (fd >= 0 && rcWrite >= 0) {
-            const int w = sceIoWrite(fd, g_httpBuf, (SceSize)rcRead);
-            if (w != rcRead) rcWrite = w < 0 ? w : -1;
-        }
-        *got += (uint32_t)rcRead;
-    }
-    if (fd >= 0) sceIoClose(fd);
-    httpClose(conn, req);
-    // In 32 bits, as msOpen: a test is over in well under 71 minutes.
-    const uint32_t ms = (uint32_t)(sceKernelGetSystemTimeWide() - t0) / 1000u;
-    char len[24];
-    if (rcLength < 0)
-        sceClibSnprintf(len, sizeof(len), "none (0x%08X)", (unsigned)rcLength);
-    else if (length >> 32)
-        sceClibSnprintf(len, sizeof(len), "4 GB or more");
-    else
-        sceClibSnprintf(len, sizeof(len), "%u", (unsigned)length);
-    logLine("http test: %s: status %d (0x%08X), length %s; %u bytes in %u ms, %u KB/s, "
-            "the last read 0x%08X",
-            what, status, (unsigned)rcStatus, len, (unsigned)*got, (unsigned)ms,
-            (unsigned)(*got / (ms ? ms : 1)), (unsigned)rcRead);
-    if (save)
-        logLine("http test: %s: written to %s: %s (0x%08X), its first bytes %02X %02X %02X "
-                "%02X %02X %02X %02X %02X",
-                what, kHttpTestFile, fd < 0 || rcWrite < 0 ? "no" : "yes",
-                (unsigned)(fd < 0 ? fd : rcWrite), first[0], first[1], first[2], first[3],
-                first[4], first[5], first[6], first[7]);
-    return rcStatus < 0 ? rcStatus : status;
-}
-
-// The test: base's /identity with no token, and over plain http too, then
-// the first `bytes` of the file at path with the token, only over the first
-// if its TLS held. What it came to.
-const char* httpTest(const char* base, const char* path, const char* token, uint32_t bytes) {
-    logLine("http test: %s, its /identity, then the first %u KB of %s, from inside SceShell",
-            base, (unsigned)(bytes / 1024), path);
-    if (!findLibraries("http test"))
-        return "Sony's SSL and HTTP libraries are not all there in SceShell";
-    // Begun here only if SceShell has not begun them, and then ended here.
-    int rcSsl, rcHttp;
-    const char* outcome = "the HTTP library would not start";
-    if (httpStart("http test", "test", true, &rcSsl, &rcHttp)) {
-        const int tmpl = httpTemplate("http test");
-        logLine("http test: template 0x%08X", (unsigned)tmpl);
-        outcome = "no template";
-        if (tmpl >= 0) {
-            static char url[600];
-            uint32_t got = 0;
-            sceClibSnprintf(url, sizeof(url), "%s/identity", base);
-            const int identity = httpGet(tmpl, "/identity", url, NULL, 0, false, &got);
-            if (startsWith(base, "https://")) {
-                sceClibSnprintf(url, sizeof(url), "http://%s/identity", base + 8);
-                httpGet(tmpl, "/identity over plain http", url, NULL, 0, false, &got);
-            }
-            if (identity != 200) {
-                outcome = "the server's /identity did not answer 200, so the token was not sent";
-            } else {
-                sceClibSnprintf(url, sizeof(url), "%s%s", base, path);
-                const int song = httpGet(tmpl, "the song", url, token, bytes, true, &got);
-                logLine("http test: %s removed: 0x%08X", kHttpTestFile,
-                        (unsigned)sceIoRemove(kHttpTestFile));
-                outcome = (song == 206 || song == 200) && got > 0 ? "SceShell fetched the song's start"
-                                                                  : "the song's start did not come";
-            }
-            logLine("http test: template deleted: 0x%08X",
-                    (unsigned)httpFn<FnId>(kHttpDeleteTemplate)(tmpl));
-        }
-    }
-    httpEnd("http test", rcSsl, rcHttp);
-    return outcome;
-}
-
-// The test's thread. The stack below where it begins is painted, and read
-// back after the test for how far down the test reached; nothing is called
-// as it is painted, so the frames painted over are none in use.
-#if defined(__arm__)
-#define READ_SP(sp) asm volatile("mov %0, sp" : "=r"(sp))
-#else  // the host test
-#define READ_SP(sp) asm volatile("mov %%rsp, %0" : "=r"(sp))
-#endif
-__attribute__((no_sanitize_address)) int httpThread(SceSize, void*) {
-    uintptr_t sp;
-    READ_SP(sp);
-    volatile uint32_t* const low = (volatile uint32_t*)((sp - 256 - kPaintBytes) & ~(uintptr_t)3);
-    volatile uint32_t* const high = (volatile uint32_t*)((sp - 256) & ~(uintptr_t)3);
-    for (volatile uint32_t* p = low; p < high; p++) *p = kPaint;
-    const char* outcome = httpTest(g_httpBase, g_httpPath, g_httpToken, g_httpBytes);
-    volatile uint32_t* p = low;
-    while (p < high && *p == kPaint) p++;
-    logLine("http test: its thread used %u KB of its %u KB stack%s",
-            (unsigned)((sp - (uintptr_t)p) / 1024), (unsigned)(kHttpStack / 1024),
-            p == low ? " or more, all that was measured" : "");
-    logLine("http test: done: %s", outcome);
-    lock();
-    sceClibMemset(g_httpToken, 0, sizeof(g_httpToken));
-    g_httpBusy = 0;
-    unlock();
-    return sceKernelExitDeleteThread(0);
-}
-
 // ── SceShell carries the queue on ───────────────────────────────────────────
-// (qm_protocol.h) VitaPlex BG hands its queue over as it goes: SceShell plays
-// it from the song and place VitaPlex BG had got to, and then the queue's
+// (qm_protocol.h) VitaPlex hands its queue over as it goes: SceShell plays
+// it from the song and place VitaPlex had got to, and then the queue's
 // next song, and the one after, from here. Everything comes from the files
-// VitaPlex BG keeps (bgplayer.h): the queue for the songs and their
-// downloads. The status is written as VitaPlex BG reads it, with
+// VitaPlex keeps (bgplayer.h): the queue for the songs and their
+// downloads. The status is written as VitaPlex reads it, with
 // "by=SceShell", so that it takes the music back where SceShell has got to.
 // The row is SceShell's meanwhile: the song's lines, its cover
 // (QM_SONG_COVER_FMT), and its buttons, which act on the music here. Its
 // lines in the log begin "carry on:". Up to build 2045 this carried on the
-// queue of VitaPlex BG's background player, a program of its own the system
-// ended as an app with extended memory opened, which VitaPlex BG no longer
-// has; the comments' player.c is its source, in the history.
+// queue of VitaPlex's background player, a program of its own the system
+// ended as an app with extended memory opened, which VitaPlex no longer has;
+// the comments' player.c is its source, in the history.
 const int kLookAhead = 20;        // songs looked at for the next on the card
-// Stopping: the place written and the music left, for VitaPlex BG to take
+// Stopping: the place written and the music left, for VitaPlex to take
 // back; the music left to a process that took the row, with nothing written;
 // something else in the shell, the status saying stopped; the queue played
 // out, or nothing more on the card: the service stopped and ended.
@@ -2004,7 +1323,7 @@ enum { kEndTakeBack = 1, kEndYield, kEndOther, kEndOver, kEndStopped };
 int g_carry;             // 2 while SceShell carries a queue on, else 0
 const char* g_carryStop; // why it is to stop, or NULL ...
 int g_carryStopHow;      // ... and how (kEnd*)
-int g_playQueueDue;      // VitaPlex BG has handed its queue over (QM_CMD_PLAY_QUEUE)
+int g_playQueueDue;      // VitaPlex has handed its queue over (QM_CMD_PLAY_QUEUE)
 uint32_t g_shellArts;    // kShellArt serials so far
 
 // The music thread's alone.
@@ -2015,6 +1334,7 @@ struct Track {
     char local[128];    // a download of it, or ""
     char thumb[128];    // its cover on the server (a path), or ""
     char title[192], artist[128], album[128];  // UTF-8, for the row
+    char cover[128];    // its download's cover, a PNG on the card, or ""
     char path[128];     // the file the shell is given
     int own;            // the player's (BGPLAYER_SONGS): removed once played
 };
@@ -2073,7 +1393,7 @@ struct Carry {
     Ring lost;         // songs the server has no file of for the shell
     Ring failedAhead;  // songs whose fetch failed ahead: fetched again only when next
     Ring coverTried;   // songs whose cover was asked for
-    // VitaPlex BG's song as it handed the queue over (-1 for none), and where
+    // VitaPlex's song as it handed the queue over (-1 for none), and where
     // in it: the shell is taken there once it plays (seekTo), and a seek to
     // there under way (0 for none), since when, and how many times asked.
     int startIndex;
@@ -2242,7 +1562,7 @@ struct QueueScan {
     int repeat;
     int start;          // the song to start with (index=), and where in it
     uint32_t startMs;
-    char file[128];     // that song as a file VitaPlex BG made ready (file=), or ""
+    char file[128];     // that song as a file VitaPlex made ready (file=), or ""
 };
 
 bool scanOpen(QueueScan* s) {
@@ -2326,6 +1646,7 @@ void parseTrack(const char* p, int index, Track* t) {
     field(&p, t->title, sizeof(t->title));
     field(&p, t->artist, sizeof(t->artist));
     field(&p, t->album, sizeof(t->album));
+    wholeField(&p, t->cover, sizeof(t->cover));
 }
 
 // The queue's song at index into *t. true when it is there.
@@ -2489,12 +1810,63 @@ void removeOwn(const Track* t) {
     logLine("carry on: song %d's file removed: 0x%08X", t->index + 1, (unsigned)rc);
 }
 
-// The row as t is: its lines, ⏸, and its cover if the player made one, or a
-// fetch here.
+// Where t's cover is on the card, into out: the one fetched or made for it
+// beside the songs (QM_SONG_COVER_FMT), else its download's, the PNG the
+// server made of it (BGPLAYER_TRACK_COVER). false when it has neither.
+bool coverPath(const Track* t, char* out, int cap) {
+    sceClibSnprintf(out, cap, QM_SONG_COVER_FMT, t->key);
+    if (exists(out)) return true;
+    char ext[8];
+    extOf(t->cover, ext, sizeof(ext));
+    if (!same(ext, "png") || !exists(t->cover)) return false;
+    sceClibSnprintf(out, cap, "%s", t->cover);
+    return true;
+}
+
+uint8_t g_copyBuf[4096];  // the music thread's
+
+// t's cover, if it has none on the card, as a copy of other's when the two
+// have one cover on the server, their album's: the songs of an album after
+// the first fetched the same 9190 bytes each, and showed none while their
+// files came (log 8e7a4b23). Written beside it first, as the fetch thread's
+// are, under a name of its own. The music thread's. true when t's is there.
+bool coverFrom(const Track* t, const Track* other) {
+    char to[160], from[160], part[168];
+    if (coverPath(t, to, sizeof(to))) return true;
+    if (!t->thumb[0] || !other->key[0] || same(other->key, t->key) ||
+        !same(other->thumb, t->thumb) || !coverPath(other, from, sizeof(from)))
+        return false;
+    sceClibSnprintf(to, sizeof(to), QM_SONG_COVER_FMT, t->key);
+    const SceUID in = sceIoOpen(from, SCE_O_RDONLY, 0);
+    if (in < 0) return false;
+    sceClibSnprintf(part, sizeof(part), "%s.copy", to);
+    const SceUID out = sceIoOpen(part, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+    bool ok = out >= 0;
+    uint32_t bytes = 0;
+    for (int n; ok && (n = sceIoRead(in, g_copyBuf, sizeof(g_copyBuf))) != 0;) {
+        ok = n > 0 && sceIoWrite(out, g_copyBuf, (SceSize)n) == n;
+        bytes += ok ? (uint32_t)n : 0;
+    }
+    sceIoClose(in);
+    if (out >= 0 && sceIoClose(out) < 0) ok = false;
+    ok = ok && bytes > 0;
+    if (ok) {
+        sceIoRemove(to);
+        ok = sceIoRename(part, to) >= 0;
+    }
+    if (!ok) {
+        sceIoRemove(part);
+        return false;
+    }
+    logLine("carry on: song %d's cover is song %d's, the same on the server", t->index + 1,
+            other->index + 1);
+    return true;
+}
+
+// The row as t is: its lines, ⏸, and its cover if it has one on the card.
 void showTrack(const Track* t) {
     char cover[160];
-    sceClibSnprintf(cover, sizeof(cover), QM_SONG_COVER_FMT, t->key);
-    const bool art = exists(cover);
+    const bool art = coverPath(t, cover, sizeof(cover));
     lock();
     fromUtf8(t->title, g_title, 256);
     fromUtf8(t->artist, g_artist, 256);
@@ -2512,15 +1884,14 @@ void showTrack(const Track* t) {
 // The row's cover, once t's has come, its lines and ⏸ left as they are.
 void showCover(const Track* t) {
     char cover[160];
-    sceClibSnprintf(cover, sizeof(cover), QM_SONG_COVER_FMT, t->key);
-    if (!exists(cover)) return;
+    if (!coverPath(t, cover, sizeof(cover))) return;
     lock();
     sceClibSnprintf(g_artPath, sizeof(g_artPath), "%s", cover);
     g_artSerial = kShellArt | (++g_shellArts & ~kShellArt);
     unlock();
 }
 
-// Where in t the shell is to begin: VitaPlex BG's place in the song it handed
+// Where in t the shell is to begin: VitaPlex's place in the song it handed
 // over, until the shell has been taken there; 0 for any other.
 uint32_t startAt(const Track* t) {
     return t->index == g_c.startIndex ? g_c.startAtMs : 0;
@@ -2531,15 +1902,17 @@ uint32_t startAt(const Track* t) {
 // VitaPlex's server, as the background player fetched one (player.c's
 // prepareSong): its file as the server has it, when the shell plays its
 // format, into the folder of songs (BGPLAYER_SONGS), then its cover for the
-// row (QM_SONG_COVER_FMT). Each goes once played. The song after the one with the shell is fetched while that one
-// plays; one wanted at once (that one ended first, or next was pressed) is
-// waited for, the shell stopped meanwhile. With nothing else to fetch, the
-// covers the row is to show come next, for the songs on the card too: this
-// song's, then the next one's. One fetch at a time, on a thread of its own,
-// through Sony's libraries as the test above finds them. The server comes
-// from VitaPlex's settings, and the token too, read for each fetch and wiped
-// after it. A song in a format the shell does not play, such as FLAC, comes
-// as the server's MP3 of it, behind a length header (fetchMp3).
+// row (QM_SONG_COVER_FMT). Each goes once played. The song after the one with
+// the shell is fetched while that one plays; one wanted at once (that one
+// ended first, or next was pressed) is waited for, the shell stopped
+// meanwhile. With nothing else to fetch, the covers the row is to show come
+// next, for the songs on the card too: this song's, then the next one's. A
+// download's own cover, or the one of the song before of the same album
+// (coverFrom), is never fetched. One fetch at a time, on a thread of its own,
+// through Sony's libraries as SceShell has them. The server comes from
+// VitaPlex's settings, and the token too, read for each fetch and wiped after
+// it. A song in a format the shell does not play, such as FLAC, comes as the
+// server's MP3 of it, behind a length header (fetchMp3).
 enum { kFetchIdle, kFetchRunning, kFetchDone, kFetchFailed };
 enum { kJobSong, kJobCover };  // a song's file and its cover, or its cover alone
 const int kFetchStack = 0x8000;
@@ -2732,9 +2105,9 @@ int fetchCover(int tmpl, const char* server, const char* token, const char* labe
     const Track* const t = &g_fetch.t;
     static char path[160], thumb[400];
     char* const part = g_fetchPart;
-    sceClibSnprintf(path, sizeof(path), QM_SONG_COVER_FMT, t->key);
-    if (exists(path)) return 1;
+    if (coverPath(t, path, sizeof(path))) return 1;
     if (!t->thumb[0]) return 0;
+    sceClibSnprintf(path, sizeof(path), QM_SONG_COVER_FMT, t->key);
     urlEncode(t->thumb, thumb, sizeof(thumb));
     sceClibSnprintf(g_fetchUrl, sizeof(g_fetchUrl),
                     "%s/photo/:/transcode?width=%d&height=%d&minSize=1&upscale=1&format=png&url=%s",
@@ -2807,7 +2180,7 @@ int fetchFile(int tmpl, const char* token, const char* label, const char* to, ui
         httpClose(conn, req);
     }
     const int rcClose = sceIoClose(fd);
-    // In 32 bits, as the test's: a song comes in well under 71 minutes.
+    // In 32 bits: a song comes in well under 71 minutes.
     const uint32_t ms = (uint32_t)(sceKernelGetSystemTimeWide() - t0) / 1000u;
     // The length the server gave, unless it gave none or 4 GB or more.
     const bool sized = rcLength >= 0 && (length >> 32) == 0;
@@ -2838,14 +2211,15 @@ int fetchFile(int tmpl, const char* token, const char* label, const char* to, ui
 
 // ── The server's MP3 of a song in another format ────────────────────────────
 // As the background player had it (player.c's download and giveHeader, and
-// mp3_info.c, whose logic this is): a decision first, then start.mp3 with the
-// same session. A streamed transcode has no length header, so the shell would
-// work its length out from the first frame's bitrate: 19:17 for a 2:51 song
-// (log 1a1cef7f), which hasSong would take for some other file. So the frames
-// go to the shell behind a Xing frame giving their count, which gave it the
-// right length (log e822493b), and without the ID3 tag. Two passes over the
-// file, through g_fetchBuf: one counts the frames, one copies them behind the
-// header. Here in 32 bits, and with no division but 32-bit.
+// mp3_info.c, whose logic this is; both in the history): a decision first,
+// then start.mp3 with the same session. A streamed transcode has no length
+// header, so the shell would work its length out from the first frame's
+// bitrate: 19:17 for a 2:51 song (log 1a1cef7f), which hasSong would take for
+// some other file. So the frames go to the shell behind a Xing frame giving
+// their count, which gave it the right length (log e822493b), and without the
+// ID3 tag. Two passes over the file, through g_fetchBuf: one counts the
+// frames, one copies them behind the header. Here in 32 bits, and with no
+// division but 32-bit.
 
 // A Layer III frame's header (mp3_info.c's Frame).
 struct Mp3Frame {
@@ -3267,7 +2641,7 @@ int fetchThread(SceSize, void*) {
         if (!g_netFound) {
             sceClibSnprintf(why, sizeof(why),
                             "Sony's SSL and HTTP libraries are not all there in SceShell");
-        } else if (!httpStart("carry on", "fetch", false, &rcSsl, &rcHttp)) {
+        } else if (!httpStart("carry on", &rcSsl, &rcHttp)) {
             sceClibSnprintf(why, sizeof(why), "the HTTP library would not start");
         } else {
             const int tmpl = httpTemplate("carry on");
@@ -3284,7 +2658,7 @@ int fetchThread(SceSize, void*) {
                 httpFn<FnId>(kHttpDeleteTemplate)(tmpl);
             }
         }
-        httpEnd("carry on", rcSsl, rcHttp);
+        httpEnd(rcSsl, rcHttp);
     }
     sceClibMemset(token, 0, sizeof(token));
     if (result != kFetchDone && !said)
@@ -3368,7 +2742,7 @@ void fetchStart(const Track* t, int kind) {
         stopping = g_fetch.t.index;
     }
     const int stoppingKind = g_fetch.kind;
-    const bool later = running || g_httpBusy;
+    const bool later = running;
     if (later && kind == kJobSong && !(running && forIt && !g_fetch.cancel))
         g_c.fetchWant = t->index;
     unlock();
@@ -3429,9 +2803,7 @@ int nextSong(Track* out, bool* card) {
 // the card, and not asked for before.
 bool wantsCover(const Track* t) {
     if (!t->thumb[0] || !t->key[0] || ringHas(&g_c.coverTried, t->index)) return false;
-    char cover[160];
-    sceClibSnprintf(cover, sizeof(cover), QM_SONG_COVER_FMT, t->key);
-    return !exists(cover);
+    return !coverFrom(t, &g_c.cur);
 }
 
 // What to fetch while the song with the shell plays, if anything: the next
@@ -3442,13 +2814,6 @@ bool wantsCover(const Track* t) {
 void fetchAhead() {
     g_c.aheadDue = 0;
     if (!g_server[0] || g_c.waitIndex >= 0) return;
-    lock();
-    const bool busy = g_httpBusy != 0;
-    unlock();
-    if (busy) {
-        g_c.aheadDue = 1;  // once the test is over
-        return;
-    }
     bool card = false;
     const int next = g_c.repeat == BGPLAYER_REPEAT_ONE ? -1 : nextSong(&g_ahead, &card);
     takeFetched();
@@ -3459,6 +2824,7 @@ void fetchAhead() {
                       (running && fetchIsFor(&g_ahead, kJobSong)));
     unlock();
     if (next >= 0 && !card && !inHand && !ringHas(&g_c.failedAhead, next)) {
+        coverFrom(&g_ahead, &g_c.cur);
         fetchStart(&g_ahead, kJobSong);
         return;
     }
@@ -3508,7 +2874,7 @@ void fetchPoll() {
 
 // t, not on the card, fetched and then played (carryWait), the shell stopped
 // meanwhile; why is why it is next. The row shows it, and the status names it
-// with "fetching=1", so that VitaPlex BG takes the music back from its start.
+// with "fetching=1", so that VitaPlex takes the music back from its start.
 void waitFor(const Track* t, const char* why) {
     const int rcStop = musicEvent(kEventStop);
     g_c.wait = *t;
@@ -3522,6 +2888,7 @@ void waitFor(const Track* t, const char* why) {
     logLine("carry on: song %d of %d (%s), \"%s\", is not on the memory card: the shell stopped "
             "(0x%08X) until it is fetched",
             t->index + 1, g_c.count, why, t->title, (unsigned)rcStop);
+    coverFrom(t, &g_c.cur);
     showTrack(t);
     carryStatusOf(t, BGPLAYER_STATE_PLAYING, startAt(t), true);
     lock();
@@ -3558,8 +2925,7 @@ void scrobbleWaiting() {
     if (readServer(g_scrobbleSettings, sizeof(g_scrobbleSettings), server, sizeof(server), token,
                    sizeof(token))) {
         if (!g_netFound) g_netFound = findLibraries("carry on");
-        if (g_netFound && httpStart("carry on", "marking songs played", false, &rcSsl, &rcHttp))
-            tmpl = httpTemplate("carry on");
+        if (g_netFound && httpStart("carry on", &rcSsl, &rcHttp)) tmpl = httpTemplate("carry on");
     }
     for (;;) {
         Scrobble one;
@@ -3594,7 +2960,7 @@ void scrobbleWaiting() {
                     (unsigned)rc);
     }
     if (tmpl >= 0) httpFn<FnId>(kHttpDeleteTemplate)(tmpl);
-    httpEnd("carry on", rcSsl, rcHttp);
+    httpEnd(rcSsl, rcHttp);
     sceClibMemset(token, 0, sizeof(token));
 }
 
@@ -3657,7 +3023,7 @@ void carryEnd(const char* why, int how) {
     uint32_t time = 0;
     musicStatus(&state, &time);
     // The queue has gone on to a song being fetched: the music plays, as far
-    // as VitaPlex BG is to know, from that song's start.
+    // as VitaPlex is to know, from that song's start.
     const bool waiting = g_c.waitIndex >= 0;
     const char* written = "nothing";
     if (how == kEndTakeBack) {
@@ -3762,6 +3128,7 @@ bool carryPlay(const Track* t, const char* why) {
             t->index + 1, g_c.count, why, t->title, t->artist, mmss(t->durationMs).s, t->path,
             (unsigned)rcStop, (unsigned)rcOpen, (unsigned)rcPlay);
     if (rcOpen < 0) return false;
+    coverFrom(t, &g_c.cur);
     if (!same(g_c.cur.path, t->path)) removeOwn(&g_c.cur);
     g_c.lastLenMs = g_c.lenMs;
     g_c.cur = *t;
@@ -3781,7 +3148,7 @@ bool carryPlay(const Track* t, const char* why) {
     g_c.aheadDue = 1;  // the song after it fetched, if it is not on the card
     g_c.seekWantMs = 0;
     g_c.seekTries = 0;
-    // VitaPlex BG's place is for its own song alone.
+    // VitaPlex's place is for its own song alone.
     if (t->index != g_c.startIndex) g_c.startAtMs = 0;
     // A fetched song, played: its file is the shell's now, removed once the
     // shell has another.
@@ -3847,9 +3214,9 @@ void carryNext(int from, bool ended, const char* why) {
     carryEnd("three songs in a row would not open", kEndStopped);
 }
 
-// VitaPlex BG's queue, handed to SceShell as it goes (QM_CMD_PLAY_QUEUE):
+// VitaPlex's queue, handed to SceShell as it goes (QM_CMD_PLAY_QUEUE):
 // played from its song and place there, and the row SceShell's from now. That
-// song plays from the file VitaPlex BG made ready, else from its download,
+// song plays from the file VitaPlex made ready, else from its download,
 // else from the server, waited for; and if it can be none of them, the next
 // that can is played from its start. true when it
 // carries on (g_carry is 2 then, or 0 again if the queue had nothing to
@@ -3907,25 +3274,25 @@ bool carryStartQueue() {
         g_found.path[0] = 0;
     }
     if (g_found.path[0]) {
-        if (!carryPlay(&g_found, "VitaPlex BG's song"))
-            carryNext(s.start, false, "VitaPlex BG's song would not open");
+        if (!carryPlay(&g_found, "VitaPlex's song"))
+            carryNext(s.start, false, "VitaPlex's song would not open");
     } else if (g_server[0]) {
-        waitFor(&g_found, "VitaPlex BG's song");
+        waitFor(&g_found, "VitaPlex's song");
     } else {
         logLine("play queue: song %d of %d, \"%s\", is not on the memory card, and there is no "
                 "server to fetch it from",
                 s.start + 1, g_c.count, g_found.title);
-        carryNext(s.start, false, "VitaPlex BG's song is not on the memory card");
+        carryNext(s.start, false, "VitaPlex's song is not on the memory card");
     }
     g_c.aheadDue = 1;
     return true;
 }
 
-// Takes the song to ms, VitaPlex BG's place in it: the seek time, then the
+// Takes the song to ms, VitaPlex's place in it: the seek time, then the
 // seek event, as player.c's seekFrom; carryTick watches where it lands.
 void seekTo(uint32_t ms) {
     const int rcTime = musicSeekTime(ms), rcSeek = musicEvent(kEventSeek);
-    logLine("carry on: song %d of %d to %s, where VitaPlex BG was: seek time 0x%08X, seek 0x%08X",
+    logLine("carry on: song %d of %d to %s, where VitaPlex was: seek time 0x%08X, seek 0x%08X",
             g_c.cur.index + 1, g_c.count, mmss(ms).s, (unsigned)rcTime, (unsigned)rcSeek);
     g_c.seekWantMs = ms;
     g_c.seekUs = sceKernelGetSystemTimeWide();
@@ -4122,7 +3489,7 @@ void carryTick() {
                         "%s, and is at %s",
                         g_c.cur.index + 1, g_c.count, mmss(len).s, mmss(g_c.cur.durationMs).s,
                         mmss(time).s);
-                // To VitaPlex BG's place in the song it handed over; else
+                // To VitaPlex's place in the song it handed over; else
                 // from the start, as the shell can start a file it has had
                 // before where it left it (player.c's fromTheStart). Then
                 // nothing more this look: what was read is from before the
@@ -4253,15 +3620,10 @@ void carryTick() {
     if ((uint32_t)(now - g_c.statusUs) >= 2000000u) carryStatus(BGPLAYER_STATE_PLAYING, time);
 }
 
-// One look of the music thread's: a test asked for; a queue VitaPlex BG
-// handed over begun, once a queue carried on before has stopped; the queue
-// carried on, looked at.
+// One look of the music thread's: a queue VitaPlex handed over begun, once a
+// queue carried on before has stopped; the queue carried on, looked at.
 void musicStep() {
-    char path[sizeof(g_musicPath)];
     lock();
-    const int test = g_musicTestDue;
-    g_musicTestDue = 0;
-    if (test) sceClibMemcpy(path, g_musicPath, sizeof(path));
     const int carry = g_carry;
     // Once a queue carried on before has stopped (QM_CMD_PLAY_QUEUE stops it).
     const bool handed = g_playQueueDue && carry != 2;
@@ -4270,15 +3632,9 @@ void musicStep() {
         g_carryStop = NULL;
     }
     unlock();
-    if (test) {
-        musicTest(path);
-        lock();
-        g_musicBusy = 0;
-        unlock();
-    }
     if (handed) {
         if (carryStartQueue())
-            logLine("play queue: SceShell plays VitaPlex BG's queue");
+            logLine("play queue: SceShell plays VitaPlex's queue");
         else
             carryNone();
     } else if (carry == 2) {
@@ -4300,9 +3656,8 @@ public:
     }
 };
 
-// The music thread, made the first time it is wanted, so that a boot with
-// no test and no queue carried on has no stack for it in SceShell. true when
-// there is one.
+// The music thread, made the first time it is wanted, so that a boot with no
+// queue carried on has no stack for it in SceShell. true when there is one.
 bool startMusicThread() {
     if (g_musicThread) return true;
     if (g_musicSema < 0) {
@@ -4313,7 +3668,7 @@ bool startMusicThread() {
         }
     }
     const int rc = (new MusicThread(kThreadPriority, 0x8000, "VitaPlexQM::Music"))->Start();
-    logLine("music: its thread started: 0x%08X", (unsigned)rc);
+    if (rc < 0) logLine("music: its thread not started: 0x%08X", (unsigned)rc);
     g_musicThread = rc >= 0;
     return g_musicThread;
 }
@@ -4338,7 +3693,7 @@ public:
     void EntryFunction() override {
         const SceUInt64 started = sceKernelGetSystemTimeWide();
         SceUInt64 lastLoop = started;
-        int wasOpen = 0, openLogged = 0;
+        int wasOpen = 0;
         while (!IsCanceled()) {
             SceAppMgrAppState st;
             sceClibMemset(&st, 0, sizeof(st));
@@ -4364,17 +3719,7 @@ public:
             lastLoop = now;
             if (open && !wasOpen) {
                 g_openedUs = now;
-                g_opens++;
                 g_openSerial++;
-                // Past the first opens, those with the row SceShell's are still
-                // logged until its own row has been seen lit once.
-                g_timelineDue = g_opens <= kTimelineOpens ||
-                                (!g_active && !g_sawLitRow && g_opens <= 40);
-                openLogged = g_active || g_timelineDue;
-                if (openLogged)
-                    logLine("quick menu opened%s", g_active ? "" : ", the row SceShell's");
-            } else if (!open && wasOpen && openLogged) {
-                logLine("quick menu closed after %d ms", msOpen(now));
             }
             g_open = open;
             if (g_active && g_owner != kOwnerShell &&
@@ -4430,7 +3775,7 @@ private:
             if (!g_active || g_owner != m.arg)
                 logLine("row wanted by %s", ownerName(m.arg));
             // A process with the row has the music: SceShell leaves it to
-            // it, and does not begin a queue handed over before. VitaPlex BG
+            // it, and does not begin a queue handed over before. VitaPlex
             // plays its own, which SceShell's would play over, so that one
             // stops.
             stopCarry("a process takes the row", kEndStopped);
@@ -4447,54 +3792,24 @@ private:
             g_releaseDue = 1;
             g_artSerial = 0;
             break;
-        case QM_CMD_SONG: {
+        case QM_CMD_SONG:
             sceClibMemcpy(g_title, m.title, sizeof(g_title));
             sceClibMemcpy(g_artist, m.artist, sizeof(g_artist));
             sceClibMemcpy(g_album, m.album, sizeof(g_album));
             g_title[255] = g_artist[255] = g_album[255] = 0;
-            char title[64], artist[64];
-            toLog(g_title, title, sizeof(title));
-            toLog(g_artist, artist, sizeof(artist));
-            logLine("song: \"%s\" by %s", title, artist);
             break;
-        }
         case QM_CMD_PLAYING:
-            if (g_playing != (int)m.arg) logLine("%s", m.arg ? "playing" : "paused");
             g_playing = (int)m.arg;
             break;
-        case QM_CMD_LOOK:
-            if (m.arg < QM_LOOK_COUNT && g_look != (int)m.arg) {
-                g_look = (int)m.arg;
-                g_lookLogged = -1;
-                logLine("buttons to be switched on with %s", lookName(g_look));
-            }
-            break;
         case QM_CMD_ART:
-            if (g_artSerial != m.arg) {
-                if (m.arg) logLine("art: %u ready", (unsigned)m.arg);
-                else logLine("art: none");
-            }
             g_artSerial = m.arg;
-            break;
-        case QM_CMD_MUSIC_TEST:
-            if (g_musicBusy || g_carry || !startMusicThread()) {
-                logLine("music test: done: %s", g_musicBusy ? "one runs already"
-                                                : g_carry   ? "SceShell carries a queue on"
-                                                            : "no thread for it");
-                break;
-            }
-            // VitaPlex's paths are ASCII: its data folder and a song's rating key.
-            toLog(m.title, g_musicPath, sizeof(g_musicPath));
-            g_musicBusy = 1;
-            g_musicTestDue = 1;
-            sceKernelSignalSema(g_musicSema, 1);
             break;
         case QM_CMD_PLAY_QUEUE:
             // A queue SceShell carries on yields to the new one, its music
             // left for the new one to stop, and nothing written.
-            logLine("play queue: VitaPlex BG hands its queue to SceShell%s",
+            logLine("play queue: VitaPlex hands its queue to SceShell%s",
                     g_carry ? "; the queue carried on stops first" : "");
-            stopCarry("VitaPlex BG hands a queue over", kEndYield);
+            stopCarry("VitaPlex hands a queue over", kEndYield);
             if (startMusicThread()) {
                 g_playQueueDue = 1;
                 sceKernelSignalSema(g_musicSema, 1);
@@ -4503,36 +3818,11 @@ private:
             }
             break;
         case QM_CMD_TAKE_BACK:
-            logLine("take back: VitaPlex BG takes the music back%s",
+            logLine("take back: VitaPlex takes the music back%s",
                     g_carry ? "" : "; no queue carried on here");
             g_playQueueDue = 0;  // a queue handed over and not yet begun is not begun
-            stopCarry("VitaPlex BG takes the music back", kEndTakeBack);
+            stopCarry("VitaPlex takes the music back", kEndTakeBack);
             break;
-        case QM_CMD_HTTP_TEST: {
-            if (g_httpBusy || g_fetch.state == kFetchRunning) {
-                logLine("http test: done: %s",
-                        g_httpBusy ? "one runs already" : "SceShell is fetching a song of the queue");
-                break;
-            }
-            // VitaPlex's addresses, paths and tokens are ASCII. The token is
-            // kept no longer than the test needs it, here or in the message.
-            toLog(m.title, g_httpBase, sizeof(g_httpBase));
-            toLog(m.artist, g_httpPath, sizeof(g_httpPath));
-            toLog(m.album, g_httpToken, sizeof(g_httpToken));
-            sceClibMemset(g_message.album, 0, sizeof(g_message.album));
-            g_httpBytes = m.arg;
-            g_httpBusy = 1;
-            const SceUID thread = sceKernelCreateThread("VitaPlexQM::Http", httpThread,
-                                                        kThreadPriority, kHttpStack, 0, 0, NULL);
-            const int rc = thread < 0 ? thread : sceKernelStartThread(thread, 0, NULL);
-            if (rc < 0) {
-                if (thread >= 0) sceKernelDeleteThread(thread);
-                logLine("http test: done: no thread for it (0x%08X)", (unsigned)rc);
-                sceClibMemset(g_httpToken, 0, sizeof(g_httpToken));
-                g_httpBusy = 0;
-            }
-            break;
-        }
         default:
             logLine("unknown command %u", (unsigned)m.cmd);
             break;
@@ -4553,33 +3843,13 @@ typedef struct BgmState {
 } BgmState;
 
 TaiHookRef g_bgmHookRef;
-// What SceShell read last, the first changes of a boot logged, beside the
-// row's look: on SceShell's threads, under nothing, so a change two of them
-// read at once may be logged twice.
-BgmState g_bgmSeen;
-int g_bgmRet = 1, g_bgmPriority, g_bgmLogged;
 
 int bgmStateCapped(BgmState* state) {
     const TaiHookUser* cur = (const TaiHookUser*)g_bgmHookRef;
     const TaiHookUser* next = (const TaiHookUser*)cur->next;
     typedef int (*Fn)(BgmState*);
     const int ret = next ? ((Fn)next->func)(state) : ((Fn)cur->old)(state);
-    const int priority = state->priority;
     if (state->priority > 0x80) state->priority = 0x80;
-    if (g_bgmLogged < 40 &&
-        (ret != g_bgmRet || priority != g_bgmPriority || state->ownerId != g_bgmSeen.ownerId ||
-         state->status1 != g_bgmSeen.status1 || state->state != g_bgmSeen.state ||
-         state->status2 != g_bgmSeen.status2)) {
-        g_bgmLogged++;
-        g_bgmRet = ret;
-        g_bgmPriority = priority;
-        g_bgmSeen = *state;
-        logLine("BGM port as SceShell reads it: 0x%08X; owner 0x%08X, priority 0x%X%s, "
-                "0x%X, state %d, 0x%X",
-                (unsigned)ret, (unsigned)state->ownerId, (unsigned)priority,
-                priority > 0x80 ? " (read as 0x80)" : "", (unsigned)state->status1, state->state,
-                (unsigned)state->status2);
-    }
     return ret;
 }
 
@@ -4605,8 +3875,6 @@ extern "C" int module_start(SceSize args, const void* argp) {
         return SCE_KERNEL_START_NO_RESIDENT;
     }
     g_surfacePool = *(paf::graph::SurfacePool* const*)((const char*)power + kPluginSurfacePool);
-    logLine("quick menu: %s at %p; texture pool %p", g_impose->GetTypeName(), (void*)g_impose,
-            (void*)g_surfacePool);
 
     g_lock = sceKernelCreateMutex("VitaPlexQM::Lock", 0, 0, NULL);
     // As ElevenMPV-A's pipes are made: 0x40, user main memory; 0x81, whole
@@ -4629,12 +3897,11 @@ extern "C" int module_start(SceSize args, const void* argp) {
     hook.func_nid = 0x62BEBD65;
     hook.hook_func = (const void*)bgmStateCapped;
     const SceUID hooked = vitaplexQmHookFunctionImport(&g_bgmHookRef, &hook);
-    logLine("BGM priority SceShell reads capped at 0x80: 0x%08X", (unsigned)hooked);
+    if (hooked < 0) logLine("BGM priority SceShell reads not capped: 0x%08X", (unsigned)hooked);
 
     // PAF's list of what its main (UI) thread calls each time round its loop;
     // ElevenMPV-A's app imports Register, so its NID is the console's.
     paf::common::MainThreadCallList::Register(mainTick, NULL);
-    logLine("row's tick registered with SceShell's UI thread");
 
     (new WatchThread(kThreadPriority, 0x4000, "VitaPlexQM::Watch"))->Start();
     (new ReceiveThread(kThreadPriority, 0x4000, "VitaPlexQM::Receive"))->Start();
