@@ -3227,6 +3227,43 @@ second song's cover.
   half-second looks, not after 30 of 25 ms. The pipe test passes 23. The
   plugin builds at 42839 bytes, with build 2048's imports.
 
+**Build 2050: build 2049's run.** Logs `e92d16a1` (the plugin), `8a90e828` and
+`72ac5052` (VitaPlex), and the user's word: the row showed the music only from
+the second time the quick menu was opened, and followed song changes after.
+
+- The hand-over's start: state 1 at 0:00 0.15 s after play, the seek asked
+  for 5 ms later, and the song at its place 0.9 s after play ("taken there
+  as it began"). The second hand-over went the same way, 1.2 s after play.
+- The take-back: SceShell told 2.3 s after the player was pushed, its song
+  stopped 0.15 s after, at 1:27, and the files of that song and the next
+  kept. VitaPlex played on from the file kept.
+- After the first hand-over the shell stopped the song three times in 15 s
+  (the power button or the game starting: VitaPlex was not running to log
+  which), each played again 0.6 to 1.6 s later.
+- The row: the user held PS twice in each run before it showed the song
+  (VitaPlex's power callbacks: 15:11:12 and 15:11:15; 15:12:25 and
+  15:12:42). The plugin logs no opens since build 2047. Build 2028's
+  timeline (log `c1930c5a`) has what SceShell does to the lines as the quick
+  menu opens with no music of its own: their own alphas, 1 and 0.8 as it
+  opens, fall to 58% and 46% by 229 ms and to 0 by 429 ms, after the plugin
+  has set them, and "There are no songs." stays at 0. The plugin checks the
+  lines' text and colour only. So the lines are now kept at 1 and 0.8 while
+  the row is the plugin's, and "There are no songs." at 0. Whether that was
+  what hid the song is for the next log to say: the first opens of a boot,
+  and the first three after the row changes hands, are logged as they
+  close, with when the row was taken, what was put back after, and the lines'
+  text, alpha and colour 1 s in.
+- The take-back's silence was 3.7 s: mpv set up in 0.16 s, then 2.05 s until
+  the next step, and 1.94 s from SceShell's answer to the track's load, the
+  UI thread drawing the thumbnails of the screen behind in both (dozens of
+  `photo/:/transcode` loads between). Thumbnails now stop as the take-back
+  begins, as a track's load stops them, and the step after mpv's set-up
+  follows at once rather than on a later frame. The file then took 1.08 s to
+  open and 0.5 s to play (ffmpeg probing up to 5 MB of it, its MP3 decoder
+  giving no frame size); mpv's probing is left as it is.
+- On a host the harness passes 195 checks. The plugin builds at 44951 bytes,
+  with build 2049's imports; it keeps its divisions 32-bit (splitUs).
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

@@ -37,6 +37,14 @@ the plugin.
 - **When:** it takes the row 200 ms after the quick menu opens, as
   ElevenMPV-A's plugin about does. A song set at once did not show. While
   the quick menu stays open, it puts back what SceShell changes.
+- **The song's lines:** SceShell fades the row's two lines out by their own
+  alpha (as the icons' above) when it sees no music of its own, and it saw
+  none on the first open after VitaPlex began to play: the song showed only
+  from the second open (build 2049). While the row is the plugin's, the
+  lines are kept at the alphas SceShell gives them (1 and 0.8), and its
+  "There are no songs." line at 0 (build 2050). The first opens of a boot,
+  and the first after the row changes hands, are logged as they close: when
+  the row was taken, what was put back after, and the lines 1 s in.
 - **Play and pause:** while the music plays, the play icon shows the pause
   icon's texture (`0xB26E4562`, a second icon at play's place, sized 0x0),
   as SceShell's own row shows ⏸ while its Music app plays.

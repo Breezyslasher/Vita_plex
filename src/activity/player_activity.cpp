@@ -1285,6 +1285,11 @@ void PlayerActivity::loadFromQueue() {
     // and the silence lasted all of it, 5 s.
     if (m_takeBackFromShell) {
         m_loadingMedia = false;
+        // The screen behind's thumbnails stopped now, as a track's load below
+        // stops them: drawing them held the UI thread for 2 s at each of the
+        // two steps below (log 72ac5052), mpv's set-up taking 0.16 s.
+        ImageLoader::setPaused(true);
+        ImageLoader::cancelAll();
         if (!MpvPlayer::getInstance().isInitialized()) {
             // As the deferred load below does on MPV's first init.
             ImageLoader::clearCache();
@@ -1968,7 +1973,8 @@ void PlayerActivity::updateProgress() {
     updateVideoOsd();
 
     // A queue SceShell plays on: MPV set up with nothing loaded, and the first
-    // load again on the next frame, which asks SceShell for the music.
+    // load again at once, which asks SceShell for the music off this thread;
+    // the track is loaded frames later, once it has answered.
     if (m_pendingMpvInit) {
         m_pendingMpvInit = false;
         brls::Logger::info("PlayerActivity: setting MPV up before SceShell is asked for the music...");
@@ -1980,11 +1986,7 @@ void PlayerActivity::updateProgress() {
             m_takeBackFromShell = false;
             return;
         }
-        auto alive = m_alive;
-        brls::sync([this, alive]() {
-            if (!alive->load() || m_destroying) return;
-            loadFromQueue();
-        });
+        loadFromQueue();
         return;
     }
 
