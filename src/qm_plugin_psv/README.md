@@ -79,10 +79,14 @@ the plugin.
   build 2048 the song was left for VitaPlex to stop). The row stays, its
   buttons acting on this music. A
   song that goes on away from where it stopped, as an M4A download went on
-  35 s back after a pause, is sought back there (build 2036), and one the
-  power button stops plays again at once, and every second while it stays
-  stopped (build 2048). A song played to its end is marked played on the
-  server. Its log lines begin "carry on:".
+  35 s back after a pause, is sought back there (build 2036). SceShell stops
+  its song itself 0.1 to 0.4 s after the power button is pressed, as at four
+  of seven presses in build 2002's test of VitaPlex's background player; and
+  ElevenMPV-A plays it again too. The music thread looks every 100 ms while a
+  song plays, and plays it again at once, and every 0.6 s while it stays
+  stopped (build 2051; every half second and every second before). A song
+  played to its end is marked played on the server. Its log lines begin
+  "carry on:".
 - **Fetching the queue's songs (build 2042):** songs not on the memory card
   are fetched from VitaPlex's server, the next while the one before plays.
   The plugin finds Sony's SSL and HTTP libraries in SceShell at run time, as

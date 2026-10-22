@@ -1423,7 +1423,7 @@ void takeBack() {
 // their files, which VitaPlex plays on from (songFile): the song before, for
 // previous, that song, made ready for the next hand-over too, and the next,
 // which SceShell fetched ahead (log 8e7a4b23: 22.6 s to stream it again).
-// Off the UI thread: it waits on the shell.
+// On the UI thread, which waits on the shell meanwhile.
 ShellPlace takeBackFromShell() {
     ShellQueue q;
     {
@@ -1438,8 +1438,11 @@ ShellPlace takeBackFromShell() {
     for (int i = 0; rc >= 0 && i < 60 && !answered; i++) {
         sceKernelDelayThread(25 * 1000);
         status.clear();
-        answered = readNote(HANDOVER_STATUS, status, nullptr) &&
-                   fieldNum(status, "written") >= asked;
+        if (!readNote(HANDOVER_STATUS, status, nullptr)) continue;
+        answered = fieldNum(status, "written") >= asked;
+        // The queue over since VitaPlex read the status: no answer comes, and
+        // the UI need not wait for one.
+        if (!answered && fieldText(status, "state") != HANDOVER_STATE_PLAYING) break;
     }
     const double took = systemSecs() - asked;
     // The files go only with nothing of the queue playing in the shell: a

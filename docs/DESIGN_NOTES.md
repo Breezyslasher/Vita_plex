@@ -3264,6 +3264,54 @@ the second time the quick menu was opened, and followed song changes after.
 - On a host the harness passes 195 checks. The plugin builds at 44951 bytes,
   with build 2049's imports; it keeps its divisions 32-bit (splitUs).
 
+**Build 2051: build 2050's run.** Logs `7ba61f1e` (the plugin), `fe44a1ec`
+and `b63e93ca` (VitaPlex), and the user's word: the song showed on the first
+open of the quick menu. The user also asked why the music stops for a moment
+when the Vita's screen is turned off.
+
+- The row: on the boot's first open (VitaPlex's PS held at 15:48:38.356,
+  open 3.2 s), the row was taken at 235 ms, and SceShell then faded the lines
+  four times, each put back, the first at 335 ms; 1 s in, the title was at
+  100%, the artist at 80% and "There are no songs." at 0. No later open
+  needed the lines put back, nor did the first after the take-back. So it was
+  the lines' own alpha. The opens logged with no buttons found, 0.9 to 1.9 s
+  long, were the system's UI over the screen just before VitaPlex was closed
+  and before it was started, not the quick menu: VitaPlex logged no PS held
+  then.
+- The hand-over's start: the shell began at VitaPlex's place both times,
+  0:13 and 1:06, state 1 there 0.15 and 0.13 s after play. The seek time set
+  before play took it.
+- The take-back: mpv set up and SceShell asked at once (21.093 to 21.381);
+  SceShell stopped 0.13 s after it was told, at 21.511. The track's load
+  came only at 23.478, and mpv played at 24.015: 2.5 s of silence, against
+  3.7 s in build 2049, the M4A opening in 0.33 s where the MP3 took 1.08 s.
+  Build 2050's notes put the wait down to thumbnails. With their loads
+  skipped, the UI thread still made the home screen's cells from 21.385 to
+  about 23.45: the image loader's skips, which only the UI thread logs, came
+  at 21.385, 22.172 (the 25th) and 23.163 (the 50th). The load, queued with
+  `brls::sync` at 21.703, waited its turn: `performSyncTasks` runs what was
+  queued when it began. SceShell is now asked, and the track loaded, on the
+  UI thread one after the other. The UI waits for SceShell's answer, which
+  VitaPlex read 0.15 and 0.24 s after asking (logs `72ac5052`, `b63e93ca`),
+  1.5 s at most. A status saying the queue is over ends the wait at once.
+- The power button: this run has no press of it, VitaPlex logging none and
+  the plugin no stop. Build 2002's test (log `e98e760e`, with power
+  callbacks) has SceShell stopping its song 0.1 to 0.4 s after four of seven
+  presses. ElevenMPV-A plays it again as well. The plugin looked each half
+  second, and the shell was seen playing again 0.5 to 1.6 s after it was seen
+  stopped (logs `d6e76980`, `e92d16a1`). In `e92d16a1` one was still stopped a
+  second after a play, and played after the next. The music thread now looks
+  every 100 ms while a song plays, and plays it again every 0.6 s while it
+  stays stopped. The log says how long it was seen stopped. While a song is
+  fetched it looks each half second, as before.
+- The harness, looking as the thread does, found a song fetched after next
+  in the 4 s of 25 ms looks taken for "something else plays" within 50 ms of
+  the shell being told to stop: two looks in a row had seen it playing. The
+  25 ms looks now end as a song is waited for, and the check is timed, half
+  a second, as two half-second looks made it.
+- On a host the harness passes 201 checks. The plugin builds at 45125 bytes,
+  with build 2050's imports.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

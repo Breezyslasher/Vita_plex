@@ -1279,15 +1279,13 @@ void PlayerActivity::loadFromQueue() {
     updateQueueDisplay();
 
     // A queue SceShell plays on: mpv set up first, which took 2.5 s (log
-    // 4e8bcb05), and then SceShell asked for the music, off this thread, and
-    // the track loaded where it stopped, the next one should it have gone on
-    // meanwhile. Up to build 2048 SceShell was stopped before any of this,
-    // and the silence lasted all of it, 5 s.
+    // 4e8bcb05), and then SceShell asked for the music and the track loaded
+    // where it stopped, the next one should it have gone on meanwhile. Up to
+    // build 2048 SceShell was stopped before any of this, and the silence
+    // lasted all of it, 5 s.
     if (m_takeBackFromShell) {
         m_loadingMedia = false;
-        // The screen behind's thumbnails stopped now, as a track's load below
-        // stops them: drawing them held the UI thread for 2 s at each of the
-        // two steps below (log 72ac5052), mpv's set-up taking 0.16 s.
+        // As a track's load below stops them.
         ImageLoader::setPaused(true);
         ImageLoader::cancelAll();
         if (!MpvPlayer::getInstance().isInitialized()) {
@@ -1298,24 +1296,24 @@ void PlayerActivity::loadFromQueue() {
             return;
         }
         m_takeBackFromShell = false;
-        auto alive = m_alive;
-        platform::launchThread([this, alive]() {
-            const bgaudio::ShellPlace place = bgaudio::takeBackNow();
-            brls::sync([this, alive, place]() {
-                if (!alive->load() || m_destroying) return;
-                if (!place.play) {
-                    brls::Logger::info("PlayerActivity: SceShell had nothing to go on with; the "
-                                       "queue waits here");
-                    m_isPlaying = false;
-                    updatePlayPauseLabel();
-                    return;
-                }
-                MusicQueue& q = MusicQueue::getInstance();
-                if (place.index != q.getCurrentIndex()) q.playTrack(place.index);
-                m_queueStartOffsetMs = place.atMs;
-                loadFromQueue();
-            });
-        });
+        // SceShell asked and the track loaded on this thread, one after the
+        // other, the UI held while SceShell answers (read 0.15 and 0.24 s
+        // after asking in logs 72ac5052 and b63e93ca, 1.5 s at most). Asked
+        // from a thread of its own in builds 2049 and 2050, the load waited
+        // its turn on this one: 1.86 s of the take-back's 2.5 s of silence in
+        // log b63e93ca, as the home screen behind made its rows' cells.
+        const bgaudio::ShellPlace place = bgaudio::takeBackNow();
+        if (!place.play) {
+            brls::Logger::info("PlayerActivity: SceShell had nothing to go on with; the queue "
+                               "waits here");
+            m_isPlaying = false;
+            updatePlayPauseLabel();
+            return;
+        }
+        MusicQueue& q = MusicQueue::getInstance();
+        if (place.index != q.getCurrentIndex()) q.playTrack(place.index);
+        m_queueStartOffsetMs = place.atMs;
+        loadFromQueue();
         return;
     }
 

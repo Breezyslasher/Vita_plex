@@ -86,9 +86,9 @@ void quickMenuNowPlayingCleared();
 std::string songFile(const std::string& ratingKey);
 
 // For the player of a queue taken back from SceShell, once it is ready to
-// play, and off the UI thread: SceShell, which has carried the queue on
-// meanwhile, is told to stop, and says where it stopped. Up to a second and a
-// half for its answer.
+// play, on the UI thread so that the track's load follows at once: SceShell,
+// which has carried the queue on meanwhile, is told to stop, and says where
+// it stopped. Up to a second and a half for its answer.
 ShellPlace takeBackNow();
 
 #else

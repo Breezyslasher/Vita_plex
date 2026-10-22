@@ -1422,6 +1422,19 @@ const int kLookAhead = 20;        // songs looked at for the next on the card
 // played, for the seek to its place (Carry::fastUntilUs).
 const SceUInt64 kFastLookUs = 4 * 1000 * 1000;
 const SceUInt kFastLookEveryUs = 25 * 1000;
+// Its looks while the shell plays a song of the queue: every 100 ms, so that
+// a song the power button stops is played again within one. With a look each
+// half second the shell was seen playing again 0.5 to 1.6 s after it was
+// seen stopped (logs d6e76980, e92d16a1). Each half second otherwise: as a
+// song is fetched, and with no queue (musicLookUs).
+const SceUInt kLookEveryUs = 100 * 1000;
+const SceUInt kSlowLookEveryUs = 500 * 1000;
+// A song the shell never starts is passed over after 15 s of looks.
+const int kNeverStartedLooks = 150;
+// A song stopped before its end is played again at once, and again every
+// 0.6 s while it stays stopped: in log e92d16a1 one was still stopped a
+// second after a play, and played after the next.
+const uint32_t kReplayEveryUs = 600 * 1000;
 // Stopping: VitaPlex taking the music back, ready to play it, the service
 // stopped and ended and the place it stopped at written; the row given back,
 // the place written and the music left; the music left to a process that
@@ -1479,21 +1492,21 @@ struct Carry {
     uint32_t playMs;    // the clock as it last played, where it goes on from after a stop
     int havePrev, replays, lastState;
     int otherLogged;    // the shell seen playing something else in its place, logged
-    int waitTicks;      // looks so far for it to play: ticks, not the clock, which runs on
+    int waitTicks;      // looks so far for it to play: looks, not the clock, which runs on
                         // through a sleep
     SceUInt64 songUs;      // when it was handed to the shell
     SceUInt64 stoppedUs;   // stopped before its end since, 0 if not
     SceUInt64 lastPlayUs, statusUs, checkUs;
     // A song not on the card, fetched to play next with the shell stopped
     // meanwhile: its place, -1 when none; the song; since when; the fetches
-    // begun for it; why it is next (carryPlay's why); and looks in a row that
-    // found the shell playing something meanwhile.
+    // begun for it; why it is next (carryPlay's why); and since when the
+    // shell has been seen playing something meanwhile, 0 if it is not.
     int waitIndex;
     Track wait;
     SceUInt64 waitUs;
     int waitTries;
     const char* waitWhy;
-    int waitPlays;
+    SceUInt64 waitPlayUs;
     int waitArt;      // its cover on the row
     // A song's file fetched here and not yet played: its place (-1 for none),
     // key and file. Kept apart from g_fetch, which goes on to other jobs.
@@ -1514,7 +1527,7 @@ struct Carry {
     uint32_t seekWantMs;
     SceUInt64 seekUs;
     int seekTries;
-    // Until when the music thread looks every 25 ms, not every 500: from
+    // Until when the music thread looks every 25 ms, not every 100: from
     // the play of VitaPlex's song to its seek landing, so that the seek goes
     // as soon as the shell plays (kFastLookUs). 0 when not.
     SceUInt64 fastUntilUs;
@@ -2830,9 +2843,11 @@ void waitFor(const Track* t, const char* why) {
     g_c.waitUs = sceKernelGetSystemTimeWide();
     g_c.waitTries = 0;
     g_c.waitWhy = why;
-    g_c.waitPlays = 0;
+    g_c.waitPlayUs = 0;
     g_c.menuPaused = 0;
     g_c.resuming = 0;
+    // No song plays meanwhile: the music thread back to its usual looks.
+    g_c.fastUntilUs = 0;
     logLine("carry on: song %d of %d (%s), \"%s\", is not on the memory card: the shell stopped "
             "(0x%08X) until it is fetched",
             t->index + 1, g_c.count, why, t->title, (unsigned)rcStop);
@@ -3127,7 +3142,7 @@ void carryEnd(const char* why, int how) {
             g_c.cur.index + 1, g_c.count, mmss(time).s, state, also, why, written,
             (unsigned)rcStop, (unsigned)rcEnd, fetching ? "; its fetch stopped" : "");
     g_c.waitIndex = -1;
-    g_c.fastUntilUs = 0;  // the music thread back to its half-second looks
+    g_c.fastUntilUs = 0;  // the music thread back to its usual looks
     lock();
     g_carry = 0;
     g_carryStop = NULL;
@@ -3496,16 +3511,20 @@ void carryWait() {
                 g_c.menuPaused ? "paused" : "play", g_c.waitIndex + 1);
     }
     // Something else played in the shell meanwhile, as the system's Music
-    // app would play it: not for this to stop.
+    // app would play it, seen for half a second: not for this to stop. Timed,
+    // as looks can come 25 ms apart.
     int state = 0;
     uint32_t time = 0;
     if (musicStatus(&state, &time) >= 0 && state == 1) {
-        if (++g_c.waitPlays >= 2) {
+        const SceUInt64 now = sceKernelGetSystemTimeWide();
+        if (!g_c.waitPlayUs) {
+            g_c.waitPlayUs = now;
+        } else if ((uint32_t)(now - g_c.waitPlayUs) >= 500000u) {
             carryEnd("something else plays in the shell", kEndOther);
             return;
         }
     } else {
-        g_c.waitPlays = 0;
+        g_c.waitPlayUs = 0;
     }
     // Its cover, fetched before its file, on the row as soon as it comes.
     if (!g_c.waitArt) {
@@ -3548,7 +3567,8 @@ void carryWait() {
     carryNext(g_c.waitIndex, false, g_c.waitWhy);
 }
 
-// Each half second while it carries on, as player.c's watchSong does each.
+// At each of the music thread's looks while it carries on (musicLookUs), as
+// player.c's watchSong did each half second.
 void carryTick() {
     lock();
     const char* stop = g_carryStop;
@@ -3644,9 +3664,9 @@ void carryTick() {
                         g_c.cur.index + 1, g_c.count, mmss(len).s, mmss(g_c.cur.durationMs).s);
             }
         }
-        // Counted in half-second looks, not the 25 ms ones after VitaPlex's
+        // Counted in the usual looks, not the 25 ms ones after VitaPlex's
         // song is played.
-        if (!g_c.started && now >= g_c.fastUntilUs && ++g_c.waitTicks > 30) {
+        if (!g_c.started && now >= g_c.fastUntilUs && ++g_c.waitTicks > kNeverStartedLooks) {
             logLine("carry on: song %d of %d: the shell never started it", g_c.cur.index + 1,
                     g_c.count);
             if (++g_c.failures >= 3)
@@ -3704,16 +3724,17 @@ void carryTick() {
             return;
         }
         // Stopped before its end, not from the row: as the power button
-        // stops the shell's music. Played again at once, and every second
-        // while it stays so: with 5 s between tries, the music once stayed
-        // stopped 2.6 s (log e18b5831). Logged the first times and then once
-        // a minute.
+        // stops the shell's music, 0.1 to 0.4 s after four of seven presses
+        // in log e98e760e (build 2002). Played again at once, and every 0.6 s
+        // while it stays so (kReplayEveryUs): with 5 s between tries, the
+        // music once stayed stopped 2.6 s (log e18b5831). Logged the first
+        // times and then once a minute.
         if (state != 1 && !g_c.menuPaused && !g_c.resuming) {
             if (!g_c.stoppedUs) g_c.stoppedUs = now;
-            if ((uint32_t)(now - g_c.lastPlayUs) >= 1000000u) {
+            if ((uint32_t)(now - g_c.lastPlayUs) >= kReplayEveryUs) {
                 g_c.lastPlayUs = now;
                 const int rcPlay = musicEvent(kEventPlay);
-                if (g_c.replays < 3 || g_c.replays % 60 == 0)
+                if (g_c.replays < 3 || g_c.replays % 100 == 0)
                     logLine("carry on: song %d of %d stopped at %s, before its end (state %d); "
                             "play again: 0x%08X",
                             g_c.cur.index + 1, g_c.count, mmss(time).s, state, (unsigned)rcPlay);
@@ -3721,8 +3742,9 @@ void carryTick() {
             }
         } else if (back) {
             if (g_c.stoppedUs)
-                logLine("carry on: song %d of %d plays again at %s", g_c.cur.index + 1, g_c.count,
-                        mmss(time).s);
+                logLine("carry on: song %d of %d plays again at %s, %s s after it was seen stopped",
+                        g_c.cur.index + 1, g_c.count, mmss(time).s,
+                        secsOf((uint32_t)(now - g_c.stoppedUs) / 1000u).s);
             g_c.stoppedUs = 0;
             g_c.replays = 0;
             g_c.resuming = 0;
@@ -3783,17 +3805,26 @@ void musicStep() {
     }
 }
 
-// The music thread: musicStep every half second, every 25 ms just after
-// VitaPlex's song is played (kFastLookUs), and as soon as asked.
+// How long the music thread waits for its next look: 25 ms while VitaPlex's
+// song is taken to its place (kFastLookUs), 100 ms while the shell plays a
+// song of the queue, half a second else (kLookEveryUs).
+SceUInt musicLookUs() {
+    if (g_c.fastUntilUs > sceKernelGetSystemTimeWide()) return kFastLookEveryUs;
+    lock();
+    const int carry = g_carry;
+    unlock();
+    return carry == 2 && g_c.waitIndex < 0 ? kLookEveryUs : kSlowLookEveryUs;
+}
+
+// The music thread: musicStep at each look (musicLookUs), and as soon as
+// asked.
 class MusicThread : public paf::thread::Thread {
 public:
     using paf::thread::Thread::Thread;
 
     void EntryFunction() override {
         while (!IsCanceled()) {
-            // Every 25 ms while VitaPlex's song is taken to its place.
-            SceUInt timeout = g_c.fastUntilUs > sceKernelGetSystemTimeWide() ? kFastLookEveryUs
-                                                                             : 500 * 1000;
+            SceUInt timeout = musicLookUs();
             sceKernelWaitSema(g_musicSema, 1, &timeout);
             musicStep();
         }
