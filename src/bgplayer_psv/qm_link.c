@@ -66,7 +66,6 @@ typedef struct FromPlugin {
 _Static_assert(sizeof(FromPlugin) == 260, "ipc.h's IpcDataTX is 260 bytes");
 
 _Static_assert(sizeof(QmMessage) == 1544, "qm_protocol.h's message, as the plugin takes it");
-_Static_assert(sizeof(QmSongFile) <= sizeof(QmMessage), "a song file goes in a message's place");
 _Static_assert(sizeof(QmPress) == 8, "qm_protocol.h's press, as the plugin sends it");
 
 // A message pipe moves a whole message or none of it with this mode, and
@@ -80,12 +79,10 @@ _Static_assert(sizeof(QmPress) == 8, "qm_protocol.h's press, as the plugin sends
 static SceUID g_lock = -1;
 static SceUID g_to = -1, g_from = -1;
 static int g_own;   // the pipes are VitaPlex's plugin's
-// Under g_lock: 1.5 KB, off the callers' stacks. A song file goes whole, as
-// a QmMessage.
+// Under g_lock: 1.5 KB, off the callers' stacks.
 static union {
     ToPlugin empva;
     QmMessage own;
-    QmSongFile file;
 } g_message;
 static union {
     FromPlugin empva;
@@ -391,21 +388,6 @@ int qmHttpTest(const char* base, const char* path, const char* token, unsigned b
         toUtf16(token, g_message.own.album, 256);
         rc = sendLocked();
         memset(&g_message, 0, sizeof(g_message));  // the token, kept no longer here
-    }
-    unlock();
-    return rc;
-}
-
-int qmSongFile(int index, const char* key, const char* path) {
-    lock();
-    int rc = -1;
-    if (g_own) {
-        memset(&g_message, 0, sizeof(g_message));
-        g_message.file.cmd = QM_CMD_SONG_FILE;
-        g_message.file.arg = (uint32_t)index;
-        snprintf(g_message.file.key, sizeof(g_message.file.key), "%s", key);
-        snprintf(g_message.file.path, sizeof(g_message.file.path), "%s", path);
-        rc = sendLocked();
     }
     unlock();
     return rc;

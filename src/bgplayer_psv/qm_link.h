@@ -13,8 +13,8 @@
  * in its ipc.h (ElevenMPV-A-Common/include/ipc.h at v7.10). Both put the
  * song on the row's two lines and send the presses of its three buttons back.
  *
- * Shared by VitaPlex BG and its background player. Plain C; every call is
- * safe from any thread once qmInit has run, and none waits for long.
+ * VitaPlex BG's. Plain C; every call is safe from any thread once qmInit has
+ * run, and none waits for long.
  */
 
 #ifndef VITAPLEX_QM_LINK_H
@@ -80,10 +80,6 @@ int qmMusicTest(const char* path);
 // the server at base, the token sent as a header, from inside SceShell
 // (QM_CMD_HTTP_TEST). -1 with ElevenMPV-A's plugin.
 int qmHttpTest(const char* base, const char* path, const char* token, unsigned bytes);
-// The background player's: a song of its queue that is on the memory card
-// (QM_CMD_SONG_FILE), for SceShell to carry the queue on with should the
-// system end the player. -1 with ElevenMPV-A's plugin.
-int qmSongFile(int index, const char* key, const char* path);
 // VitaPlex BG's, as it goes: SceShell plays its queue, written to
 // BGPLAYER_QUEUE first, from the queue's song and place (QM_CMD_PLAY_QUEUE).
 // -1 with ElevenMPV-A's plugin.

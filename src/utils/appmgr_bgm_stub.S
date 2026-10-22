@@ -12,7 +12,7 @@
  *       found; callers pass a single 0, which a call taking none ignores.
  *
  * Library SceAppMgr is 0x8AF17416 in vita-headers' db for firmware 3.60
- * (db/360/SceAppMgr.yml). The layout of src/bgplayer_psv/raw_exit.S.
+ * (db/360/SceAppMgr.yml). The layout of lib/libshellaudio/shellsvc_stub.S.
  */
 
 	.arm

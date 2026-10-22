@@ -29,14 +29,14 @@
  * until background music works there.
  *
  * VitaPlex BG plays on after PS through the BGM port, but the system closes it
- * to start a game. Its package carries a background player for that
- * (src/bgplayer_psv, bgplayer.h): a small program of its own that outlives the
- * app and plays the queue through the shell's music player, which plays on
- * beside games. The app hands it the queue as the system closes it, or as soon
- * as it is left, by the setting, and takes the music back from it when opened
- * again. By another setting the queue goes to SceShell itself instead,
- * through the package's quick menu plugin, which no app or game closes
- * (setPlayInShell).
+ * to start a game. So it hands the queue to SceShell, which no app or game
+ * closes, as the system closes it, or as soon as it is left, by the setting:
+ * the package's quick menu plugin plays it on there through the shell's music
+ * player, which plays on beside games, and fetches the songs not on the card
+ * as they come up (src/qm_plugin_psv, qm_protocol.h, bgplayer.h). Opened
+ * again, the app takes the music back. Up to build 2045 a background player,
+ * a program of its own in the package, played it instead; the system ended
+ * it as an app with extended memory opened.
  */
 
 #pragma once
@@ -57,15 +57,15 @@ bool available();
 // What happens to music playing as the user leaves VitaPlex BG (the setting).
 enum OutsideMusic {
     kOutsideStops = 0,        // it stops, as in VitaPlex
-    kOutsidePlaysOn = 1,      // VitaPlex BG plays on; its background player
-                              // takes over when the system closes it
-    kOutsideHandsOver = 2,    // the background player takes over at once, on PS
+    kOutsidePlaysOn = 1,      // VitaPlex BG plays on; SceShell takes over when
+                              // the system closes it
+    kOutsideHandsOver = 2,    // SceShell takes over at once, on PS
 };
 
 // Called once at startup, after settings are loaded, with the saved setting.
 // Outside VitaPlex BG it is taken as kOutsideStops, whatever was saved. In
-// VitaPlex BG it also takes the music back from its background player, once
-// the first frame is up.
+// VitaPlex BG it also takes the music back from SceShell, once the first
+// frame is up.
 void init(int outsideMusic);
 
 // The setting. Anything but kOutsideStops holds the BGM port while music
@@ -75,16 +75,7 @@ void setOutsideMusic(int mode);
 int outsideMusic();
 bool keepPlaying();
 
-// What plays the music handed over (the setting): SceShell itself, through
-// VitaPlex BG's quick menu plugin (qm_protocol.h's QM_CMD_PLAY_QUEUE), with no
-// background player, when on and that plugin will load; else the background
-// player, as before.
-void setPlayInShell(bool on);
-bool playInShell();
-
-// Ends the process: through the system call under sceKernelExitProcess once
-// VitaPlex BG has asked for its background player, since that function did
-// not return then (docs/DESIGN_NOTES.md, BG Tests 18 to 21).
+// Ends the process.
 [[noreturn]] void exitProcess(int code);
 
 // From MpvPlayer, audio-only mode only.
@@ -124,8 +115,7 @@ void setShellService(int service);
 // How VitaPlex BG takes the system's BGM port: 0 at priority 0x81 for mpv
 // while background playback is on, as before; 1 at 0x80, 2 with no priority,
 // 3 as a music player, 4 not at all, each whenever mpv plays. The system
-// player tests and the background player (through the queue) take it the
-// same way, except at 0x80 for 0 and 1. "As a music player" put VitaPlex's
+// player tests take it the same way, except at 0x80 for 0 and 1. "As a music player" put VitaPlex's
 // icon in the quick menu's Music row, its buttons dimmed, with mpv playing
 // (log 9c16c0d6), and the system player would not play with it held (log
 // dbd9b556). Not saved.
@@ -134,8 +124,9 @@ void setOwnPortTest(int choice);
 
 // The quick menu's Music row, through VitaPlex's quick menu plugin, or
 // ElevenMPV-A's where that will not load (src/bgplayer_psv/qm_link.h): the
-// song on it and its three buttons working, for VitaPlex BG's own playback
-// and, through the queue, the background player's. On or off, as saved.
+// song on it and its three buttons working, for VitaPlex BG's own playback.
+// SceShell takes the row itself as it plays the queue handed over. On or
+// off, as saved.
 void setQuickMenuControls(bool on);
 // How VitaPlex's plugin switches the row's buttons on (QM_LOOK_* in
 // qm_protocol.h): ElevenMPV-A's way left them dimmed. Not saved.
@@ -154,8 +145,6 @@ inline bool available() { return false; }
 inline void init(int) {}
 inline void setOutsideMusic(int) {}
 inline int outsideMusic() { return 0; }
-inline void setPlayInShell(bool) {}
-inline bool playInShell() { return false; }
 inline bool keepPlaying() { return false; }
 inline void onAudioPlayback(bool) {}
 inline void onTrackLoad() {}

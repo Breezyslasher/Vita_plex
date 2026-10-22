@@ -112,10 +112,6 @@ if(PLATFORM_PSV)
     # The eboot reads which of the two it runs as, and only this one offers
     # the background-audio tests (utils/background_audio.hpp).
     set(VITA_BG_TITLEID "VPLEX0002")
-    # VitaPlex BG's background player, eboot2.bin in its package
-    # (src/bgplayer_psv): the title id its param2.sfo gives it, which the
-    # system lists it by.
-    set(VITA_BG_PLAYER_TITLEID "VPLEXPLAY")
     set(VITA_VERSION  "01.00")
     set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
 endif()
@@ -830,14 +826,13 @@ int main() {
     # port calls come from SceAppMgr_stub, linked above; SceShell's music
     # service is driven through the vendored libShellAudio, plus the one
     # import stub vitasdk has no library for (lib/libshellaudio/README.md).
-    # VitaPlex BG starts its background player with SceBgAppUtil, talks to it
-    # through the files bgplayer.h lays out, and ends through the system call
-    # under sceKernelExitProcess once it has (raw_exit.S). Two BGM calls the
-    # SDK leaves out come from appmgr_bgm_stub.S. The quick menu's Music row
-    # goes through ElevenMPV-A's shell plugin (qm_link.c), which VitaPlexBG.vpk
-    # carries, with the pipe and taiHEN calls the SDK leaves out in
-    # qm_link_stub.S, and the song's cover through qm_cover.c, which decodes
-    # with the stb_image borealis's nanovg builds.
+    # Two BGM calls the SDK leaves out come from appmgr_bgm_stub.S. VitaPlex
+    # BG hands its queue to SceShell through its quick menu plugin
+    # (qm_link.c), with the files bgplayer.h lays out; the quick menu's Music
+    # row goes through the same plugin, or ElevenMPV-A's shell plugin, which
+    # VitaPlexBG.vpk carries too, with the pipe and taiHEN calls the SDK
+    # leaves out in qm_link_stub.S, and the song's cover through qm_cover.c,
+    # which decodes with the stb_image borealis's nanovg builds.
     enable_language(ASM)
     target_sources(${PROJECT_NAME} PRIVATE
         src/utils/background_audio_psv.cpp
@@ -845,7 +840,6 @@ int main() {
         src/utils/appmgr_bgm_stub.S
         src/bgplayer_psv/qm_link.c
         src/bgplayer_psv/qm_link_stub.S
-        src/bgplayer_psv/raw_exit.S
         lib/libshellaudio/ShellAudio.c
         lib/libshellaudio/shellsvc_stub.S)
     target_include_directories(${PROJECT_NAME} PRIVATE
@@ -853,9 +847,7 @@ int main() {
         ${CMAKE_CURRENT_SOURCE_DIR}/src/bgplayer_psv)
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         VITAPLEX_BG_TITLEID=\"${VITA_BG_TITLEID}\"
-        BGPLAYER_TITLEID=\"${VITA_BG_PLAYER_TITLEID}\"
         BGPLAYER_APP_TITLEID=\"${VITA_BG_TITLEID}\")
-    target_link_libraries(${PROJECT_NAME} SceBgAppUtil_stub)
 elseif(PLATFORM_SWITCH)
     # Required for __wrap_pthread_create in src/utils/switch_stubs.c — floors
     # libmpv/ffmpeg thread stacks above libnx's 128 KB default so they stop
@@ -1442,58 +1434,10 @@ if(PLATFORM_PSV)
         NAME    ${VITA_APP_NAME}
         ${VITA_MAIN_VPK_FILES})
 
-    # ── VitaPlex BG's background player (src/bgplayer_psv) ─────────────
-    # A program of its own in VitaPlex BG's package, eboot2.bin with its own
-    # sce_sys/param2.sfo, which the app starts with sceBgAppUtilStartBgApp as
-    # the system closes it for a game. It plays the app's queue through
-    # SceShell's music service, which plays on beside games: the background
-    # test's player (src/bgtest_psv, BG Tests 14 to 21) with a queue. curl,
-    # mbedtls and zlib fetch as VitaPlex does, and the boot param of BGFTP's
-    # program (attribute 3, 16 MB) makes it one. vita_create_self appends to
-    # VITA_MAKE_FSELF_FLAGS in this scope, so it starts from nothing and the
-    # flags are put back after.
-    add_executable(vitaplex_bgplayer
-        src/bgplayer_psv/main.c
-        src/bgplayer_psv/player.c
-        src/bgplayer_psv/apps.c
-        src/bgplayer_psv/mp3_info.c
-        src/bgplayer_psv/qm_cover.c
-        src/bgplayer_psv/qm_link.c
-        src/bgplayer_psv/qm_link_stub.S
-        src/bgplayer_psv/raw_exit.S
-        src/bgplayer_psv/stb_image_impl.c
-        src/utils/appmgr_bgm_stub.S
-        lib/libshellaudio/ShellAudio.c
-        lib/libshellaudio/shellsvc_stub.S)
-    # stb_image.h, for the covers on the quick menu's row (qm_cover.c), from
-    # where VitaPlex BG gets it with borealis's nanovg.
-    target_include_directories(vitaplex_bgplayer PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio
-        ${CMAKE_CURRENT_SOURCE_DIR}/lib/borealis/library/include/borealis/extern/nanovg)
-    target_compile_definitions(vitaplex_bgplayer PRIVATE
-        BGPLAYER_TITLEID=\"${VITA_BG_PLAYER_TITLEID}\"
-        BGPLAYER_APP_TITLEID=\"${VITA_BG_TITLEID}\")
-    target_link_libraries(vitaplex_bgplayer
-        curl mbedtls mbedx509 mbedcrypto z m
-        SceAppMgr_stub
-        ScePower_stub
-        SceSysmodule_stub
-        SceIofilemgr_stub
-        SceNet_stub
-        SceNetCtl_stub
-        SceRtc_stub
-        SceLibKernel_stub
-        # curl resolves names on a thread; whole, as borealis links it for VitaPlex
-        -Wl,--whole-archive pthread -Wl,--no-whole-archive)
-    target_link_options(vitaplex_bgplayer PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
-    set(_bgp_saved_fself "${VITA_MAKE_FSELF_FLAGS}")
-    set(VITA_MAKE_FSELF_FLAGS "")
-    vita_create_self(vitaplex_bgplayer.self vitaplex_bgplayer UNSAFE MEMSIZE 0x4000 ATTRIBUTE 3)
-    set(VITA_MAKE_FSELF_FLAGS "${_bgp_saved_fself}")
-
     # ── VitaPlex's quick menu plugin (src/qm_plugin_psv) ────────────────
-    # A module VitaPlex BG and its player load into SceShell (qm_link.c), for
-    # the song and working buttons in the quick menu's Music row. It is
+    # A module VitaPlex BG loads into SceShell (qm_link.c), for the song and
+    # working buttons in the quick menu's Music row, and to play the queue
+    # VitaPlex BG hands it as it goes, from inside SceShell. It is
     # written against PAF, the Vita's UI library, whose headers
     # scripts/vita/fetch_paf_headers.sh fetches; without
     # -DVITAPLEX_PAF_INCLUDE_DIR it is left out, and VitaPlex falls back to
@@ -1518,11 +1462,6 @@ if(PLATFORM_PSV)
             ${CMAKE_CURRENT_SOURCE_DIR}/src/bgplayer_psv)
         target_compile_options(vitaplex_qm PRIVATE
             "$<$<COMPILE_LANGUAGE:CXX>:-O2;-fno-rtti;-fno-exceptions;-fno-builtin;-fshort-wchar;-fno-threadsafe-statics;-fno-sized-deallocation;-Wno-unused-function;-Wno-sign-compare;-Wno-template-body;-D__declspec(x)=>")
-        # bgplayer.h's files, which it reads and writes as it carries the
-        # background player's queue on (qm_protocol.h).
-        target_compile_definitions(vitaplex_qm PRIVATE
-            BGPLAYER_TITLEID=\"${VITA_BG_PLAYER_TITLEID}\"
-            BGPLAYER_APP_TITLEID=\"${VITA_BG_TITLEID}\")
         target_link_options(vitaplex_qm PRIVATE -nostartfiles -nostdlib)
         target_link_libraries(vitaplex_qm
             SceLibKernel_stub
@@ -1558,21 +1497,6 @@ if(PLATFORM_PSV)
         message(STATUS "Vita quick menu plugin left out: no PAF headers "
                        "(-DVITAPLEX_PAF_INCLUDE_DIR, scripts/vita/fetch_paf_headers.sh)")
     endif()
-    # Its param2.sfo: the keys of BGFTP's background program's and no others
-    # (vita-mksfoex -e, without its defaults), a title id of its own, and its
-    # app's for save data and add-on content, as the background tests had.
-    set(_bgp_param2 ${CMAKE_CURRENT_BINARY_DIR}/bgplayer_param2.sfo)
-    add_custom_command(OUTPUT ${_bgp_param2}
-        COMMAND ${VITA_MKSFOEX} -e
-            -s APP_VER=01.00 -d ATTRIBUTE=0x81000 -d ATTRIBUTE2=0 -s CATEGORY=gdd
-            -s CONTENT_ID=HB0001-${VITA_BG_PLAYER_TITLEID}_00-0000000000000000
-            -s INSTALL_DIR_ADDCONT=${VITA_BG_TITLEID} -s INSTALL_DIR_SAVEDATA=${VITA_BG_TITLEID}
-            -d PARENTAL_LEVEL=1 -d REGION_DENY=0 -d SAVEDATA_MAX_SIZE=1048576
-            -s "STITLE=VitaPlex BG player" -s "TITLE=VitaPlex BG player"
-            -s TITLE_ID=${VITA_BG_PLAYER_TITLEID} -s VERSION=01.00 ${_bgp_param2}
-        COMMENT "Generating param2.sfo for VitaPlex BG's background player"
-        VERBATIM)
-
     # ── VitaPlex as a non-game app ──────────────────────────────────────
     # The same eboot and files, packaged as the background test's VPLXBGT04
     # is: a non-game application (gdc) with ElevenMPV-A's attributes and
@@ -1581,10 +1505,8 @@ if(PLATFORM_PSV)
     # frozen, and it could allocate 342 MB of main memory against VitaPlex's
     # 172 MB heap. It has a title id of its own so it installs beside
     # VitaPlex; the two share ux0:data/VitaPlex, so only one should be open
-    # at a time. A game cannot carry a background program, a non-game app
-    # can (BG Tests 14 to 19), so its player is packed here alone. The same
-    # save-and-restore as the background test below, for the same reason
-    # (vita_create_vpk appends to these in this scope).
+    # at a time. The same save-and-restore as the background test below, for
+    # the same reason (vita_create_vpk appends to these in this scope).
     set(_bg_saved_sfo "${VITA_MKSFOEX_FLAGS}")
     set(_bg_saved_pack "${VITA_PACK_VPK_FLAGS}")
     set(_bg_saved_resources "${resources}")
@@ -1595,12 +1517,10 @@ if(PLATFORM_PSV)
         VERSION ${VITA_VERSION}
         NAME    "VitaPlex BG"
         ${VITA_MAIN_VPK_FILES}
-        FILE ${CMAKE_BINARY_DIR}/vitaplex_bgplayer.self eboot2.bin
-        FILE ${_bgp_param2} sce_sys/param2.sfo
         # ElevenMPV-A's quick menu plugin as its release has it, a GPL-3.0
-        # program of its own that the app and its player load into SceShell
-        # (qm_link.c), with its licence and a note of where its source is
-        # beside it (third_party/elevenmpva-shell-plugin/README.md).
+        # program of its own that the app loads into SceShell (qm_link.c)
+        # when VitaPlex's will not load, with its licence and a note of where
+        # its source is beside it (third_party/elevenmpva-shell-plugin/README.md).
         FILE third_party/elevenmpva-shell-plugin/shell_plugin.suprx module/shell_plugin.suprx
         FILE third_party/elevenmpva-shell-plugin/LICENSE            module/shell_plugin.LICENSE.txt
         FILE third_party/elevenmpva-shell-plugin/NOTICE.txt         module/shell_plugin.NOTICE.txt

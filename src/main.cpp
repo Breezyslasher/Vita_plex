@@ -154,10 +154,9 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     vitaplex::shell::setShortcutAllowed(app.getSettings().windowsStartMenuShortcut);
 
     // VitaPlex BG's music outside the app starts watching here, and takes the
-    // music back from its background player. No-op on every other platform.
+    // music back from SceShell. No-op on every other platform.
     vitaplex::bgaudio::init(app.getSettings().vitaOutsideMusic);
     vitaplex::bgaudio::setQuickMenuControls(app.getSettings().vitaQuickMenuControls);
-    vitaplex::bgaudio::setPlayInShell(app.getSettings().vitaPlayInShell);
 
     // Run application (blocking)
     app.run();
