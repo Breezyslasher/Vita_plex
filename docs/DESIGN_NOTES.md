@@ -2899,12 +2899,13 @@ that handed over was written over).
   - VitaPlex BG's sync of its 147 downloads, one request each, ran on the
     UI thread before the main screen: 20.1 s in the next session. The
     take-back waits for the first frame, so it never came. PS was pressed
-    at 22:03:48 and another app started at 22:03:51, and VitaPlex BG was
-    ended 2 s later with the sync still going. Song 7 played out in the
-    shell with nothing after it.
+    at 22:03:48 and the system asked VitaPlex BG to quit at 22:03:51; it
+    was ended 2 s later with the sync 7.6 s in and still going. Song 7
+    played out in the shell with nothing after it.
   - Opened again at 22:04:14, VitaPlex BG reached its take-back 26.6 s
-    later, the sync again in the way. It found SceShell's status 30.6 s
-    old, past the 20 s it allows, and took nothing back.
+    later, the sync again in the way. It found SceShell's status 30.7 s
+    old, past the 20 s it allows, and took nothing back. It was written as
+    the session before told SceShell to stop.
 
 **Build 2044: from that run.**
 
