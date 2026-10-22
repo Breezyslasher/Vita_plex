@@ -24,14 +24,19 @@
 // version 8's fetches the start of a song from the server, from inside
 // SceShell, for a test (QM_CMD_HTTP_TEST); version 9's fetches the queue's
 // songs that are not on the memory card as it carries the queue on, and
-// says so in the status ("fetching=1").
-#define QM_PIPE_TO_PLUGIN   "VitaPlexQM9::ToPlugin"
-#define QM_PIPE_FROM_PLUGIN "VitaPlexQM9::FromPlugin"
+// says so in the status ("fetching=1"); version 10's takes the queue from
+// VitaPlex BG itself (QM_CMD_PLAY_QUEUE), fetches covers for the songs on the
+// card too, and marks the songs it played to their end played.
+#define QM_PIPE_TO_PLUGIN   "VitaPlexQM10::ToPlugin"
+#define QM_PIPE_FROM_PLUGIN "VitaPlexQM10::FromPlugin"
 
 // SceShell carries the queue on. The system ends the background player as an
 // app with extended memory starts, and SceShell is never ended. So when the
 // player stops sending QM_CMD_ACTIVATE without giving the row back, the
-// plugin plays the rest of its queue itself, from inside SceShell:
+// plugin plays the rest of its queue itself, from inside SceShell. VitaPlex
+// BG can also hand its queue to SceShell straight away, with no background
+// player (QM_CMD_PLAY_QUEUE); SceShell then begins at the queue's song and
+// place in it, and goes on the same way:
 //
 // - The song playing, from the player's status (bgplayer.h), plays on to its
 //   end. Then the queue's next song plays: its download if the shell plays
@@ -44,8 +49,10 @@
 //   passed over, as are all those not on the card when VitaPlex's settings
 //   name no server.
 // - The row stays: the song, its cover if the player made one or SceShell
-//   fetched one (QM_SONG_COVER_FMT), and its buttons, which now act on
-//   SceShell's music.
+//   fetched one (QM_SONG_COVER_FMT; for the songs on the card too), and its
+//   buttons, which now act on SceShell's music.
+// - A song played to its end is marked played on the server, as the player
+//   marks it.
 // - The player's status file is written as the player writes it, with
 //   "by=SceShell" in it, so that VitaPlex BG takes the music back where
 //   SceShell has got to; with "fetching=1" while it waits for a song, which
@@ -96,7 +103,13 @@ enum {
     // qm-plugin.log, each line with "http test:" in it and the last with
     // "http test: done". Whether this works decides whether SceShell can
     // fetch the queue's songs that are not on the memory card.
-    QM_CMD_HTTP_TEST
+    QM_CMD_HTTP_TEST,
+    // From VitaPlex BG as it goes, in place of starting its background
+    // player: SceShell plays the queue at BGPLAYER_QUEUE (bgplayer.h) itself,
+    // from its song and place there (index=, positionMs=, and file= when the
+    // app made that song ready as a file), and takes the row for it. Sent
+    // once the row has been given back, and the queue written whole.
+    QM_CMD_PLAY_QUEUE
 };
 enum { QM_OWNER_APP = 1, QM_OWNER_PLAYER = 2 };
 

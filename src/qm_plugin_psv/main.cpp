@@ -44,6 +44,9 @@
  *   SceShell can fetch the queue's songs that are not on the memory card.
  * - As it carries the queue on, it fetches those songs that way, each while
  *   the one before plays, when the shell plays their format (build 2042).
+ * - VitaPlex BG can hand its queue to it straight away, with no background
+ *   player (QM_CMD_PLAY_QUEUE, build 2043): it plays from the queue's song
+ *   and place, fetches covers and marks songs played, as the player does.
  *
  * Built with vitasdk against the PAF headers scripts/vita/fetch_paf_headers.sh
  * fetches; its PAF imports are in paf_stubs.S. Logs to
@@ -2002,6 +2005,7 @@ int g_carryAllowed;      // the player has had the row since VitaPlex BG took th
 int g_carry;             // 1 to begin (the watch thread's ask), 2 carrying on
 const char* g_carryStop; // why it is to stop, or NULL ...
 int g_carryStopHow;      // ... and how (kEnd*)
+int g_playQueueDue;      // VitaPlex BG has handed its queue over (QM_CMD_PLAY_QUEUE)
 uint32_t g_shellArts;    // kShellArt serials so far
 
 // The music thread's alone.
@@ -2015,6 +2019,23 @@ struct Track {
     char path[128];     // the file the shell is given
     int own;            // the player's (BGPLAYER_SONGS): removed once played
 };
+// A few songs remembered by their place in the queue: the last 8.
+struct Ring {
+    int v[8];
+    int n;  // added so far
+};
+
+bool ringHas(const Ring* r, int i) {
+    const int n = r->n < 8 ? r->n : 8;
+    for (int k = 0; k < n; k++)
+        if (r->v[k] == i) return true;
+    return false;
+}
+
+void ringAdd(Ring* r, int i) {
+    if (!ringHas(r, i)) r->v[r->n++ & 7] = i;
+}
+
 struct Carry {
     char queue[32];     // the queue's "written=", as it has it
     int repeat, count;
@@ -2042,11 +2063,25 @@ struct Carry {
     int waitTries;
     const char* waitWhy;
     int waitPlays;
+    // A song's file fetched here and not yet played: its place (-1 for none),
+    // key and file. Kept apart from g_fetch, which goes on to other jobs.
+    int fetchedIndex;
+    char fetchedKey[16];
+    char fetchedPath[128];
     int fetchWant;   // a song to fetch once the fetch running has stopped, -1 if none
     int fetchEnds;   // g_fetch.ends as last seen
-    int aheadDue;    // the song after this one to be fetched, if it is not on the card
-    int lost[8];     // songs the server has no file of for the shell, the last 8
-    int lostCount;
+    int aheadDue;    // what to fetch next to be looked at (fetchAhead)
+    Ring lost;         // songs the server has no file of for the shell
+    Ring failedAhead;  // songs whose fetch failed ahead: fetched again only when next
+    Ring coverTried;   // songs whose cover was asked for
+    // VitaPlex BG's song as it handed the queue over (-1 for none), and where
+    // in it: the shell is taken there once it plays (seekTo), and a seek to
+    // there under way (0 for none), since when, and how many times asked.
+    int startIndex;
+    uint32_t startAtMs;
+    uint32_t seekWantMs;
+    SceUInt64 seekUs;
+    int seekTries;
 };
 Carry g_c;
 Track g_found;  // a song looked at for what comes next
@@ -2206,6 +2241,9 @@ struct QueueScan {
     bool whole;         // its "end" read
     char written[32];
     int repeat;
+    int start;          // the song to start with (index=), and where in it
+    uint32_t startMs;
+    char file[128];     // that song as a file VitaPlex BG made ready (file=), or ""
 };
 
 bool scanOpen(QueueScan* s) {
@@ -2213,6 +2251,9 @@ bool scanOpen(QueueScan* s) {
     s->whole = false;
     s->written[0] = 0;
     s->repeat = BGPLAYER_REPEAT_OFF;
+    s->start = 0;
+    s->startMs = 0;
+    s->file[0] = 0;
     return readerOpen(BGPLAYER_QUEUE);
 }
 
@@ -2228,6 +2269,14 @@ bool scanNext(QueueScan* s, const char** fields) {
             sceClibSnprintf(s->written, sizeof(s->written), "%s", g_line + 8);
         } else if (startsWith(g_line, "repeat=")) {
             s->repeat = (int)toUint(g_line + 7);
+        } else if (startsWith(g_line, "index=")) {
+            s->start = toInt(g_line + 6);
+        } else if (startsWith(g_line, "positionMs=")) {
+            s->startMs = toUint(g_line + 11);
+        } else if (startsWith(g_line, "file=")) {
+            // A path is never cut: one too long is left out.
+            const bool fits = sceClibStrnlen(g_line + 5, sizeof(s->file)) < sizeof(s->file);
+            sceClibSnprintf(s->file, sizeof(s->file), "%s", fits ? g_line + 5 : "");
         } else if (same(g_line, "end")) {
             s->whole = true;
         }
@@ -2472,6 +2521,23 @@ void showTrack(const Track* t) {
     unlock();
 }
 
+// The row's cover, once t's has come, its lines and ⏸ left as they are.
+void showCover(const Track* t) {
+    char cover[160];
+    sceClibSnprintf(cover, sizeof(cover), QM_SONG_COVER_FMT, t->key);
+    if (!exists(cover)) return;
+    lock();
+    sceClibSnprintf(g_artPath, sizeof(g_artPath), "%s", cover);
+    g_artSerial = kShellArt | (++g_shellArts & ~kShellArt);
+    unlock();
+}
+
+// Where in t the shell is to begin: VitaPlex BG's place in the song it handed
+// over, until the shell has been taken there; 0 for any other.
+uint32_t startAt(const Track* t) {
+    return t->index == g_c.startIndex ? g_c.startAtMs : 0;
+}
+
 // ── Fetching the queue's songs ──────────────────────────────────────────────
 // A song the queue goes on to that is not on the memory card is fetched from
 // VitaPlex's server, as the background player fetches one (player.c's
@@ -2480,18 +2546,22 @@ void showTrack(const Track* t) {
 // for the row (QM_SONG_COVER_FMT). Each goes once played, as the player's own
 // files do. The song after the one with the shell is fetched while that one
 // plays; one wanted at once (that one ended first, or next was pressed) is
-// waited for, the shell stopped meanwhile. One fetch at a time, on a thread
-// of its own, through Sony's libraries as the test above finds them. The
-// server comes from VitaPlex's settings, and the token too, read for each
-// fetch and wiped after it. Songs in other formats, of which the player has
-// the server make MP3s, are passed over.
+// waited for, the shell stopped meanwhile. With nothing else to fetch, the
+// covers the row is to show come next, for the songs on the card too: this
+// song's, then the next one's. One fetch at a time, on a thread of its own,
+// through Sony's libraries as the test above finds them. The server comes
+// from VitaPlex's settings, and the token too, read for each fetch and wiped
+// after it. Songs in other formats, of which the player has the server make
+// MP3s, are passed over.
 enum { kFetchIdle, kFetchRunning, kFetchDone, kFetchFailed };
+enum { kJobSong, kJobCover };  // a song's file and its cover, or its cover alone
 const int kFetchStack = 0x8000;
 const int kFetchStopped = 1;  // fetchBody's: stopped by a cancel
 
 // Under g_lock. t is the fetch thread's as it runs, but for its place and key.
 struct Fetch {
     int state;    // kFetch*
+    int kind;     // kJob*
     int cancel;   // set to stop it
     int ends;     // fetches ended so far
     int forGood;  // failed in a way another try would not mend
@@ -2667,13 +2737,15 @@ int fetchBody(int req, SceUID fd, const char* label, uint8_t* first, uint32_t* g
 // The song's cover for the row, from the server's photo transcoder as
 // player.c's fetchCover asks for it, but as a PNG, which the row can show:
 // nothing here could make one of another format. Left out when anything is
-// amiss, the row showing its own icon then.
-void fetchCover(int tmpl, const char* server, const char* token, const char* label) {
+// amiss, the row showing its own icon then. 1 when the cover is on the card,
+// 0 when it is not, -1 when stopped.
+int fetchCover(int tmpl, const char* server, const char* token, const char* label) {
     const Track* const t = &g_fetch.t;
     static char path[160], thumb[400];
     char* const part = g_fetchPart;
     sceClibSnprintf(path, sizeof(path), QM_SONG_COVER_FMT, t->key);
-    if (!t->thumb[0] || exists(path)) return;
+    if (exists(path)) return 1;
+    if (!t->thumb[0]) return 0;
     urlEncode(t->thumb, thumb, sizeof(thumb));
     sceClibSnprintf(g_fetchUrl, sizeof(g_fetchUrl),
                     "%s/photo/:/transcode?width=%d&height=%d&minSize=1&upscale=1&format=png&url=%s",
@@ -2682,7 +2754,7 @@ void fetchCover(int tmpl, const char* server, const char* token, const char* lab
     const SceUID fd = sceIoOpen(part, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
     if (fd < 0) {
         logLine("carry on: %s: no cover: %s not written (0x%08X)", label, part, (unsigned)fd);
-        return;
+        return 0;
     }
     int conn, req, status = 0;
     uint8_t first[8];
@@ -2703,12 +2775,13 @@ void fetchCover(int tmpl, const char* server, const char* token, const char* lab
         rc = sceIoRename(part, path);
         if (rc >= 0) {
             logLine("carry on: %s: its cover fetched, %u bytes", label, (unsigned)got);
-            return;
+            return 1;
         }
     }
     sceIoRemove(part);
     if (rc == kFetchStopped) {
         logLine("carry on: %s: no cover: stopped", label);
+        return -1;
     } else if (rc < 0 || rcClose < 0) {
         logLine("carry on: %s: no cover: 0x%08X", label, (unsigned)(rc < 0 ? rc : rcClose));
     } else if (status != 200) {
@@ -2717,6 +2790,7 @@ void fetchCover(int tmpl, const char* server, const char* token, const char* lab
         logLine("carry on: %s: no cover: not a PNG, its first bytes %02X %02X %02X %02X", label,
                 first[0], first[1], first[2], first[3]);
     }
+    return 0;
 }
 
 // The song's file whole from the server's partKey into t's path, through a
@@ -2838,13 +2912,14 @@ int fetchSongNow(int tmpl, const char* server, const char* token, const char* la
     return kFetchDone;
 }
 
-// The fetch thread: g_fetch.t fetched, the outcome left in g_fetch for the
-// music thread (fetchPoll).
+// The fetch thread: g_fetch.t fetched, or its cover alone, the outcome left
+// in g_fetch for the music thread (fetchPoll).
 int fetchThread(SceSize, void*) {
     static char server[256], token[160], label[32], why[96];
     sceClibSnprintf(label, sizeof(label), "song %d of %d", g_fetch.t.index + 1, g_fetch.count);
     why[0] = 0;
     int forGood = 0, result = kFetchFailed;
+    bool said = false;  // what came of it logged already
     if (!readServer((char*)g_fetchBuf, sizeof(g_fetchBuf), server, sizeof(server), token,
                     sizeof(token))) {
         sceClibSnprintf(why, sizeof(why), "no server in VitaPlex's settings");
@@ -2860,6 +2935,12 @@ int fetchThread(SceSize, void*) {
             const int tmpl = httpTemplate("carry on");
             if (tmpl < 0) {
                 sceClibSnprintf(why, sizeof(why), "no template (0x%08X)", (unsigned)tmpl);
+            } else if (g_fetch.kind == kJobCover) {
+                const int got = fetchCover(tmpl, server, token, label);
+                result = got > 0 ? kFetchDone : kFetchFailed;
+                if (got < 0) sceClibSnprintf(why, sizeof(why), "stopped");
+                said = true;
+                httpFn<FnId>(kHttpDeleteTemplate)(tmpl);
             } else {
                 result = fetchSongNow(tmpl, server, token, label, why, sizeof(why), &forGood);
                 httpFn<FnId>(kHttpDeleteTemplate)(tmpl);
@@ -2868,7 +2949,9 @@ int fetchThread(SceSize, void*) {
         httpEnd("carry on", rcSsl, rcHttp);
     }
     sceClibMemset(token, 0, sizeof(token));
-    if (result != kFetchDone) logLine("carry on: %s: not fetched: %s", label, why);
+    if (result != kFetchDone && !said)
+        logLine("carry on: %s: %snot fetched: %s", label,
+                g_fetch.kind == kJobCover ? "its cover " : "", why);
     lock();
     g_fetch.state = result;
     g_fetch.forGood = forGood;
@@ -2878,73 +2961,88 @@ int fetchThread(SceSize, void*) {
     return sceKernelExitDeleteThread(0);
 }
 
-// Whether the server has been found to have no file of song i for the shell.
-bool lostSong(int i) {
-    const int n = g_c.lostCount < 8 ? g_c.lostCount : 8;
-    for (int k = 0; k < n; k++)
-        if (g_c.lost[k] == i) return true;
-    return false;
+// Whether g_fetch is a job of this kind for t. Under g_lock.
+bool fetchIsFor(const Track* t, int kind) {
+    return g_fetch.state != kFetchIdle && g_fetch.kind == kind && g_fetch.t.index == t->index &&
+           same(g_fetch.t.key, t->key);
 }
 
-// Whether g_fetch is for t. Under g_lock.
-bool fetchIsFor(const Track* t) {
-    return g_fetch.state != kFetchIdle && g_fetch.t.index == t->index && same(g_fetch.t.key, t->key);
-}
-
-// t's file as fetched here, into t->path: true when it is on the card.
-bool fetchedFor(Track* t) {
-    char path[128];
-    lock();
-    const bool done = g_fetch.state == kFetchDone && fetchIsFor(t);
-    if (done) sceClibSnprintf(path, sizeof(path), "%s", g_fetch.t.path);
-    unlock();
-    if (!done || !exists(path)) return false;
-    sceClibSnprintf(t->path, sizeof(t->path), "%s", path);
-    t->own = 1;
-    return true;
-}
-
-// A song fetched and not played, removed, with its cover: not the one with
-// the shell, whose file goes once another has it. Under nothing.
+// The song fetched here and not played, removed with its cover, unless the
+// shell has it, whose file goes once another has it; forgotten either way.
 void dropFetched() {
+    if (g_c.fetchedIndex < 0) return;
+    if (!same(g_c.fetchedPath, g_c.cur.path)) {
+        const int rc = sceIoRemove(g_c.fetchedPath);
+        char cover[160];
+        sceClibSnprintf(cover, sizeof(cover), QM_SONG_COVER_FMT, g_c.fetchedKey);
+        sceIoRemove(cover);
+        logLine("carry on: song %d, fetched and not played, removed: 0x%08X",
+                g_c.fetchedIndex + 1, (unsigned)rc);
+    }
+    g_c.fetchedIndex = -1;
+    g_c.fetchedPath[0] = 0;
+}
+
+// A song's file that g_fetch has fetched, taken into g_c.fetched*, and g_fetch
+// left free; one fetched before and not played goes, if it is another file.
+void takeFetched() {
     Track t;
     lock();
-    const bool drop = g_fetch.state == kFetchDone && !same(g_fetch.t.path, g_c.cur.path);
-    if (drop) {
+    const bool took = g_fetch.state == kFetchDone && g_fetch.kind == kJobSong;
+    if (took) {
         t = g_fetch.t;
         g_fetch.state = kFetchIdle;
     }
     unlock();
-    if (!drop) return;
-    const int rc = sceIoRemove(t.path);
-    char cover[160];
-    sceClibSnprintf(cover, sizeof(cover), QM_SONG_COVER_FMT, t.key);
-    sceIoRemove(cover);
-    logLine("carry on: song %d, fetched and not played, removed: 0x%08X", t.index + 1,
-            (unsigned)rc);
+    if (!took) return;
+    if (g_c.fetchedIndex >= 0 && !same(g_c.fetchedPath, t.path)) dropFetched();
+    g_c.fetchedIndex = t.index;
+    sceClibSnprintf(g_c.fetchedKey, sizeof(g_c.fetchedKey), "%s", t.key);
+    sceClibSnprintf(g_c.fetchedPath, sizeof(g_c.fetchedPath), "%s", t.path);
 }
 
-// t fetched: now, or once the fetch running has stopped, which is stopped if
-// it is another song's. A song fetched before and not played is removed.
-void fetchStart(const Track* t) {
+// t's file as fetched here, into t->path: true when it is on the card. One
+// gone from the card since is forgotten.
+bool fetchedFor(Track* t) {
+    takeFetched();
+    if (g_c.fetchedIndex != t->index || !same(g_c.fetchedKey, t->key)) return false;
+    if (!exists(g_c.fetchedPath)) {
+        g_c.fetchedIndex = -1;
+        g_c.fetchedPath[0] = 0;
+        return false;
+    }
+    sceClibSnprintf(t->path, sizeof(t->path), "%s", g_c.fetchedPath);
+    t->own = 1;
+    return true;
+}
+
+// A job for t (kJob*): now, or once the one running has stopped, which is
+// stopped if it is another's. A song's file is waited for that way
+// (fetchWant); a cover only begins with nothing running (fetchAhead). A song
+// fetched before and not played is removed.
+void fetchStart(const Track* t, int kind) {
     lock();
     const bool running = g_fetch.state == kFetchRunning;
-    const bool forIt = fetchIsFor(t);
+    const bool forIt = fetchIsFor(t, kind);
     int stopping = -1;
     if (running && !forIt && !g_fetch.cancel) {
         __atomic_store_n(&g_fetch.cancel, 1, __ATOMIC_SEQ_CST);
         stopping = g_fetch.t.index;
     }
+    const int stoppingKind = g_fetch.kind;
     const bool later = running || g_httpBusy;
-    if (later && !(running && forIt && !g_fetch.cancel)) g_c.fetchWant = t->index;
+    if (later && kind == kJobSong && !(running && forIt && !g_fetch.cancel))
+        g_c.fetchWant = t->index;
     unlock();
     if (stopping >= 0)
-        logLine("carry on: song %d's fetch stopped: song %d of %d is wanted first", stopping + 1,
-                t->index + 1, g_c.count);
+        logLine("carry on: song %d's %s stopped: song %d of %d is wanted first", stopping + 1,
+                stoppingKind == kJobCover ? "cover's fetch" : "fetch", t->index + 1, g_c.count);
     if (later) return;
-    dropFetched();
+    takeFetched();
+    if (kind == kJobSong && g_c.fetchedIndex >= 0 && g_c.fetchedIndex != t->index) dropFetched();
     lock();
     g_fetch.state = kFetchRunning;
+    g_fetch.kind = kind;
     g_fetch.cancel = 0;
     g_fetch.forGood = 0;
     g_fetch.stopped = 0;
@@ -2952,9 +3050,14 @@ void fetchStart(const Track* t) {
     g_fetch.t = *t;
     g_fetch.t.path[0] = 0;
     unlock();
-    g_c.fetchWant = -1;
-    logLine("carry on: song %d of %d, \"%s\", is not on the memory card: fetching it",
-            t->index + 1, g_c.count, t->title);
+    if (kind == kJobSong) {
+        g_c.fetchWant = -1;
+        logLine("carry on: song %d of %d, \"%s\", is not on the memory card: fetching it",
+                t->index + 1, g_c.count, t->title);
+    } else {
+        logLine("carry on: song %d of %d: fetching its cover for the row", t->index + 1,
+                g_c.count);
+    }
     const SceUID thread = sceKernelCreateThread("VitaPlexQM::Fetch", fetchThread, kThreadPriority,
                                                 kFetchStack, 0, 0, NULL);
     const int rc = thread < 0 ? thread : sceKernelStartThread(thread, 0, NULL);
@@ -2969,25 +3072,61 @@ void fetchStart(const Track* t) {
     }
 }
 
-// The song after the one with the shell, fetched while that one plays if it
-// is not on the card: the next the queue goes on to, songs the server has no
-// file of for the shell passed over. None for repeat one, or while waiting.
-void fetchAhead() {
-    g_c.aheadDue = 0;
-    if (!g_server[0] || g_c.waitIndex >= 0 || g_c.repeat == BGPLAYER_REPEAT_ONE) return;
+// The song the queue goes on to after the one with the shell, into out: the
+// nearest within kLookAhead on the card, or that the server may have a file
+// of for the shell. Its place, with *card saying which; -1 with none.
+int nextSong(Track* out, bool* card) {
     for (int d = 1; d <= kLookAhead; d++) {
         const int i = stepFrom(g_c.cur.index, d);
-        if (i < 0 || i == g_c.cur.index || !trackAt(i, &g_ahead)) return;
-        if (lostSong(i)) continue;
-        if (onCard(&g_ahead)) return;
-        // Not again ahead after it failed but as it was stopped: it is tried
-        // again, waited for, when it is next.
-        lock();
-        const bool tried = fetchIsFor(&g_ahead) && !(g_fetch.state == kFetchFailed && g_fetch.stopped);
-        unlock();
-        if (!tried) fetchStart(&g_ahead);
+        if (i < 0 || i == g_c.cur.index || !trackAt(i, out)) return -1;
+        *card = onCard(out);
+        if (*card || !ringHas(&g_c.lost, i)) return i;
+    }
+    return -1;
+}
+
+// Whether t's cover for the row is yet to be fetched: on the server, not on
+// the card, and not asked for before.
+bool wantsCover(const Track* t) {
+    if (!t->thumb[0] || !t->key[0] || ringHas(&g_c.coverTried, t->index)) return false;
+    char cover[160];
+    sceClibSnprintf(cover, sizeof(cover), QM_SONG_COVER_FMT, t->key);
+    return !exists(cover);
+}
+
+// What to fetch while the song with the shell plays, if anything: the next
+// song's file when it is not on the card, unless it failed ahead already
+// (it is fetched again, waited for, when it is next); else, with nothing
+// running, the covers the row is to show, this song's and then the next
+// one's. Nothing while waiting, nor a song ahead for repeat one.
+void fetchAhead() {
+    g_c.aheadDue = 0;
+    if (!g_server[0] || g_c.waitIndex >= 0) return;
+    lock();
+    const bool busy = g_httpBusy != 0;
+    unlock();
+    if (busy) {
+        g_c.aheadDue = 1;  // once the test is over
         return;
     }
+    bool card = false;
+    const int next = g_c.repeat == BGPLAYER_REPEAT_ONE ? -1 : nextSong(&g_ahead, &card);
+    takeFetched();
+    lock();
+    const bool running = g_fetch.state == kFetchRunning;
+    const bool inHand =
+        next >= 0 && ((g_c.fetchedIndex == next && same(g_c.fetchedKey, g_ahead.key)) ||
+                      (running && fetchIsFor(&g_ahead, kJobSong)));
+    unlock();
+    if (next >= 0 && !card && !inHand && !ringHas(&g_c.failedAhead, next)) {
+        fetchStart(&g_ahead, kJobSong);
+        return;
+    }
+    if (running) return;
+    if (wantsCover(&g_c.cur))
+        fetchStart(&g_c.cur, kJobCover);
+    else if (next >= 0 && card && wantsCover(&g_ahead))
+        fetchStart(&g_ahead, kJobCover);
 }
 
 // Each look: a fetch that has ended seen to, the fetch wanted next begun, and
@@ -2995,19 +3134,33 @@ void fetchAhead() {
 void fetchPoll() {
     lock();
     const int state = g_fetch.state, ends = g_fetch.ends, index = g_fetch.t.index;
-    const int forGood = g_fetch.forGood;
+    const int kind = g_fetch.kind, forGood = g_fetch.forGood, stopped = g_fetch.stopped;
     unlock();
     if (ends != g_c.fetchEnds) {
         g_c.fetchEnds = ends;
-        if (state == kFetchFailed && forGood && !lostSong(index)) {
-            g_c.lost[g_c.lostCount++ & 7] = index;
-            g_c.aheadDue = 1;  // on to the song after it
+        if (kind == kJobSong && state == kFetchFailed) {
+            if (forGood)
+                ringAdd(&g_c.lost, index);
+            else if (!stopped)
+                ringAdd(&g_c.failedAhead, index);
         }
+        // A song's file fetched comes with its cover, or with its cover's
+        // failure: not asked for again.
+        if (kind == kJobSong && state == kFetchDone) {
+            ringAdd(&g_c.coverTried, index);
+            takeFetched();
+        }
+        if (kind == kJobCover && !stopped) {
+            ringAdd(&g_c.coverTried, index);
+            if (state == kFetchDone && index == g_c.cur.index && g_c.waitIndex < 0)
+                showCover(&g_c.cur);
+        }
+        g_c.aheadDue = 1;  // on to what is to be fetched next
     }
     if (state != kFetchRunning && g_c.fetchWant >= 0) {
         const int want = g_c.fetchWant;
         g_c.fetchWant = -1;
-        if (trackAt(want, &g_ahead)) fetchStart(&g_ahead);
+        if (trackAt(want, &g_ahead)) fetchStart(&g_ahead, kJobSong);
     }
     if (g_c.aheadDue) fetchAhead();
 }
@@ -3029,13 +3182,129 @@ void waitFor(const Track* t, const char* why) {
             "(0x%08X) until it is fetched",
             t->index + 1, g_c.count, why, t->title, (unsigned)rcStop);
     showTrack(t);
-    carryStatusOf(t, BGPLAYER_STATE_PLAYING, 0, true);
+    carryStatusOf(t, BGPLAYER_STATE_PLAYING, startAt(t), true);
     lock();
-    const bool under = g_fetch.state == kFetchRunning && fetchIsFor(t) && !g_fetch.cancel;
+    const bool under = g_fetch.state == kFetchRunning && fetchIsFor(t, kJobSong) && !g_fetch.cancel;
     unlock();
     if (!under) {
         g_c.waitTries = 1;
-        fetchStart(t);
+        fetchStart(t, kJobSong);
+    }
+}
+
+// ── Marking songs played ────────────────────────────────────────────────────
+// A song that played to its end is marked played on the server, as the
+// background player marks it (player.c's scrobble). On a thread of its own,
+// which sends what is waiting and ends, so that a slow server holds nothing
+// up: not the music, nor the next song's fetch. Through the libraries the
+// fetch finds, with the token read for each run and wiped after it.
+const int kScrobbles = 8;
+struct Scrobble {
+    char key[16];  // the song's ratingKey
+    int index;     // its place, for the log
+};
+// Under g_lock: the songs waiting to be marked, from g_scrobbleFirst on, and
+// whether a thread is marking them.
+Scrobble g_scrobbles[kScrobbles];
+int g_scrobbleFirst, g_scrobbleCount, g_scrobbling;
+char g_scrobbleSettings[2048];  // the scrobble thread's
+
+// The scrobble thread's: each song waiting marked, until none is; each said
+// not to be when the server or the libraries are not there.
+void scrobbleWaiting() {
+    static char server[256], token[160], url[320];
+    int rcSsl = -1, rcHttp = -1, tmpl = -1;
+    if (readServer(g_scrobbleSettings, sizeof(g_scrobbleSettings), server, sizeof(server), token,
+                   sizeof(token))) {
+        if (!g_netFound) g_netFound = findLibraries("carry on");
+        if (g_netFound && httpStart("carry on", "marking songs played", false, &rcSsl, &rcHttp))
+            tmpl = httpTemplate("carry on");
+    }
+    for (;;) {
+        Scrobble one;
+        lock();
+        const bool any = g_scrobbleCount > 0;
+        if (any) {
+            one = g_scrobbles[g_scrobbleFirst];
+            g_scrobbleFirst = (g_scrobbleFirst + 1) % kScrobbles;
+            g_scrobbleCount--;
+        }
+        unlock();
+        if (!any) break;
+        if (tmpl < 0) {
+            logLine("carry on: song %d not marked played: %s", one.index + 1,
+                    server[0] ? "no HTTP library" : "no server in VitaPlex's settings");
+            continue;
+        }
+        sceClibSnprintf(url, sizeof(url),
+                        "%s/:/scrobble?key=%s&identifier=com.plexapp.plugins.library", server,
+                        one.key);
+        int conn, req, status = 0;
+        const int rc = httpOpen(tmpl, "carry on", "marking a song played", url, token, NULL,
+                                &conn, &req);
+        if (rc >= 0) {
+            httpFn<FnStatus>(kHttpStatus)(req, &status);
+            httpClose(conn, req);
+        }
+        if (status == 200)
+            logLine("carry on: song %d marked played", one.index + 1);
+        else
+            logLine("carry on: song %d not marked played: HTTP %d (0x%08X)", one.index + 1, status,
+                    (unsigned)rc);
+    }
+    if (tmpl >= 0) httpFn<FnId>(kHttpDeleteTemplate)(tmpl);
+    httpEnd("carry on", rcSsl, rcHttp);
+    sceClibMemset(token, 0, sizeof(token));
+}
+
+int scrobbleThread(SceSize, void*) {
+    for (;;) {
+        scrobbleWaiting();
+        // Ended only with none left waiting, under the lock that a song
+        // added since would have been put in under.
+        lock();
+        const bool more = g_scrobbleCount > 0;
+        if (!more) g_scrobbling = 0;
+        unlock();
+        if (!more) break;
+    }
+    return sceKernelExitDeleteThread(0);
+}
+
+// t marked played on the server, now or after those waiting. The music
+// thread's.
+void scrobbleSong(const Track* t) {
+    if (!g_server[0] || !t->key[0]) return;
+    lock();
+    const bool full = g_scrobbleCount == kScrobbles;
+    bool start = false;
+    if (!full) {
+        Scrobble* const one = &g_scrobbles[(g_scrobbleFirst + g_scrobbleCount) % kScrobbles];
+        sceClibSnprintf(one->key, sizeof(one->key), "%s", t->key);
+        one->index = t->index;
+        g_scrobbleCount++;
+        start = !g_scrobbling;
+        if (start) g_scrobbling = 1;
+    }
+    unlock();
+    if (full) {
+        logLine("carry on: song %d not marked played: %d songs are waiting to be already",
+                t->index + 1, kScrobbles);
+        return;
+    }
+    if (!start) return;
+    const SceUID thread = sceKernelCreateThread("VitaPlexQM::Played", scrobbleThread,
+                                                kThreadPriority, kFetchStack, 0, 0, NULL);
+    const int rc = thread < 0 ? thread : sceKernelStartThread(thread, 0, NULL);
+    if (rc < 0) {
+        if (thread >= 0) sceKernelDeleteThread(thread);
+        lock();
+        const int dropped = g_scrobbleCount;
+        g_scrobbleCount = 0;
+        g_scrobbling = 0;
+        unlock();
+        logLine("carry on: %d song(s) not marked played: no thread for it (0x%08X)", dropped,
+                (unsigned)rc);
     }
 }
 
@@ -3059,7 +3328,7 @@ void carryEnd(const char* why, int how) {
     }
     if (how != kEndYield) {
         if (waiting)
-            carryStatusOf(&g_c.wait, written, 0, true);
+            carryStatusOf(&g_c.wait, written, startAt(&g_c.wait), true);
         else
             carryStatus(written, time);
     }
@@ -3111,6 +3380,37 @@ void carryNone() {
     unlock();
 }
 
+// The carry-on's state as one begins: nothing waited for, wanted or
+// remembered, and a fetch from a queue carried on before forgotten, or left
+// to stop.
+void carryReset() {
+    sceClibMemset(&g_c, 0, sizeof(g_c));
+    g_c.waitIndex = -1;
+    g_c.fetchedIndex = -1;
+    g_c.fetchWant = -1;
+    g_c.startIndex = -1;
+    lock();
+    if (g_fetch.state != kFetchRunning) g_fetch.state = kFetchIdle;
+    g_c.fetchEnds = g_fetch.ends;
+    unlock();
+}
+
+// Songs not on the card are fetched from VitaPlex's server, if its settings
+// have one; the token is only looked for here.
+void carryServer() {
+    static char settings[2048];
+    char token[160];
+    readServer(settings, sizeof(settings), g_server, sizeof(g_server), token, sizeof(token));
+    const bool signedIn = token[0] != 0;
+    sceClibMemset(token, 0, sizeof(token));
+    if (g_server[0])
+        logLine("carry on: songs not on the memory card are fetched from %s, %s", g_server,
+                signedIn ? "signed in" : "with no token");
+    else
+        logLine("carry on: no server in VitaPlex's settings: songs not on the memory card are "
+                "passed over");
+}
+
 // Begins carrying on, from the player's status and the queue. true when it
 // does; else nothing has changed.
 bool carryStart() {
@@ -3135,14 +3435,7 @@ bool carryStart() {
         logLine("carry on: no queue at %s", BGPLAYER_QUEUE);
         return false;
     }
-    sceClibMemset(&g_c, 0, sizeof(g_c));
-    g_c.waitIndex = -1;
-    g_c.fetchWant = -1;
-    lock();
-    // A fetch from a queue carried on before is forgotten, or left to stop.
-    if (g_fetch.state != kFetchRunning) g_fetch.state = kFetchIdle;
-    g_c.fetchEnds = g_fetch.ends;
-    unlock();
+    carryReset();
     const char* fields;
     bool have = false;
     while (scanNext(&s, &fields)) {
@@ -3212,19 +3505,7 @@ bool carryStart() {
     g_c.menuPaused = g_playing == 0;
     unlock();
     carryStatus(BGPLAYER_STATE_PLAYING, time);
-    // Songs not on the card are fetched from VitaPlex's server, if it has
-    // one; the token is only looked for here.
-    static char settings[2048];
-    char token[160];
-    readServer(settings, sizeof(settings), g_server, sizeof(g_server), token, sizeof(token));
-    const bool signedIn = token[0] != 0;
-    sceClibMemset(token, 0, sizeof(token));
-    if (g_server[0])
-        logLine("carry on: songs not on the memory card are fetched from %s, %s", g_server,
-                signedIn ? "signed in" : "with no token");
-    else
-        logLine("carry on: no server in VitaPlex's settings: songs not on the memory card are "
-                "passed over");
+    carryServer();
     g_c.aheadDue = 1;
     return true;
 }
@@ -3256,13 +3537,19 @@ bool carryPlay(const Track* t, const char* why) {
     g_c.songUs = sceKernelGetSystemTimeWide();
     g_c.waitIndex = -1;
     g_c.aheadDue = 1;  // the song after it fetched, if it is not on the card
-    lock();
+    g_c.seekWantMs = 0;
+    g_c.seekTries = 0;
+    // VitaPlex BG's place is for its own song alone.
+    if (t->index != g_c.startIndex) g_c.startAtMs = 0;
     // A fetched song, played: its file is the shell's now, removed as the
     // player's own are.
-    if (g_fetch.state == kFetchDone && same(g_fetch.t.path, t->path)) g_fetch.state = kFetchIdle;
-    unlock();
+    takeFetched();
+    if (g_c.fetchedIndex >= 0 && same(g_c.fetchedPath, t->path)) {
+        g_c.fetchedIndex = -1;
+        g_c.fetchedPath[0] = 0;
+    }
     showTrack(t);
-    carryStatus(BGPLAYER_STATE_PLAYING, 0);
+    carryStatus(BGPLAYER_STATE_PLAYING, startAt(t));
     return true;
 }
 
@@ -3279,7 +3566,7 @@ int nextFrom(int from) {
         const int i = stepFrom(from, d);
         if (i < 0 || i == from || !trackAt(i, &g_found)) return kGoNone;
         if (onCard(&g_found) || fetchedFor(&g_found)) return kGoPlay;
-        if (g_server[0] && !lostSong(i)) return kGoFetch;
+        if (g_server[0] && !ringHas(&g_c.lost, i)) return kGoFetch;
         logLine("carry on: song %d of %d, \"%s\", is not on the memory card%s: passed over", i + 1,
                 g_c.count, g_found.title,
                 g_server[0] ? ", and the server has no file of it the shell plays" : "");
@@ -3318,6 +3605,95 @@ void carryNext(int from, bool ended, const char* why) {
     carryEnd("three songs in a row would not open", kEndStopped);
 }
 
+// VitaPlex BG's queue, handed straight to SceShell as it goes
+// (QM_CMD_PLAY_QUEUE): played from its song and place there, as the
+// background player would begin it, and the row SceShell's from now. That
+// song plays from the file VitaPlex BG made ready, else from its download or
+// the player's file of it, else from the server, waited for; and if it can
+// be none of them, the next that can is played from its start. true when it
+// carries on (g_carry is 2 then, or 0 again if the queue had nothing to
+// play); else nothing has changed but the row's owner.
+bool carryStartQueue() {
+    QueueScan s;
+    if (!scanOpen(&s)) {
+        logLine("play queue: no queue at %s", BGPLAYER_QUEUE);
+        return false;
+    }
+    carryReset();
+    const char* fields;
+    bool have = false;
+    while (scanNext(&s, &fields)) {
+        if (s.index == s.start) {
+            parseTrack(fields, s.index, &g_c.cur);
+            have = true;
+        }
+    }
+    readerClose();
+    g_c.count = s.index + 1;
+    g_c.repeat = s.repeat;
+    sceClibSnprintf(g_c.queue, sizeof(g_c.queue), "%s", s.written);
+    if (!s.whole || !have) {
+        logLine("play queue: the queue (%s) is %s", s.written,
+                !s.whole ? "not whole" : "without the song it names to begin with");
+        return false;
+    }
+    if (!findSvcObj("play queue") || !g_getSvcObj()) {
+        logLine("play queue: no client for SceShell's music service");
+        return false;
+    }
+    const int rcStart = musicTracked(0x30000);
+    logLine("play queue: song %d of %d, \"%s\" by %s, %s, from %s; repeat %d; music service "
+            "started: 0x%08X",
+            s.start + 1, g_c.count, g_c.cur.title, g_c.cur.artist, mmss(s.startMs).s,
+            s.file[0] ? s.file : "the queue", g_c.repeat, (unsigned)rcStart);
+    if (rcStart < 0) return false;
+    carryServer();
+    g_c.startIndex = s.start;
+    g_c.startAtMs = s.startMs;
+    lock();
+    g_owner = kOwnerShell;
+    g_active = 1;
+    g_carry = 2;
+    unlock();
+    // Nothing is with the shell yet: the song is played from here.
+    g_found = g_c.cur;
+    g_c.cur.path[0] = 0;
+    g_c.cur.own = 0;
+    if (s.file[0] && exists(s.file)) {
+        sceClibSnprintf(g_found.path, sizeof(g_found.path), "%s", s.file);
+        g_found.own = startsWith(s.file, BGPLAYER_SONGS "/");
+    } else if (!onCard(&g_found)) {
+        g_found.path[0] = 0;
+    }
+    if (g_found.path[0]) {
+        if (!carryPlay(&g_found, "VitaPlex BG's song"))
+            carryNext(s.start, false, "VitaPlex BG's song would not open");
+    } else if (g_server[0]) {
+        waitFor(&g_found, "VitaPlex BG's song");
+    } else {
+        logLine("play queue: song %d of %d, \"%s\", is not on the memory card, and there is no "
+                "server to fetch it from",
+                s.start + 1, g_c.count, g_found.title);
+        carryNext(s.start, false, "VitaPlex BG's song is not on the memory card");
+    }
+    g_c.aheadDue = 1;
+    return true;
+}
+
+// Takes the song to ms, VitaPlex BG's place in it: the seek time, then the
+// seek event, as player.c's seekFrom; carryTick watches where it lands.
+void seekTo(uint32_t ms) {
+    const int rcTime = musicSeekTime(ms), rcSeek = musicEvent(kEventSeek);
+    logLine("carry on: song %d of %d to %s, where VitaPlex BG was: seek time 0x%08X, seek 0x%08X",
+            g_c.cur.index + 1, g_c.count, mmss(ms).s, (unsigned)rcTime, (unsigned)rcSeek);
+    g_c.seekWantMs = ms;
+    g_c.seekUs = sceKernelGetSystemTimeWide();
+    g_c.seekTries++;
+    g_c.maxTime = 0;
+    g_c.playMs = ms;
+    g_c.havePrev = 0;
+}
+
 // Takes the song back to its start: the seek time, then the seek event, as
 // player.c's seekFrom does first.
 void seekStart(const char* why) {
@@ -3349,7 +3725,7 @@ void carryPress(int press, int state, uint32_t time) {
             if (before >= 0 && trackAt(before, &g_found)) {
                 if (onCard(&g_found) || fetchedFor(&g_found)) {
                     if (carryPlay(&g_found, "previous, from the row")) return;
-                } else if (g_server[0] && !lostSong(before)) {
+                } else if (g_server[0] && !ringHas(&g_c.lost, before)) {
                     waitFor(&g_found, "previous, from the row");
                     return;
                 }
@@ -3386,7 +3762,8 @@ void carryWait() {
     if (press == QM_PRESS_NEXT) {
         logLine("carry on: next, from the row, as song %d is fetched", g_c.waitIndex + 1);
         lock();
-        if (g_fetch.state == kFetchRunning && fetchIsFor(&g_c.wait)) __atomic_store_n(&g_fetch.cancel, 1, __ATOMIC_SEQ_CST);
+        if (g_fetch.state == kFetchRunning && fetchIsFor(&g_c.wait, kJobSong))
+            __atomic_store_n(&g_fetch.cancel, 1, __ATOMIC_SEQ_CST);
         unlock();
         carryNext(g_c.waitIndex, false, "next, from the row");
         return;
@@ -3417,28 +3794,28 @@ void carryWait() {
     } else {
         g_c.waitPlays = 0;
     }
+    g_found = g_c.wait;
+    if (fetchedFor(&g_found)) {
+        if (g_c.menuPaused) return;
+        logLine("carry on: song %d of %d fetched, after %s s of waiting", g_found.index + 1,
+                g_c.count, secsOf((uint32_t)(sceKernelGetSystemTimeWide() - g_c.waitUs) / 1000u).s);
+        if (!carryPlay(&g_found, g_c.waitWhy))
+            carryNext(g_found.index, false, "the one before would not open");
+        return;
+    }
     lock();
     const int fetchState = g_fetch.state;
-    const bool forIt = fetchIsFor(&g_c.wait), forGood = g_fetch.forGood;
+    const bool forIt = fetchIsFor(&g_c.wait, kJobSong);
+    const bool forGood = forIt && fetchState == kFetchFailed && g_fetch.forGood;
     unlock();
     // Its fetch under way, or to begin once another has stopped.
-    if (!forIt || fetchState == kFetchRunning) return;
-    if (fetchState == kFetchDone) {
-        if (g_c.menuPaused) return;
-        g_found = g_c.wait;
-        if (fetchedFor(&g_found)) {
-            logLine("carry on: song %d of %d fetched, after %s s of waiting", g_found.index + 1,
-                    g_c.count,
-                    secsOf((uint32_t)(sceKernelGetSystemTimeWide() - g_c.waitUs) / 1000u).s);
-            if (!carryPlay(&g_found, g_c.waitWhy))
-                carryNext(g_found.index, false, "the one before would not open");
-            return;
-        }
-    }
+    if ((forIt && fetchState == kFetchRunning) || g_c.fetchWant == g_c.waitIndex) return;
+    // Failed, or its file gone since it came: fetched again once, then
+    // passed over.
     if (!forGood && g_c.waitTries < 2) {
         g_c.waitTries++;
         logLine("carry on: song %d of %d: fetched again", g_c.waitIndex + 1, g_c.count);
-        fetchStart(&g_c.wait);
+        fetchStart(&g_c.wait, kJobSong);
         return;
     }
     logLine("carry on: song %d of %d, \"%s\", could not be fetched: passed over",
@@ -3499,9 +3876,15 @@ void carryTick() {
                         "%s, and is at %s",
                         g_c.cur.index + 1, g_c.count, mmss(len).s, mmss(g_c.cur.durationMs).s,
                         mmss(time).s);
-                // The shell can start a file it has had before where it left
-                // it (player.c's fromTheStart).
-                if (time >= 5000) seekStart("the shell started it part-way");
+                // To VitaPlex BG's place in the song it handed over; else
+                // from the start, as the shell can start a file it has had
+                // before where it left it (player.c's fromTheStart).
+                const uint32_t at = startAt(&g_c.cur);
+                g_c.startAtMs = 0;
+                if (at >= 2000)
+                    seekTo(at);
+                else if (time >= 5000)
+                    seekStart("the shell started it part-way");
             } else if (!g_c.otherLogged) {
                 g_c.otherLogged = 1;
                 logLine("carry on: song %d of %d: the shell plays something %s long, not this "
@@ -3526,12 +3909,36 @@ void carryTick() {
         // it went on from (below), nor is the stop before the shell plays
         // again after the row's play.
         const bool back = state == 1 && (g_c.stoppedUs || g_c.resuming);
+        if (g_c.seekWantMs) {
+            // Near enough: an M4A download's seek landed 2 to 4 s short (log
+            // f3042ca3, build 2035).
+            const uint32_t want = g_c.seekWantMs;
+            const uint32_t since = (uint32_t)(now - g_c.seekUs) / 1000u;
+            if (time + 5000 >= want && time <= want + 6000) {
+                logLine("carry on: song %d of %d at %s, %s s after the seek to %s",
+                        g_c.cur.index + 1, g_c.count, mmss(time).s, secsOf(since).s,
+                        mmss(want).s);
+                g_c.seekWantMs = 0;
+            } else if (since >= 4000) {
+                if (g_c.seekTries < 2) {
+                    logLine("carry on: song %d of %d at %s, not %s, 4 s after the seek: again",
+                            g_c.cur.index + 1, g_c.count, mmss(time).s, mmss(want).s);
+                    seekTo(want);
+                } else {
+                    logLine("carry on: the seeks did not take song %d of %d to %s; it goes on "
+                            "from %s",
+                            g_c.cur.index + 1, g_c.count, mmss(want).s, mmss(time).s);
+                    g_c.seekWantMs = 0;
+                }
+            }
+        }
         if (time > g_c.maxTime) g_c.maxTime = time;
         const uint32_t lenMs = g_c.cur.durationMs > 0 ? g_c.cur.durationMs : g_c.lenMs;
         if (!back && !g_c.resuming && g_c.maxTime + 10000 >= lenMs &&
             (time + 5000 < g_c.maxTime || state != 1) && !g_c.menuPaused) {
             logLine("carry on: song %d of %d ended (it got to %s of %s)", g_c.cur.index + 1,
                     g_c.count, mmss(g_c.maxTime).s, mmss(lenMs).s);
+            scrobbleSong(&g_c.cur);
             carryNext(g_c.cur.index, true, "the one before ended");
             return;
         }
@@ -3587,8 +3994,50 @@ void carryTick() {
     if ((uint32_t)(now - g_c.statusUs) >= 2000000u) carryStatus(BGPLAYER_STATE_PLAYING, time);
 }
 
-// The music thread: tests as they are asked for, and the queue carried on,
-// looked at every half second.
+// One look of the music thread's: a test asked for; a queue VitaPlex BG
+// handed over begun, once a queue carried on before has stopped; the
+// player's queue carried on, begun or looked at.
+void musicStep() {
+    char path[sizeof(g_musicPath)];
+    lock();
+    const int test = g_musicTestDue;
+    g_musicTestDue = 0;
+    if (test) sceClibMemcpy(path, g_musicPath, sizeof(path));
+    const int carry = g_carry;
+    const bool handed = g_playQueueDue && carry != 2;
+    if (handed) {
+        // In place of a carry-on that was to begin, and of its stop.
+        g_playQueueDue = 0;
+        g_carry = 0;
+        g_carryStop = NULL;
+    }
+    unlock();
+    if (test) {
+        musicTest(path);
+        lock();
+        g_musicBusy = 0;
+        unlock();
+    }
+    if (handed) {
+        if (carryStartQueue())
+            logLine("play queue: SceShell plays VitaPlex BG's queue");
+        else
+            carryNone();
+    } else if (carry == 1) {
+        if (carryStart()) {
+            lock();
+            g_carry = 2;
+            unlock();
+            logLine("carry on: SceShell carries the queue on");
+        } else {
+            carryNone();
+        }
+    } else if (carry == 2) {
+        carryTick();
+    }
+}
+
+// The music thread: musicStep every half second, and as soon as asked.
 class MusicThread : public paf::thread::Thread {
 public:
     using paf::thread::Thread::Thread;
@@ -3597,31 +4046,7 @@ public:
         while (!IsCanceled()) {
             SceUInt timeout = 500 * 1000;
             sceKernelWaitSema(g_musicSema, 1, &timeout);
-            char path[sizeof(g_musicPath)];
-            lock();
-            const int test = g_musicTestDue;
-            g_musicTestDue = 0;
-            if (test) sceClibMemcpy(path, g_musicPath, sizeof(path));
-            const int carry = g_carry;
-            unlock();
-            if (test) {
-                musicTest(path);
-                lock();
-                g_musicBusy = 0;
-                unlock();
-            }
-            if (carry == 1) {
-                if (carryStart()) {
-                    lock();
-                    g_carry = 2;
-                    unlock();
-                    logLine("carry on: SceShell carries the queue on");
-                } else {
-                    carryNone();
-                }
-            } else if (carry == 2) {
-                carryTick();
-            }
+            musicStep();
         }
     }
 };
@@ -3769,8 +4194,10 @@ private:
         case QM_CMD_ACTIVATE:
             if (!g_active || g_owner != m.arg)
                 logLine("row wanted by %s", ownerName(m.arg));
-            // A process with the row has the music: SceShell leaves it be.
+            // A process with the row has the music: SceShell leaves it be,
+            // and does not begin a queue handed over before.
             stopCarry("a process takes the row", kEndYield);
+            g_playQueueDue = 0;
             if (m.arg == QM_OWNER_PLAYER) g_carryAllowed = 1;
             if (g_owner != m.arg) g_artSerial = 0;  // the last owner's cover
             g_active = 1;
@@ -3836,10 +4263,25 @@ private:
             logLine("song file: song %u, %s", (unsigned)f.arg + 1, f.path);
             break;
         }
+        case QM_CMD_PLAY_QUEUE:
+            // A queue SceShell carries on yields to the new one, its music
+            // left for the new one to stop, and nothing written.
+            logLine("play queue: VitaPlex BG hands its queue to SceShell%s",
+                    g_carry ? "; the queue carried on stops first" : "");
+            g_carryAllowed = 0;
+            stopCarry("VitaPlex BG hands a queue over", kEndYield);
+            if (startMusicThread()) {
+                g_playQueueDue = 1;
+                sceKernelSignalSema(g_musicSema, 1);
+            } else {
+                logLine("play queue: no music thread, so nothing plays");
+            }
+            break;
         case QM_CMD_TAKE_BACK:
             logLine("take back: VitaPlex BG takes the music back%s",
                     g_carry ? "" : "; no queue carried on here");
             g_carryAllowed = 0;
+            g_playQueueDue = 0;  // a queue handed over and not yet begun is not begun
             stopCarry("VitaPlex BG takes the music back", kEndTakeBack);
             break;
         case QM_CMD_HTTP_TEST: {

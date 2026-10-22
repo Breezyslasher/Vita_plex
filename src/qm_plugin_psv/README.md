@@ -98,6 +98,14 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   VitaPlex's settings; the token is read for each fetch, sent as a header,
   wiped after it, and never logged. Songs in other formats, such as FLAC,
   are still passed over.
+- **Playing VitaPlex BG's queue (build 2043):** by its setting, VitaPlex BG
+  hands its queue to SceShell as it goes (`QM_CMD_PLAY_QUEUE`), in place of
+  starting its background player. The plugin plays from the queue's song
+  and place in it. That song comes from its download or from the server,
+  and the shell is taken to the place once it plays. The rest goes as it
+  does when carrying a queue on. Covers come from the server for the songs
+  on the card too, and a song played to its end is marked played on the
+  server, as the player does.
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system

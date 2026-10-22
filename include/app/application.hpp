@@ -230,6 +230,11 @@ struct AppSettings {
     // player when the system closes the app for a game; 2 hands it to that
     // player at once. See utils/background_audio.hpp.
     int vitaOutsideMusic = 1;
+    // VitaPlex BG only: what plays the music handed over. true: SceShell
+    // itself, through VitaPlex BG's quick menu plugin, with no background
+    // player; false: the background player, as before
+    // (bgaudio::setPlayInShell).
+    bool vitaPlayInShell = true;
     // VitaPlex BG only: the song and its buttons in the quick menu's Music
     // row, through ElevenMPV-A's shell plugin, which needs ElevenMPV-A
     // installed (bgaudio::setQuickMenuControls).

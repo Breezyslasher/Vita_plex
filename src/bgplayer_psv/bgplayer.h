@@ -26,6 +26,10 @@
  * A request is one line, "<written> <why>", and the player takes it by
  * removing it; one written before the player started was for another one.
  *
+ * By the setting, VitaPlex BG can hand the queue to SceShell itself instead,
+ * through its quick menu plugin (qm_protocol.h's QM_CMD_PLAY_QUEUE), with no
+ * player: the same queue file, and the same status, written "by=SceShell".
+ *
  * The player never ends while its app is open: the two share app0:, and the
  * app lost it each time its program ended under it (BG Tests 20 and 21, build
  * 2012). Nor does it do anything while its app is going: one with extended

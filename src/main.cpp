@@ -157,6 +157,7 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     // music back from its background player. No-op on every other platform.
     vitaplex::bgaudio::init(app.getSettings().vitaOutsideMusic);
     vitaplex::bgaudio::setQuickMenuControls(app.getSettings().vitaQuickMenuControls);
+    vitaplex::bgaudio::setPlayInShell(app.getSettings().vitaPlayInShell);
 
     // Run application (blocking)
     app.run();

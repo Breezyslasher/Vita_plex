@@ -411,6 +411,13 @@ int qmSongFile(int index, const char* key, const char* path) {
     return rc;
 }
 
+int qmPlayQueue(void) {
+    lock();
+    const int rc = g_own ? sendCommandLocked(QM_CMD_PLAY_QUEUE, 0) : -1;
+    unlock();
+    return rc;
+}
+
 int qmTakeBack(void) {
     lock();
     int rc;

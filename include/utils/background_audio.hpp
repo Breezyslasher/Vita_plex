@@ -34,7 +34,9 @@
  * app and plays the queue through the shell's music player, which plays on
  * beside games. The app hands it the queue as the system closes it, or as soon
  * as it is left, by the setting, and takes the music back from it when opened
- * again.
+ * again. By another setting the queue goes to SceShell itself instead,
+ * through the package's quick menu plugin, which no app or game closes
+ * (setPlayInShell).
  */
 
 #pragma once
@@ -72,6 +74,13 @@ void init(int outsideMusic);
 void setOutsideMusic(int mode);
 int outsideMusic();
 bool keepPlaying();
+
+// What plays the music handed over (the setting): SceShell itself, through
+// VitaPlex BG's quick menu plugin (qm_protocol.h's QM_CMD_PLAY_QUEUE), with no
+// background player, when on and that plugin will load; else the background
+// player, as before.
+void setPlayInShell(bool on);
+bool playInShell();
 
 // Ends the process: through the system call under sceKernelExitProcess once
 // VitaPlex BG has asked for its background player, since that function did
@@ -145,6 +154,8 @@ inline bool available() { return false; }
 inline void init(int) {}
 inline void setOutsideMusic(int) {}
 inline int outsideMusic() { return 0; }
+inline void setPlayInShell(bool) {}
+inline bool playInShell() { return false; }
 inline bool keepPlaying() { return false; }
 inline void onAudioPlayback(bool) {}
 inline void onTrackLoad() {}

@@ -25,6 +25,7 @@
 #include <borealis.hpp>
 
 #include <psp2/io/dirent.h>
+#include <psp2/io/stat.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/net/netctl.h>
@@ -202,6 +203,9 @@ std::string runningTitleId() {
 std::atomic<bool> g_keepPlaying{false};
 // The setting (OutsideMusic); kOutsideStops outside VitaPlex BG.
 std::atomic<int> g_outsideMusic{kOutsideStops};
+// The setting: SceShell plays the music handed over, not the background
+// player (setPlayInShell).
+std::atomic<bool> g_playInShell{true};
 // Whether anything has asked for the watcher's reports: background playback,
 // or a system player test. The watcher also runs without, but then only to
 // answer the system's request to quit (see watcherMain).
@@ -241,6 +245,10 @@ std::atomic<bool> g_qmEnabled{false};   // the setting
 std::atomic<int> g_qmLook{QM_LOOK_LIT};   // the test picker
 std::atomic<bool> g_qmActive{false};    // the plugin has the row for this process
 std::atomic<bool> g_qmGone{false};      // handed over or quitting: not taken again
+// Held for each quickMenuTick, and as the queue goes to SceShell, so that no
+// heartbeat (QM_CMD_ACTIVATE) of this process's follows QM_CMD_PLAY_QUEUE:
+// the plugin leaves its music to any process that takes the row.
+std::mutex g_qmTickMutex;
 std::mutex g_qmMutex;
 struct QmSong {
     std::string title, artist, album;
@@ -817,6 +825,7 @@ void quickMenuTick(SceInt64 now) {
     static unsigned sentSerial = 0;
     static int sentPlaying = -1, sentLook = -1;
     static int64_t sentArt = -1;   // the cover's serial sent, -1 for none yet
+    std::lock_guard<std::mutex> tickLock(g_qmTickMutex);
     if (!g_qmEnabled || g_qmGone) return;
     QmSong song;
     {
@@ -1706,8 +1715,8 @@ int repeatCode(RepeatMode m) {
 // The queue in the order it plays, the song playing and where in it, as
 // bgplayer.h lays it out. A queue longer than the player takes goes from the
 // song playing on. On the UI thread, which owns the queue. The song, for the
-// log, in *what.
-bool writeQueue(std::string& what) {
+// log, in *what, and its ratingKey in *key.
+bool writeQueue(std::string& what, std::string& key) {
     MusicQueue& q = MusicQueue::getInstance();
     const std::vector<QueueItem>& items = q.getQueue();
     std::vector<int> order;
@@ -1759,6 +1768,7 @@ bool writeQueue(std::string& what) {
     const QueueItem& now = items[(std::size_t)order[from + (std::size_t)at]];
     what = std::to_string(std::min<std::size_t>(order.size() - from, BGPLAYER_MAX_TRACKS)) +
            " song(s), from \"" + now.title + "\" at " + mmss((unsigned)positionMs);
+    key = now.ratingKey;
     return true;
 }
 
@@ -1785,11 +1795,68 @@ int askForPlayer() {
     return rc;
 }
 
-// Music playing goes to the background player: the queue written, the CA
-// bundle copied, the player asked for, and only then mpv paused and the BGM
-// port given back, so that a refusal leaves the music playing here. The
-// player plays once the app has gone, so the caller quits. On the UI thread.
-// true when it was handed over.
+// VitaPlex's own quick menu plugin open, loaded into SceShell first if it is
+// not there: what SceShell plays the queue through. On the UI thread.
+bool shellPluginOpen() {
+    if (!qmIsOpen()) {
+        char what[320];
+        const int rc = qmOpen(what, sizeof(what));
+        brls::Logger::info("[bgaudio] SceShell: {} ({})", what, hex(rc));
+        if (rc < 0) return false;
+    }
+    if (qmIsOwn()) return true;
+    brls::Logger::info("[bgaudio] SceShell: only ElevenMPV-A's plugin is open, which plays "
+                       "nothing itself");
+    return false;
+}
+
+// The cover made for the row here, put beside the songs for SceShell
+// (QM_SONG_COVER_FMT) as the song playing's, so that the row keeps it.
+void shellSongCover(const std::string& key) {
+    uint32_t serial = 0;
+    std::string made, wanted;
+    {
+        std::lock_guard<std::mutex> lock(g_qmArtMutex);
+        serial = g_qmArtSerial;
+        made = g_qmArtDone;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_qmMutex);
+        wanted = g_qmSong.artUrl;
+    }
+    if (key.empty() || serial == 0 || made != wanted) return;
+    char from[64], to[160];
+    std::snprintf(from, sizeof(from), QM_ART_PATH_FMT, (unsigned)(serial & 1));
+    std::snprintf(to, sizeof(to), QM_SONG_COVER_FMT, key.c_str());
+    const std::string part = std::string(to) + ".part";
+    if (!copyFile(from, part) || !moveIn(part, to)) {
+        std::remove(part.c_str());
+        brls::Logger::info("[bgaudio] SceShell: the song's cover could not be put at {}", to);
+    }
+}
+
+// The queue, written already, to SceShell (qm_protocol.h's
+// QM_CMD_PLAY_QUEUE), with the player's folder of songs there for it to
+// fetch into, and the song's cover. The row is given back first, with the
+// tick's lock held, so that nothing of this process's follows. true when
+// the plugin took it.
+bool handToShell(const std::string& key) {
+    sceIoMkdir(BGPLAYER_SONGS, 0777);
+    shellSongCover(key);
+    std::lock_guard<std::mutex> tickLock(g_qmTickMutex);
+    quickMenuRelease("handed to SceShell");
+    const int rc = qmPlayQueue();
+    brls::Logger::info("[bgaudio] SceShell: asked to play the queue: {}", hex(rc));
+    return rc >= 0;
+}
+
+// Music playing goes to SceShell, by the setting, through VitaPlex's quick
+// menu plugin; else, or if that fails, to the background player. The queue
+// is written first. For SceShell, mpv is paused and the BGM port given back
+// before the plugin is asked, so that the two never play at once; for the
+// player, only once it has been asked for, so that a refusal leaves the
+// music playing here. The music plays on once the app has gone, so the
+// caller quits. On the UI thread. true when it was handed over.
 bool handOver(const char* why) {
     if (!available() || g_outsideMusic == kOutsideStops || g_handedOverAt != 0) return false;
     const MpvPlayer::Snapshot s = MpvPlayer::getInstance().snapshot();
@@ -1805,17 +1872,31 @@ bool handOver(const char* why) {
                            describeMpv(s));
         return false;
     }
-    std::string what;
-    if (!writeQueue(what)) {
+    std::string what, key;
+    if (!writeQueue(what, key)) {
         brls::Logger::error("[bgaudio] background player: {}, but the queue could not be written "
                             "to {}", why, BGPLAYER_QUEUE);
         return false;
+    }
+    bool paused = false;
+    if (g_playInShell && shellPluginOpen()) {
+        MusicController::getInstance().playPause(false);
+        releasePort(0, "handed to SceShell");
+        paused = true;
+        if (handToShell(key)) {
+            g_handedOverAt = sceKernelGetSystemTimeWide();
+            brls::Logger::info("[bgaudio] SceShell: {}: handed over {}", why, what);
+            return true;
+        }
+        brls::Logger::warning("[bgaudio] SceShell did not take the queue; the background player "
+                              "plays it");
     }
     copyCaBundle();
     const int rc = askForPlayer();
     if (rc < 0) {
         brls::Logger::error("[bgaudio] background player: refused ({}); the music plays on here",
                             hex(rc));
+        if (paused) MusicController::getInstance().playPause(true);
         return false;
     }
     MusicController::getInstance().playPause(false);
@@ -2163,6 +2244,16 @@ void setOutsideMusic(int mode) {
 }
 
 int outsideMusic() { return g_outsideMusic; }
+
+void setPlayInShell(bool on) {
+    if (!available()) return;
+    g_playInShell = on;
+    brls::Logger::info("[bgaudio] music handed over played by {}",
+                       on ? "SceShell, through VitaPlex's quick menu plugin"
+                          : "the background player");
+}
+
+bool playInShell() { return g_playInShell; }
 
 bool keepPlaying() { return g_keepPlaying; }
 

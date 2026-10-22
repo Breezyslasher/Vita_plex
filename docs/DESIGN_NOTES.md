@@ -2804,6 +2804,75 @@ the background player fetches them (protocol 9).
   The plugin builds for the Vita at 45490 bytes. Its new imports are
   `sceKernelDeleteThread` and libgcc's 32-bit divide with remainder.
 
+**Build 2042 on the console** (logs `dcb5cc5d`, the plugin's; `52dbdee6`, the
+player's; `b8fe534d`, VitaPlex BG's).
+
+- The Vita was restarted first, so the plugin of protocol 9 was the only
+  one loaded.
+- VitaPlex BG played a playlist of 4012 songs and handed over 1000 of them.
+  PS was pressed at 21:13:09, and the music played on. At 21:13:12 the
+  system asked VitaPlex BG to quit for another app: VitaSurf, which the
+  player found running beside it. The background player started as VitaPlex
+  BG closed for it, and outlived it, as such a player did in build 2036. So
+  the system never ended the player, SceShell carried nothing on, and the
+  new fetching did not run: no line of the plugin's begins "carry on:".
+- The player's first song, an MP3 of 3.6 MB that was not downloaded, came
+  in 6.9 s. The music was silent for 10.8 s, from VitaPlex BG pausing mpv
+  to the shell playing.
+- Next was pressed 13 times from the row, and each press went on to the
+  next song. A song not yet downloaded was waited for, 1.6 to 10.1 s (the
+  longest for a 7.2 MB M4A). Downloads ran at 315 to 999 KB/s.
+- Song 5 played from the app's download, as the queue named it: the
+  hand-over looks up each song in VitaPlex's downloads by its ratingKey, and
+  the player fetches only those that are not there.
+- The row's lines and covers followed every song.
+
+**Build 2043: VitaPlex BG hands its queue to SceShell (step 3, part one).**
+Since build 2032 the plan has been that once the plugin fetches songs, the
+background player goes. The player is a process of its own, which the
+system ends when an app with extended memory opens while it plays; SceShell
+is never ended. And on a quit request, the system started the next app
+about 10.8 s after asking in an app that had used SceBgAppUtil (BG Tests 20
+and 21). Handing to SceShell, VitaPlex BG never uses it, so the console may
+show games starting sooner.
+
+- The setting "Background Music Played By" picks SceShell (the default) or
+  the background player.
+- As VitaPlex BG hands over, with PS ("at once") or on a request to quit, it
+  writes the queue as before and puts its row's cover beside the songs as
+  the song playing's. It then pauses mpv, releases the BGM port, gives the
+  row back, and sends `QM_CMD_PLAY_QUEUE` (protocol 10). The row and the
+  queue go under the lock that each tick of the row's heartbeat takes, so
+  that no heartbeat follows: the plugin leaves its music to any process
+  that takes the row.
+- The plugin plays from the queue's song (`index=`) and place
+  (`positionMs=`). The song comes from the file the app made ready
+  (`file=`), else from its download, else from the server, waited for (the
+  status saying `fetching=1` with the place). Once the shell plays it, it
+  is taken to the place. A landing up to 5 s short is near enough, since an
+  M4A download's lands 2 to 4 s short (build 2035). The seek is asked for
+  twice, then the song goes on from where it is.
+- If VitaPlex's plugin will not load, or does not take the queue, the
+  background player plays it, as before.
+- Covers for the songs on the card: the player made them from the
+  downloads' copies, but nothing in the plugin decodes a JPEG. So the plugin
+  fetches the PNG from the server for the song playing and the next, after
+  the next song's file.
+- A song played to its end is marked played on the server, as the player
+  does (`/:/scrobble`). It is done on a thread of its own, which sends what
+  waits and ends.
+- The harness found a fetched song asked for again: once a cover's fetch
+  came after the next song's file, the plugin no longer knew that file was
+  there. The file fetched is now kept apart from the fetch's job.
+- Still skipped in SceShell: songs in other formats, such as FLAC. The
+  background player plays them, as MP3s from the server.
+- Review found two more. A stop asked of a carry-on that was about to
+  begin as a queue was handed over would have stopped the new queue too. And
+  a queue handed over but not begun would have begun under a process that
+  had taken the row since. Both are mended.
+- On a host, the plugin's harness passes 162 checks, 26 of them new, and the
+  pipe test 37, 2 of them new. The plugin builds for the Vita at 50039 bytes,
+  with the same imports as build 2042.
 
 ### PS4: the popup, and nothing to hang progress on
 

@@ -1130,7 +1130,7 @@ brls::Box* SettingsTab::createMusicSection() {
     // none of this.
     if (bgaudio::available()) {
         box->addView(makePickerCell("Music After Leaving VitaPlex",
-            {"Stops", "Plays on, then the background player", "Background player at once"},
+            {"Stops", "Plays on, then in the background", "In the background at once"},
             settings.vitaOutsideMusic,
             [](int index) {
                 Application& app = Application::getInstance();
@@ -1140,15 +1140,37 @@ brls::Box* SettingsTab::createMusicSection() {
             }));
 
         auto* outsideInfo = new brls::Label();
-        outsideInfo->setText("Plays on: music goes on after PS. When a game is started, the "
-                             "background player takes the queue over through the system's music "
-                             "player, and the game takes about 10 s more to start. At once: the "
-                             "background player takes over as you press PS, and VitaPlex BG "
-                             "closes. Opening VitaPlex BG takes the music back.");
+        outsideInfo->setText("Plays on: music goes on after PS. When a game is started, the queue "
+                             "goes on in the background through the system's music player. At "
+                             "once: it goes there as you press PS, and VitaPlex BG closes. "
+                             "Opening VitaPlex BG takes the music back.");
         outsideInfo->setFontSize(14);
         outsideInfo->setMarginLeft(16);
         outsideInfo->setMarginTop(8);
         box->addView(outsideInfo);
+
+        box->addView(makePickerCell("Background Music Played By",
+            {"SceShell", "The Background Player"},
+            settings.vitaPlayInShell ? 0 : 1,
+            [](int index) {
+                Application& app = Application::getInstance();
+                app.getSettings().vitaPlayInShell = index == 0;
+                app.saveSettings();
+                bgaudio::setPlayInShell(index == 0);
+            }));
+
+        auto* playedByInfo = new brls::Label();
+        playedByInfo->setText("SceShell: the quick menu plugin plays the queue from inside the "
+                              "system's shell, which no app or game closes, and fetches the songs "
+                              "that are not downloaded as they come up. Songs in formats the "
+                              "system cannot play, such as FLAC, are skipped for now. The "
+                              "background player: a program of its own that the system ends when "
+                              "an app with extended memory opens; it plays every format, as MP3s "
+                              "from the server. Without the plugin, the background player plays.");
+        playedByInfo->setFontSize(14);
+        playedByInfo->setMarginLeft(16);
+        playedByInfo->setMarginTop(8);
+        box->addView(playedByInfo);
 
         auto* quickMenu = new brls::BooleanCell();
         quickMenu->init("Quick Menu Music Controls", settings.vitaQuickMenuControls,

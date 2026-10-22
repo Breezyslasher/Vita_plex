@@ -84,6 +84,10 @@ int qmHttpTest(const char* base, const char* path, const char* token, unsigned b
 // (QM_CMD_SONG_FILE), for SceShell to carry the queue on with should the
 // system end the player. -1 with ElevenMPV-A's plugin.
 int qmSongFile(int index, const char* key, const char* path);
+// VitaPlex BG's, as it goes: SceShell plays its queue, written to
+// BGPLAYER_QUEUE first, from the queue's song and place (QM_CMD_PLAY_QUEUE).
+// -1 with ElevenMPV-A's plugin.
+int qmPlayQueue(void);
 // VitaPlex BG's, as it opens: it takes the music back (QM_CMD_TAKE_BACK).
 // Sent to VitaPlex's plugin when it is in SceShell, whether or not this
 // process has opened it, and never loads it. 0 when sent; else the code
