@@ -81,7 +81,9 @@ the plugin.
   the row's play/pause holds it, which VitaPlex keeps (build 2052). The row
   stays, its buttons acting on this music. A
   song that goes on away from where it stopped, as an M4A download went on
-  35 s back after a pause, is sought back there (build 2036). SceShell stops
+  35 s back after a pause, is sought back there (build 2036), and so is one
+  that goes further back within 10 s of playing again, as M4As did 20 to 37 s
+  once the looks came every 100 ms (build 2053). SceShell stops
   its song itself 0.1 to 0.4 s after the power button is pressed, as at four
   of seven presses in build 2002's test of VitaPlex's background player; and
   ElevenMPV-A plays it again too. The music thread looks every 100 ms while a

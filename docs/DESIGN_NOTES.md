@@ -3358,6 +3358,47 @@ paused when VitaPlex is opened.
 - On a host the harness passes 204 checks. The plugin builds at 45329 bytes,
   with build 2051's imports.
 
+**Build 2053: build 2052's run.** Logs `0790f7dc` (the plugin), `8ab90a2d`,
+`5d598be0` and `ab122053` (VitaPlex).
+
+- Paused from the quick menu at 0:40, then VitaPlex opened: "SceShell
+  stopped at song 1, 0:40 ("stopped") ... paused from the quick menu",
+  "loaded paused", and mpv paused at PLAYBACK_RESTART until play was
+  pressed 5.2 s later.
+- The power button four times with VitaPlex itself playing (app suspend,
+  power button, app resuming): mpv's clock went from 11.10 s to 21.32 s
+  in 10.21 s of the timeline reports. No gap.
+- "Stops": PS paused the music ("the music paused, with VitaPlex left"),
+  it played again only from the player's button, and the quit handed
+  nothing over.
+- The probe limit held: ffmpeg's warning now gives probesize 262144. Three
+  streams took 0.7 to 0.9 s to open, against 0.5 to 0.8 s before, the
+  network setting the pace; no MP3 on the card was opened.
+- Wi-Fi off: every fetch failed with 0x80412113. Next played song 2, whose
+  file was on the card, and the next next tried songs 3, 4 and 5 twice
+  each, and SceShell stopped 3.3 s after it: three in a row. The row went
+  back, a play from it was dropped, and VitaPlex, opened 2 minutes on, took
+  nothing back from the status saying stopped. That is as the plugin was
+  built to do it.
+- An M4A the shell stopped and was played again went on where it stopped,
+  and then back: 2:01 to 1:28, 1:28 to 1:08, 1:08 to 0:48, and 0:48 to
+  about 0:44 by the next next, 15 to 37 s each. The check for a song going
+  on away from where it stopped (build 2036) looks once, as it plays again,
+  which since build 2051 is 0.1 s on: it saw each where it had stopped. In
+  log `f3042ca3` the first look, half a second on, saw the jump already.
+  One jump came within 1.6 s of playing again; the others are bounded by
+  the next line the log has, 3.8, 7.6 and 11 s on. Now a song played again
+  is watched for 10 s: further back than where it stopped plus the time
+  since, by more than 3 s, it is taken there once. A press on the row, a
+  seek of the plugin's own and a new song end the watch.
+- The first hand-over of that M4A began at 0:00 though the seek time was
+  set before play, read 0:50 after three seeks to 0:28, and was at 0:28
+  1.5 s after play; the second was at its place 1.0 s after play. The M4A of
+  build 2050's run began at its place.
+- On a host the harness passes 208 checks, with a shell that goes on where
+  it stopped and jumps back 0.4 or 6 s after. The plugin builds at 45868
+  bytes, with build 2052's imports.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

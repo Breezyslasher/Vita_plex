@@ -1453,6 +1453,11 @@ const int kNeverStartedLooks = 150;
 // 0.6 s while it stays stopped: in log e92d16a1 one was still stopped a
 // second after a play, and played after the next.
 const uint32_t kReplayEveryUs = 600 * 1000;
+// How long a song played again after a stop is watched for going on further
+// back than where it stopped (Carry::backUs). In log 0790f7dc an M4A jumped
+// back within 1.6 s of playing again once; the other times are bounded by
+// the next look the log has, 3.8, 7.6 and 11 s on.
+const uint32_t kBackWatchUs = 10 * 1000 * 1000;
 // Stopping: VitaPlex taking the music back, ready to play it, the service
 // stopped and ended and the place it stopped at written; the row given back,
 // the place written and the music left; the music left to a process that
@@ -1549,6 +1554,10 @@ struct Carry {
     // the play of VitaPlex's song to its seek landing, so that the seek goes
     // as soon as the shell plays (kFastLookUs). 0 when not.
     SceUInt64 fastUntilUs;
+    // A song played again after a stop: where it had stopped, and when it
+    // played again, for kBackWatchUs. 0 when not watched.
+    uint32_t backFromMs;
+    SceUInt64 backUs;
     // What the server was last told of the music (report), and when.
     const char* reportState;
     SceUInt64 reportUs;
@@ -2869,6 +2878,7 @@ void waitFor(const Track* t, const char* why) {
     g_c.resuming = 0;
     // No song plays meanwhile: the music thread back to its usual looks.
     g_c.fastUntilUs = 0;
+    g_c.backUs = 0;
     logLine("carry on: song %d of %d (%s), \"%s\", is not on the memory card: the shell stopped "
             "(0x%08X) until it is fetched",
             t->index + 1, g_c.count, why, t->title, (unsigned)rcStop);
@@ -3277,6 +3287,7 @@ bool carryPlay(const Track* t, const char* why) {
     g_c.seekTries = 0;
     g_c.reportState = NULL;  // told once it plays
     g_c.fastUntilUs = 0;
+    g_c.backUs = 0;
     // VitaPlex's place, asked for at once as well, so that the song's start
     // is not heard first (1.3 s of it in log 8e7a4b23). The shell did not
     // take this seek in log d6e76980; so the music thread looks every 25 ms
@@ -3436,6 +3447,7 @@ void seekTo(uint32_t ms) {
     g_c.maxTime = 0;
     g_c.playMs = ms;
     g_c.havePrev = 0;
+    g_c.backUs = 0;
 }
 
 // Takes the song back to its start: the seek time, then the seek event, as
@@ -3447,6 +3459,7 @@ void seekStart(const char* why) {
     g_c.maxTime = 0;
     g_c.playMs = 0;
     g_c.havePrev = 0;
+    g_c.backUs = 0;
 }
 
 // A press on the row, as player.c's watchSong takes them: play/pause stops
@@ -3454,6 +3467,7 @@ void seekStart(const char* why) {
 // the start past a song's first 3 s, and to the song before within them,
 // fetched first if it is not on the card; next goes on past repeat one.
 void carryPress(int press, int state, uint32_t time) {
+    g_c.backUs = 0;  // where the song goes now is the row's doing
     if (press == QM_PRESS_NEXT) {
         logLine("carry on: next, from the row, at %s", mmss(time).s);
         carryNext(g_c.cur.index, false, "next, from the row");
@@ -3779,6 +3793,28 @@ void carryTick() {
                         g_c.cur.index + 1, g_c.count, mmss(time).s, mmss(g_c.playMs).s,
                         (unsigned)rcTime, (unsigned)rcSeek);
                 g_c.maxTime = time;
+                return;
+            }
+            // It can go on where it stopped and jump back only after: an M4A
+            // did, 20 to 37 s, after the look 0.1 s on had seen it where it
+            // stopped (log 0790f7dc; looks came every half second up to build
+            // 2050). Watched for kBackWatchUs.
+            g_c.backFromMs = g_c.playMs;
+            g_c.backUs = now;
+        } else if (state == 1 && g_c.backUs) {
+            const uint32_t since = (uint32_t)(now - g_c.backUs);
+            const uint32_t want = g_c.backFromMs + since / 1000u;
+            if (since >= kBackWatchUs) {
+                g_c.backUs = 0;
+            } else if (time + 3000 < want) {
+                g_c.backUs = 0;
+                const int rcTime = musicSeekTime(want), rcSeek = musicEvent(kEventSeek);
+                logLine("carry on: song %d of %d went on at %s, %s s after it played again at %s; "
+                        "seek time 0x%08X, seek 0x%08X",
+                        g_c.cur.index + 1, g_c.count, mmss(time).s, secsOf(since / 1000u).s,
+                        mmss(g_c.backFromMs).s, (unsigned)rcTime, (unsigned)rcSeek);
+                g_c.maxTime = time;
+                g_c.playMs = want;
                 return;
             }
         }
