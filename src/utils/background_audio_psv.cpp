@@ -1348,11 +1348,11 @@ void takeBack() {
     const std::string state = fieldText(status, "state");
     const int index = (int)fieldNum(status, "index");
     const long long at = (long long)std::max(0.0, fieldNum(status, "positionMs"));
-    brls::Logger::info("[bgaudio] take back: SceShell last said \"{}\", song {} at {}{}, {:.1f} s "
-                       "ago",
+    brls::Logger::info("[bgaudio] take back: SceShell last said \"{}\", song {} at {}{}{}, "
+                       "{:.1f} s ago",
                        state, index + 1, mmss((unsigned)at),
                        fieldNum(status, "fetching") == 1 ? " as it is fetched" : "",
-                       now - written);
+                       fieldNum(status, "paused") == 1 ? ", paused" : "", now - written);
     // SceShell writes its status every 2 s as it carries a queue on: one not
     // written for longer is of music over, or of a plugin no longer there.
     // Its files stay then, as the shell may yet play one of them: a file
@@ -1453,10 +1453,13 @@ ShellPlace takeBackFromShell() {
         place.index = (int)fieldNum(status, "index");
         place.atMs = (long long)std::max(0.0, fieldNum(status, "positionMs"));
         place.play = fieldNum(status, "queue") == q.written;
+        // Paused from the quick menu: it stays paused here (build 2052).
+        place.paused = fieldNum(status, "paused") == 1;
         brls::Logger::info("[bgaudio] take back: SceShell stopped at song {}, {} (\"{}\"), {:.2f} s "
-                           "after it was told{}",
+                           "after it was told{}{}",
                            place.index + 1, mmss((unsigned)place.atMs), fieldText(status, "state"),
-                           took, place.play ? "" : ", in another queue");
+                           took, place.paused ? ", paused from the quick menu" : "",
+                           place.play ? "" : ", in another queue");
     } else {
         // No answer: SceShell carried nothing on by then, its queue over or
         // something else playing in the shell, or its plugin is one of before

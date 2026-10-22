@@ -3312,6 +3312,52 @@ when the Vita's screen is turned off.
 - On a host the harness passes 201 checks. The plugin builds at 45125 bytes,
   with build 2050's imports.
 
+**Build 2052: build 2051's run.** Logs `48ccef45` (the plugin), `2b81808a`
+and `d87c0489` (VitaPlex), and the user's word: Plex showed the music as
+SceShell played it, and the music, paused from the quick menu, should stay
+paused when VitaPlex is opened.
+
+- The power button: 14 stops while SceShell played, seven in 12 s from
+  16:23:36 and seven from 16:25:25. Eleven were seen playing again 0.1 s
+  after they were seen stopped, two 0.2 s after and one 0.7 s after. The
+  plugin saw the system's UI over the screen from 16:23:36.762 for 126 s,
+  27 ms before the first stop was seen.
+- The hand-overs: on the quit, the shell played at VitaPlex's place, 0:29,
+  0.15 s after play. Then "In the background at once" was used for the
+  first time: PS handed the 2-song queue over, the shell playing at 0:46
+  0.24 s after play, and VitaPlex ended itself.
+- Song ends: song 1 ended and the next, a download, played at once, and
+  song 1 was marked played. Next from the row played song 2 of the short
+  queue at once, its file fetched ahead. At its end the queue was over: the
+  files went, the status said over, the row was given back.
+- The take-back: SceShell went on to song 2 as VitaPlex started, and
+  stopped there at 0:06, 0.20 s after it was told, its fetch of song 3
+  stopped. VitaPlex loaded the song 0.2 s after the stop, so build
+  2051's change held, but the silence was 2.0 s: 0.33 s decoding the
+  download's cover on the UI thread before mpv had the file, then 1.29 s
+  for mpv to open the MP3 and 0.13 s to play. ffmpeg's stream probe read
+  the file up to its byte limit, 5 MB, as the Vita's mp3_vita decoder gives
+  no frame size ("Could not find codec parameters ... unspecified frame
+  size"). The three local MP3s in the logs took 1.0 to 1.3 s to open, 0.8 s
+  of it before that warning; an M4A took 0.35 s.
+- The quick menu after the queue ended: the row nobody's, its lines empty,
+  and "There are no songs." at alpha 0. The plugin hid that line while the
+  row was its own (build 2050) and did not put SceShell's alpha back.
+- Now:
+  - The status has `paused=1` while the row's play/pause holds the music.
+    VitaPlex loads the song paused at its place: mpv given `pause` before
+    the load still opens the file, fills its audio buffer and sends
+    PLAYBACK_RESTART (mpv 0.36, player/playloop.c and audio.c), at which
+    the player reads the pause flag and shows paused.
+  - The Vita's audio-only mpv probes 256 KiB of a file
+    (`demuxer-lavf-probesize`), which sets only ffmpeg's probe, mpv
+    detecting the format with a buffer of its own (demux/demux_lavf.c).
+  - A download's cover is decoded once mpv has the file.
+  - "There are no songs." gets the alpha SceShell had given it back with
+    the row.
+- On a host the harness passes 204 checks. The plugin builds at 45329 bytes,
+  with build 2051's imports.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

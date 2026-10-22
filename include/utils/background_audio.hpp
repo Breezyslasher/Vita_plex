@@ -29,11 +29,13 @@ namespace vitaplex {
 namespace bgaudio {
 
 // Where a queue taken back from SceShell goes on (takeBackNow): whether it
-// does, its song's place in the queue, and where in the song.
+// does, its song's place in the queue, where in the song, and whether the
+// quick menu's play/pause had it paused, which it stays.
 struct ShellPlace {
     bool play = false;
     int index = -1;
     long long atMs = 0;
+    bool paused = false;
 };
 
 #if defined(__vita__)

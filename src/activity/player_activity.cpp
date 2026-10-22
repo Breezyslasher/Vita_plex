@@ -1313,9 +1313,15 @@ void PlayerActivity::loadFromQueue() {
         MusicQueue& q = MusicQueue::getInstance();
         if (place.index != q.getCurrentIndex()) q.playTrack(place.index);
         m_queueStartOffsetMs = place.atMs;
+        // Paused from the quick menu, it stays paused here, at its place.
+        m_startPaused = place.paused;
         loadFromQueue();
         return;
     }
+
+    // Spent by this load whatever becomes of it.
+    const bool startPaused = m_startPaused;
+    m_startPaused = false;
 
     // Use the rating key to get the playback URL
     m_mediaKey = track->ratingKey;
@@ -1341,19 +1347,17 @@ void PlayerActivity::loadFromQueue() {
     // the server's stream, which took 7.3 s to begin after a take-back. The
     // server still hears of it, as of a stream.
     const std::string keptFile = bgaudio::songFile(track->ratingKey);
+    // A download's own cover, preferred over the server's, decoded on this
+    // thread once mpv has the file below: decoded first, it held the song's
+    // load back 0.33 s (log d87c0489).
+    std::string localCover;
     if (downloads.getDownloadCopy(track->ratingKey, dlItem) && dlItem.state == DownloadState::COMPLETED) {
         url = dlItem.localPath;
         useLocalFile = true;
         m_isLocalFile = true;  // Suppress timeline reports when offline
         if (startAt > 0) startSec = startAt / 1000.0;
         brls::Logger::info("PlayerActivity: Using downloaded file for track: {}", url);
-
-        // Load cover art from local file if available (preferred over server URL)
-        if (albumArt && !dlItem.thumbPath.empty()) {
-            if (ImageLoader::loadFromFile(dlItem.thumbPath, albumArt)) {
-                albumArt->setVisibility(brls::Visibility::VISIBLE);
-            }
-        }
+        if (albumArt) localCover = dlItem.thumbPath;
     } else {
         // Stream from server
         m_isLocalFile = false;  // Reset in case previous track was local
@@ -1438,6 +1442,11 @@ void PlayerActivity::loadFromQueue() {
     int64_t expectedMs = (int64_t)track->duration * 1000 - MusicController::getInstance().streamStartOffsetMs();
     if (expectedMs < 0) expectedMs = 0;
 
+    auto showLocalCover = [this, &localCover]() {
+        if (!localCover.empty() && ImageLoader::loadFromFile(localCover, albumArt))
+            albumArt->setVisibility(brls::Visibility::VISIBLE);
+    };
+
     // Stream audio directly via MPV (transcode API returns mp3 stream or local file)
     if (!player.isInitialized()) {
         // Defer MPV init + load to after activity transition completes
@@ -1445,22 +1454,30 @@ void PlayerActivity::loadFromQueue() {
         m_pendingPlayTitle = track->title;
         m_pendingDurationMs = expectedMs;
         m_pendingStartSec = startSec;
+        m_pendingStartPaused = startPaused;
         m_pendingIsAudio = true;
-        m_isPlaying = true;
+        m_isPlaying = !startPaused;
         m_loadingMedia = false;
+        showLocalCover();
         return;
     }
 
     // Player already initialized (track change) - load immediately
-    if (!player.loadUrl(url, track->title, expectedMs, startSec)) {
+    if (!player.loadUrl(url, track->title, expectedMs, startSec, startPaused)) {
         brls::Logger::error("Failed to load URL: {}", redactTokensInUrl(url));
         m_loadingMedia = false;
+        showLocalCover();
         return;
     }
 
-    m_isPlaying = true;
+    m_isPlaying = !startPaused;
     m_loadingMedia = false;
-    MusicController::getInstance().publishNowPlaying(1);
+    if (startPaused) {
+        brls::Logger::info("PlayerActivity: loaded paused, as SceShell had it");
+        updatePlayPauseLabel();
+    }
+    MusicController::getInstance().publishNowPlaying(startPaused ? 0 : 1);
+    showLocalCover();
 }
 
 void PlayerActivity::prefetchNextTrack() {
@@ -2013,15 +2030,17 @@ void PlayerActivity::updateProgress() {
         auto alive = m_alive;
         const int64_t durationMs = m_pendingDurationMs;
         const double startSec = m_pendingStartSec;
+        const bool startPaused = m_pendingStartPaused;
         m_pendingStartSec = 0.0;
-        brls::sync([this, url, title, isAudio, alive, durationMs, startSec]() {
+        m_pendingStartPaused = false;
+        brls::sync([this, url, title, isAudio, alive, durationMs, startSec, startPaused]() {
             if (!alive->load() || m_destroying) return;
 
             brls::Logger::info("PlayerActivity: Deferred MPV load (phase 2: loadUrl)...");
 
             MpvPlayer& player = MpvPlayer::getInstance();
 
-            if (player.loadUrl(url, title, durationMs, startSec)) {
+            if (player.loadUrl(url, title, durationMs, startSec, startPaused)) {
                 if (videoView && !isAudio) {
                     videoView->setVisibility(brls::Visibility::VISIBLE);
                     videoView->setVideoVisible(true);
@@ -2031,9 +2050,9 @@ void PlayerActivity::updateProgress() {
                 if (!isAudio && !m_isQueueMode) {
                     pip::setVideoPlaybackState(true, 16, 9);
                 }
-                m_isPlaying = true;
+                m_isPlaying = !startPaused;
                 updatePlayPauseLabel();
-                if (m_isQueueMode) MusicController::getInstance().publishNowPlaying(1);
+                if (m_isQueueMode) MusicController::getInstance().publishNowPlaying(startPaused ? 0 : 1);
                 brls::Logger::info("PlayerActivity: Deferred load started successfully");
             } else {
                 brls::Logger::error("PlayerActivity: Deferred loadUrl failed");

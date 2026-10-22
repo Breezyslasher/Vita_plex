@@ -849,6 +849,11 @@ bool setOwnAlphaIf(paf::ui::Widget* w, float want) {
     return true;
 }
 
+// SceShell's own alpha for "There are no songs." from before showLines hid
+// it, to put back with the row; below 0 when there is nothing to put back.
+// It stayed hidden once the row was SceShell's again in log 48ccef45.
+float g_noSongsOwnAlpha = -1.0f;
+
 // While the row is ours: the song's lines shown, and "There are no songs."
 // hidden, by their own alphas. SceShell fades the lines out as the quick menu
 // opens when it sees no music of its own, which it did on the first open
@@ -858,8 +863,19 @@ bool showLines() {
     if (!g_layoutOk) return false;
     bool changed = setOwnAlphaIf(g_textTop, kTopAlpha);
     changed |= setOwnAlphaIf(g_textBottom, kBottomAlpha);
+    if (g_noSongs && g_noSongsOwnAlpha < 0.0f) {
+        const float a = WidgetPeek::ownAlpha(g_noSongs);
+        if (a > 0.01f && a <= 1.0f) g_noSongsOwnAlpha = a;  // what is changed below
+    }
     changed |= setOwnAlphaIf(g_noSongs, 0.0f);
     return changed;
+}
+
+// "There are no songs." as SceShell had it before showLines hid it.
+void putNoSongsBack() {
+    if (g_noSongsOwnAlpha < 0.0f) return;
+    if (g_noSongs && g_layoutOk) WidgetPeek::setOwnAlpha(g_noSongs, g_noSongsOwnAlpha);
+    g_noSongsOwnAlpha = -1.0f;
 }
 
 // A line as it is, for the open's note: whose text it holds, its own alpha,
@@ -961,6 +977,7 @@ void releaseRow() {
     unlightAll();
     if (g_pauseShown) showPlaying(false);
     showOwnIcon();
+    putNoSongsBack();
     const paf::wstring empty;
     if (g_textTop) g_textTop->SetString(empty);
     if (g_textBottom) g_textBottom->SetString(empty);
@@ -972,7 +989,8 @@ void releaseRow() {
 // The row SceShell's, with something of the plugin's left on it since it was
 // last ours. true when it changed anything.
 bool restoreRow() {
-    if (!g_litCount && !g_pauseShown && !g_artShown) return false;
+    if (!g_litCount && !g_pauseShown && !g_artShown && g_noSongsOwnAlpha < 0.0f) return false;
+    putNoSongsBack();
     unlightAll();
     // Its play icon is put back only with the button off: with it on,
     // SceShell's own music is in the row, and ⏸ may be SceShell's.
@@ -1932,12 +1950,15 @@ void carryStatusOf(const Track* t, const char* state, uint32_t positionMs, bool 
     const SceUInt64 now = sceKernelGetSystemTimeWide();
     uint32_t secs, micros;
     splitUs(now, &secs, &micros);
+    // paused=1 while the row's play/pause holds it, so that VitaPlex takes
+    // the music back paused (build 2052; up to build 2051 it played on).
     const int n = sceClibSnprintf(
         text, sizeof(text),
         "written=%u.%06u\nqueue=%s\nindex=%d\nratingKey=%s\npositionMs=%u\ndurationMs=%u\n"
-        "state=%s\nby=SceShell\n%send\n",
+        "state=%s\nby=SceShell\n%s%send\n",
         (unsigned)secs, (unsigned)micros, g_c.queue, t->index, t->key, (unsigned)positionMs,
-        (unsigned)t->durationMs, state, fetching ? "fetching=1\n" : "");
+        (unsigned)t->durationMs, state, fetching ? "fetching=1\n" : "",
+        g_c.menuPaused ? "paused=1\n" : "");
     const char* const part = HANDOVER_STATUS ".part";
     const SceUID fd = sceIoOpen(part, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
     int rc = fd;

@@ -42,7 +42,8 @@ the plugin.
   none on the first open after VitaPlex began to play: the song showed only
   from the second open (build 2049). While the row is the plugin's, the
   lines are kept at the alphas SceShell gives them (1 and 0.8), and its
-  "There are no songs." line at 0 (build 2050). The first opens of a boot,
+  "There are no songs." line at 0 (build 2050), which gets SceShell's own
+  alpha back with the row (build 2052). The first opens of a boot,
   and the first after the row changes hands, are logged as they close: when
   the row was taken, what was put back after, and the lines 1 s in.
 - **Play and pause:** while the music plays, the play icon shows the pause
@@ -76,8 +77,9 @@ the plugin.
   change, so that VitaPlex takes the music back where SceShell got to
   (`QM_CMD_TAKE_BACK`), which it asks for once its player is ready: the
   plugin then stops the shell's song and writes where (build 2049; up to
-  build 2048 the song was left for VitaPlex to stop). The row stays, its
-  buttons acting on this music. A
+  build 2048 the song was left for VitaPlex to stop), and `paused=1` while
+  the row's play/pause holds it, which VitaPlex keeps (build 2052). The row
+  stays, its buttons acting on this music. A
   song that goes on away from where it stopped, as an M4A download went on
   35 s back after a pause, is sought back there (build 2036). SceShell stops
   its song itself 0.1 to 0.4 s after the power button is pressed, as at four

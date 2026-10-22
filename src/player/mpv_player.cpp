@@ -502,6 +502,18 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "5");  // Read 5 seconds ahead
         mpv_set_option_string(m_mpv, "demuxer-max-bytes", "512KiB");  // Allow some buffering for audio
 
+        // ffmpeg's stream probe (avformat_find_stream_info) of an MP3 reads
+        // to its byte limit, 5 MB, as the Vita's mp3_vita decoder gives no
+        // frame size and the stream never looks complete ("Could not find
+        // codec parameters ... unspecified frame size"). Three MP3s on the
+        // card took 1.0 to 1.3 s to open, 0.8 s of it before that warning,
+        // where an M4A took 0.35 s (logs 72ac5052, b63e93ca, d87c0489). The
+        // limit is 256 KiB here, what the probe finds the same. mpv detects
+        // the format with a buffer of its own, which this leaves alone (mpv
+        // 0.36, demux/demux_lavf.c). demuxer-lavf-probe-info, which skips the
+        // probe, crashed on the Vita (below).
+        mpv_set_option_string(m_mpv, "demuxer-lavf-probesize", "262144");
+
         // Music after leaving the app (utils/background_audio.hpp).
         // ao_vita opens the BGM port for anything under 48 kHz and the MAIN
         // port at 48 kHz, and the BGM port is the one an app may keep once it
@@ -824,7 +836,7 @@ void MpvPlayer::setAudioOnly(bool audioOnly) {
 }
 
 bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
-                        int64_t expectedDurationMs, double startSec) {
+                        int64_t expectedDurationMs, double startSec, bool startPaused) {
     // Set before anything can fail, and unconditionally, so a value from the
     // previous track can never be read against this one.
     m_expectedDurationMs.store(expectedDurationMs);
@@ -942,13 +954,16 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
     }
 #endif
 
-    // Every new file starts playing, at startSec. Both are set here on every
-    // load, so nothing can carry over from before: not the pause keep-open
-    // applies at the end of a track, not a pause pressed while nothing was
-    // loaded, not an earlier load's start point. mpv runs requests from one
-    // client in order on its core thread, so these land ahead of the loadfile.
-    int unpaused = 0;
-    mpv_set_property_async(m_mpv, 0, "pause", MPV_FORMAT_FLAG, &unpaused);
+    // Every new file starts playing, at startSec, unless asked to start
+    // paused there. Both are set here on every load, so nothing can carry over
+    // from before: not the pause keep-open applies at the end of a track, not
+    // a pause pressed while nothing was loaded, not an earlier load's start
+    // point. mpv runs requests from one client in order on its core thread, so
+    // these land ahead of the loadfile. Paused, mpv still opens the file and
+    // fills its audio buffer, and sends PLAYBACK_RESTART, which update()
+    // reads the pause flag at (mpv 0.36, player/playloop.c).
+    int pauseFlag = startPaused ? 1 : 0;
+    mpv_set_property_async(m_mpv, 0, "pause", MPV_FORMAT_FLAG, &pauseFlag);
     char startStr[32] = "none";
     if (startSec > 0.0) snprintf(startStr, sizeof(startStr), "%.3f", startSec);
     const char* startArg = startStr;

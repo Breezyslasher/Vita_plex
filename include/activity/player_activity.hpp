@@ -415,6 +415,10 @@ private:
     bool m_takeBackFromShell = false;
     // mpv to be set up on the next tick, with nothing loaded, before SceShell is asked.
     bool m_pendingMpvInit = false;
+    // The next load starts paused: SceShell's music, taken back, had been paused from the
+    // quick menu. Spent by that load, as is m_pendingStartPaused by a deferred one.
+    bool m_startPaused = false;
+    bool m_pendingStartPaused = false;
     int m_transcodeBaseOffsetMs = 0;  // Base offset (ms) used to start current transcode
     int m_mediaDurationMs = 0;        // Full media length (ms) from Plex metadata; 0 = unknown
     // Track length handed to loadUrl so an early end-of-stream is told from a real one; 0 means unknown.

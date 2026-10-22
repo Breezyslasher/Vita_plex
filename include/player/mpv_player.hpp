@@ -97,10 +97,12 @@ public:
     // that way; it is restarted on the server at an offset instead, so pass 0
     // there.
     //
-    // The file always starts playing. Whatever pause state the previous file
-    // was left in does not carry over.
+    // The file starts playing, or loaded and paused at startSec when
+    // startPaused says so. Whatever pause state the previous file was left in
+    // does not carry over.
     bool loadUrl(const std::string& url, const std::string& title = "",
-                 int64_t expectedDurationMs = 0, double startSec = 0.0);
+                 int64_t expectedDurationMs = 0, double startSec = 0.0,
+                 bool startPaused = false);
     bool loadFile(const std::string& path);
     void play();
     void pause();

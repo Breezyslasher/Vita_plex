@@ -105,6 +105,8 @@ enum {
 //   fetching=<1 when SceShell has stopped the shell's music to fetch the song
 //             it names, which plays from positionMs once fetched; missing
 //             otherwise>
+//   paused=<1 while the quick menu's play/pause holds the music, which
+//           VitaPlex then takes back paused (build 2052); missing otherwise>
 //   end
 #define HANDOVER_STATE_PLAYING "playing"   // handed to the shell
 #define HANDOVER_STATE_OVER    "over"      // the queue has played out
