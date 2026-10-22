@@ -10,14 +10,14 @@
  *
  *   Switch   — downloads the matching .nro and replaces the running one
  *              (path captured from argv[0]); relaunch applies it.
- *   PS Vita  — downloads the .vpk. A title can't promote over itself
- *              (0x80101114 = in use), so VitaPlex installs and launches a
- *              tiny bundled updater stub (VPLXUPD01) and quits; with
- *              VitaPlex closed the stub promotes the .vpk and relaunches
- *              VitaPlex (the AutoPlugin2 technique, utils/vita_install +
- *              src/updater_stub). VitaPlex removes the leftover stub on its
- *              next start (like PS4's helper). Falls back to a VitaShell
- *              install if the stub can't be staged.
+ *   PS Vita  — downloads the .vpk and unpacks it (utils/vita_install). The
+ *              system's installer refuses the running title, so VitaPlex's
+ *              quick menu plugin installs it from SceShell once VitaPlex
+ *              has quit, and launches VitaPlex again (qm_protocol.h's
+ *              QM_CMD_INSTALL_UPDATE); afterStart reports a failure. Falls
+ *              back to a VitaShell install if the plugin can't be loaded.
+ *              Up to build 2055 a bundled updater app (VPLXUPD01) did the
+ *              install; afterStart removes it where it's left.
  *   Android  — downloads the .apk and hands it to the system package
  *              installer (content:// via ApkProvider — no browser
  *              involved, so Android TV works too).
@@ -51,6 +51,12 @@ namespace app_update {
 // the file the updater must replace). Call once from main() before brls
 // starts; a no-op elsewhere.
 void setSelfPath(const char* argv0);
+
+// Once the UI is up, whatever the update check's setting: on the Vita, what
+// the quick menu plugin made of an update it installed as VitaPlex quit (a
+// dialog when it failed), and what an update leaves behind removed. A no-op
+// elsewhere.
+void afterStart();
 
 // Check GitHub for a newer release. `manual` distinguishes the settings
 // cell from the startup check: manual reports "up to date" and re-offers

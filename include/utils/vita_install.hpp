@@ -10,52 +10,44 @@
 
 namespace vita {
 
-// The stage installVpk is in, reported to its progress callback so a UI can
-// draw a step checklist. Extract → Verify → Install map to the archive
-// unpack, the head.bin forge, and the promoter run.
+// The stage stageVpk is in, reported to its progress callback so a UI can
+// draw a step checklist: the archive unpacked, then the head.bin forge.
 enum InstallPhase {
     PHASE_EXTRACT = 0,   // done/total = archive entries unpacked
     PHASE_VERIFY  = 1,   // done/total = 0/1 then 1/1 around the head.bin forge
-    PHASE_INSTALL = 2,   // done = poll tick (indeterminate), total = 0
 };
 
-/// Install a homebrew VPK already downloaded to disk, in place, by forging its
-/// fake-package `head.bin` and handing the extracted directory to
-/// ScePromoterUtility. This is the technique every Vita homebrew installer uses
-/// (VitaShell, VitaDB Downloader, …); it relies on the HENkaku-patched promoter
-/// present on every hacked Vita.
+/// Ready a homebrew VPK already downloaded to disk for the system's installer:
+/// extract it to `stageDir` and forge its fake-package `head.bin`, the
+/// technique every Vita homebrew installer uses (VitaShell, VitaDB
+/// Downloader, …), which relies on the HENkaku-patched promoter present on
+/// every hacked Vita. VitaPlex cannot hand the folder to the installer
+/// itself, which refuses the title running: its quick menu plugin does, in
+/// SceShell, once VitaPlex has quit (qm_protocol.h's QM_CMD_INSTALL_UPDATE).
 ///
-/// - `vpkPath`    : the downloaded `.vpk` (a plain ZIP) to install.
-/// - `workDir`    : a writable scratch directory under `ux0:` used to extract
-///                  the package before promotion; wiped and recreated by this
-///                  call.
+/// - `vpkPath`    : the downloaded `.vpk` (a plain ZIP).
+/// - `stageDir`   : a writable directory under `ux0:`, wiped and recreated by
+///                  this call; on success it holds the package to install.
 /// - `err`        : filled with a human-readable reason on failure.
 /// - `onProgress` : called as (phase, done, total) — see InstallPhase. Fires
-///                  per archive entry during extract, once each side of the
-///                  head.bin forge, and per ~100 ms poll tick during the
-///                  promote (so a spinner can animate). Runs on the caller's
-///                  thread.
+///                  per archive entry during extract, and once each side of
+///                  the head.bin forge. Runs on the caller's thread.
 ///
-/// Returns 0 on success. The bubble is replaced in place, so the caller must
-/// quit the app afterwards for the user to relaunch the new version.
-int installVpk(const std::string& vpkPath, const std::string& workDir, std::string& err,
-               std::function<void(int phase, int done, int total)> onProgress = {});
+/// Returns 0 on success; on failure nothing is left in `stageDir`.
+int stageVpk(const std::string& vpkPath, const std::string& stageDir, std::string& err,
+             std::function<void(int phase, int done, int total)> onProgress = {});
 
-/// Launch an installed app by its title id (via a psgm:play URI). Used to hand
-/// off to the updater stub, and by the stub to relaunch VitaPlex afterwards.
-void launchTitle(const std::string& titleId);
-
-/// The same launch with sceAppMgrLaunchAppByUri's flags given, returning what
-/// it returns. vita-headers: 0x20000 starts the app without opening the
-/// LiveArea, anything else opens it (launchTitle's 0xFFFFF does).
-int launchTitleWith(const std::string& titleId, int flags);
+/// Delete a directory tree, best effort (a stage left from an update).
+void removeTree(const std::string& path);
 
 /// Uninstall the updater stub (title VPLXUPD01) if it's installed, via
-/// ScePromoterUtility. Call from VitaPlex on startup after an update: the stub
-/// is installed fresh from the bundled updater.vpk each update and left on the
-/// LiveArea, so this clears the leftover bubble — the PS4 removeUpdaterApp()
-/// counterpart. Safe because it's a different title (a title can't uninstall
-/// its own running self); a no-op when the stub isn't installed.
+/// ScePromoterUtil. Builds up to 2055 installed it fresh from a bundled
+/// updater.vpk for each update, which it then installed, and left it on the
+/// LiveArea for VitaPlex to remove on its next start — the PS4
+/// removeUpdaterApp() counterpart. An update into this build is still made
+/// that way, by the build before. Safe because it's a different title (a
+/// title can't uninstall its own running self); a no-op when the stub isn't
+/// installed.
 void removeUpdaterStub();
 
 }  // namespace vita

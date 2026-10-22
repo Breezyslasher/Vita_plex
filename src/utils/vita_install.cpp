@@ -1,10 +1,12 @@
 /*
     VitaPlex — PS Vita in-app self-update (ported from pleNx, thcolin/gamepad-media-center-aggregator)
 
-    Installs a homebrew VPK from within the running app: extract the ZIP, forge
-    a fake-package `sce_sys/package/head.bin`, then promote the directory with
-    ScePromoterUtility (the HENkaku-patched promoter accepts self-signed
-    packages on every hacked Vita).
+    Readies a homebrew VPK for the system's installer from within the running
+    app: extract the ZIP and forge a fake-package `sce_sys/package/head.bin`,
+    for ScePromoterUtility to promote (the HENkaku-patched promoter accepts
+    self-signed packages on every hacked Vita). The promoter refuses the title
+    running, so VitaPlex's quick menu plugin promotes the folder from SceShell
+    once VitaPlex has quit (qm_protocol.h's QM_CMD_INSTALL_UPDATE).
 
     The fake-package technique — the `head.bin` template and the `fpkg_hmac`
     key derivation — is the de-facto interoperability standard shared by every
@@ -21,7 +23,6 @@
 
 #include "utils/vita_install.hpp"
 
-#include <psp2/appmgr.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/io/dirent.h>
 #include <psp2/io/stat.h>
@@ -49,10 +50,10 @@
 
 namespace {
 
-// Self-contained logging + string formatting — this file is linked into BOTH
-// VitaPlex (which has borealis) and the tiny updater-stub app (which does not),
-// so it cannot depend on brls::Logger or fmt. Logs append to a file both
-// processes can share, which doubles as the on-device diagnostic trail.
+// Self-contained logging + string formatting, free of brls::Logger and fmt as
+// it was when the updater stub of builds up to 2055 linked this file too.
+// Logs append to a file of their own, the on-device diagnostic trail of
+// updates.
 void vlog(const char* fmt, ...) {
     char buf[512];
     va_list ap;
@@ -392,70 +393,10 @@ int unloadScePaf() {
     return sceSysmoduleUnloadModuleInternalWithArg(SCE_SYSMODULE_INTERNAL_PAF, 0, nullptr, &opt);
 }
 
-int promoteApp(const std::string& path, std::string& err,
-               const std::function<void(int tick)>& onPoll) {
-    int res = loadScePaf();
-    if (res < 0) {
-        err = "cannot load ScePaf (" + hex((unsigned)res) + ")";
-        return res;
-    }
-
-    res = sceSysmoduleLoadModuleInternal(SCE_SYSMODULE_INTERNAL_PROMOTER_UTIL);
-    if (res < 0) {
-        err = "cannot load the promoter (" + hex((unsigned)res) + ")";
-        unloadScePaf();
-        return res;
-    }
-
-    res = scePromoterUtilityInit();
-    if (res >= 0) {
-        // VitaPlex ships with an empty CONTENT_ID (free homebrew, no
-        // license): scePromoterUtilityPromotePkgWithRif wants a rif keyed
-        // to a real content-id and rejects it up front with 0x80101114, so
-        // use the no-license scePromoterUtilityPromotePkg. Drive it
-        // asynchronously (sync=0) and poll GetState to completion, then
-        // read the real outcome from GetResult — the pattern pkgj and
-        // ONElua's game.install use. (sync=1 on this call blocked forever.)
-        int pres = scePromoterUtilityPromotePkg(path.c_str(), 0);
-        if (pres < 0) {
-            err = "the system installer would not start (" + hex((unsigned)pres) + ")";
-            res = pres;
-        } else {
-            // Poll until idle. ~5 minutes at 100 ms — a large eboot takes a
-            // while — after which we give up rather than hang forever.
-            int state = 1;
-            int guard = 0;
-            const int kMaxPolls = 3000;
-            while (guard++ < kMaxPolls) {
-                if (scePromoterUtilityGetState(&state) < 0) { state = 0; break; }
-                if (state == 0) break;   // idle => finished
-                if (onPoll) onPoll(guard);   // drives the UI spinner
-                sceKernelDelayThread(100 * 1000);
-            }
-            int result = 0;
-            if (guard >= kMaxPolls) {
-                err = "the system installer timed out";
-                res = -1;
-            } else if (scePromoterUtilityGetResult(&result) < 0 || result < 0) {
-                err = "the system installer rejected the package (" + hex((unsigned)result) + ")";
-                res = result ? result : -1;
-            } else {
-                res = 0;   // promoted
-            }
-        }
-        scePromoterUtilityExit();
-    } else {
-        err = "cannot start the promoter (" + hex((unsigned)res) + ")";
-    }
-
-    sceSysmoduleUnloadModuleInternal(SCE_SYSMODULE_INTERNAL_PROMOTER_UTIL);
-    unloadScePaf();
-    return res;
-}
-
-// Uninstall an installed title by id via ScePromoterUtility — the DeletePkg
-// counterpart to promoteApp, with the same module-load + async-poll pattern
-// (DeletePkg runs asynchronously; poll GetState to idle, then read GetResult).
+// Uninstall an installed title by id via ScePromoterUtility: the module
+// loaded, DeletePkg run asynchronously and GetState polled to idle, then
+// GetResult read, as pkgj and ONElua's game.install drive the promoter (and
+// as the plugin promotes VitaPlex's updates).
 int deleteTitle(const std::string& titleId, std::string& err) {
     int res = loadScePaf();
     if (res < 0) {
@@ -510,73 +451,51 @@ int deleteTitle(const std::string& titleId, std::string& err) {
 
 namespace vita {
 
-int installVpk(const std::string& vpkPath, const std::string& workDir, std::string& err,
-               std::function<void(int phase, int done, int total)> onProgress) {
-    vlog("vita: installing %s via %s", vpkPath.c_str(), workDir.c_str());
+int stageVpk(const std::string& vpkPath, const std::string& stageDir, std::string& err,
+             std::function<void(int phase, int done, int total)> onProgress) {
+    vlog("vita: staging %s in %s", vpkPath.c_str(), stageDir.c_str());
 
-    removePath(workDir);
-    mkdirs(workDir);
+    removePath(stageDir);
+    mkdirs(stageDir);
 
     // Extract → phase 0, per archive entry.
     auto extractCb = [&onProgress](int done, int total) {
         if (onProgress) onProgress(PHASE_EXTRACT, done, total);
     };
-    if (extractVpk(vpkPath, workDir, err, extractCb) != 0) {
+    if (extractVpk(vpkPath, stageDir, err, extractCb) != 0) {
         vlog("vita: extract failed: %s", err.c_str());
-        removePath(workDir);
+        removePath(stageDir);
         return -1;
     }
 
     // A valid VPK must at least carry the executable and its metadata.
-    if (!fileExists(workDir + "/eboot.bin") || !fileExists(workDir + "/sce_sys/param.sfo")) {
+    if (!fileExists(stageDir + "/eboot.bin") || !fileExists(stageDir + "/sce_sys/param.sfo")) {
         err = "invalid VPK (eboot.bin or param.sfo missing)";
         vlog("vita: %s", err.c_str());
-        removePath(workDir);
+        removePath(stageDir);
         return -1;
     }
 
     // Verify → phase 1, the head.bin forge.
     if (onProgress) onProgress(PHASE_VERIFY, 0, 1);
-    if (makeHeadBin(workDir, err) != 0) {
+    if (makeHeadBin(stageDir, err) != 0) {
         vlog("vita: makeHeadBin failed: %s", err.c_str());
-        removePath(workDir);
+        removePath(stageDir);
         return -1;
     }
     if (onProgress) onProgress(PHASE_VERIFY, 1, 1);
 
-    // Install → phase 2, the promoter (poll ticks drive the spinner).
-    auto pollCb = [&onProgress](int tick) {
-        if (onProgress) onProgress(PHASE_INSTALL, tick, 0);
-    };
-    if (promoteApp(workDir, err, pollCb) < 0) {
-        vlog("vita: promote failed: %s", err.c_str());
-        removePath(workDir);
-        return -1;
-    }
-
-    // Promotion is synchronous (sync=1): the bubble is updated, the scratch directory can go.
-    removePath(workDir);
-    vlog("vita: install succeeded");
+    vlog("vita: staged, for the plugin to install");
     return 0;
 }
 
-void launchTitle(const std::string& titleId) {
-    std::string uri = "psgm:play?titleid=" + titleId;
-    // 0xFFFFF is the flag homebrew launchers pass to sceAppMgrLaunchAppByUri.
-    sceAppMgrLaunchAppByUri(0xFFFFF, const_cast<char*>(uri.c_str()));
-    sceKernelDelayThread(200 * 1000);
-}
-
-int launchTitleWith(const std::string& titleId, int flags) {
-    std::string uri = "psgm:play?titleid=" + titleId;
-    return sceAppMgrLaunchAppByUri(flags, const_cast<char*>(uri.c_str()));
-}
+void removeTree(const std::string& path) { removePath(path); }
 
 void removeUpdaterStub() {
-    // The stub's title id — matches the launch in app_update.cpp and the
-    // updater target's param.sfo. The promoter installs to ux0:app (or ur0:app
-    // on some setups); if it isn't there, this is a normal boot with no stub to
-    // clean up, so skip the (module-loading) uninstall entirely.
+    // The stub's title id, from the param.sfo of builds up to 2055. The
+    // promoter installs to ux0:app (or ur0:app on some setups); if it isn't
+    // there, this is a normal boot with no stub to clean up, so skip the
+    // (module-loading) uninstall entirely.
     const char* kStubId = "VPLXUPD01";
     if (!fileExists(std::string("ux0:app/") + kStubId) &&
         !fileExists(std::string("ur0:app/") + kStubId)) {

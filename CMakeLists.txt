@@ -777,8 +777,9 @@ if(PLATFORM_PSV)
         SceCodecEngine_stub
         SceAudio_stub
         SceVshBridge_stub
-        # sceSysmoduleLoadModule in platform_psv.cpp (NET/SSL/HTTP/IME/PGF)
-        # and the in-app self-update promoter (utils/vita_install).
+        # sceSysmoduleLoadModule in platform_psv.cpp (NET/SSL/HTTP/IME/PGF),
+        # and the promoter that removes the updater app builds up to 2055
+        # installed (utils/vita_install).
         ScePromoterUtil_stub
         SceSysmodule_stub
     )
@@ -1308,53 +1309,12 @@ endif()
 # Platform packaging / post-build
 # ---------------------------------------------------------------------------
 if(PLATFORM_PSV)
-    # ── Updater stub (self-update helper) ───────────────────────────────
-    # A second, tiny Vita app with its own title id (VPLXUPD01). VitaPlex
-    # cannot promote over itself — the installer returns 0x80101114 "in
-    # use" for the running title — so at update time VitaPlex installs and
-    # launches this stub; with VitaPlex now closed, the stub promotes the
-    # downloaded VPK and relaunches VitaPlex. This is the AutoPlugin2
-    # technique. It shares the extract/promote code (utils/vita_install),
-    # which is deliberately free of borealis/fmt so the stub links without
-    # the UI stack. The stub's own .vpk is bundled inside VitaPlex.vpk
-    # (as updater.vpk) so VitaPlex can install it on demand.
-    add_executable(vitaplex_updater
-        src/updater_stub/main.cpp
-        src/utils/vita_install.cpp
-        lib/miniz/miniz.c)
-    target_include_directories(vitaplex_updater PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/lib/miniz)
-    target_compile_definitions(vitaplex_updater PRIVATE __PSV__ MINIZ_NO_STDIO MINIZ_NO_TIME)
-    target_link_libraries(vitaplex_updater
-        mbedcrypto            # mbedtls_sha1 for the fpkg hmac
-        # vita2d + its stack, for the tiny progress screen (system PGF font).
-        vita2d
-        freetype
-        png
-        z
-        SceGxm_stub
-        SceDisplay_stub
-        SceCommonDialog_stub
-        ScePgf_stub
-        SceCtrl_stub
-        # self-update + relaunch
-        ScePromoterUtil_stub
-        SceSysmodule_stub
-        SceAppMgr_stub
-        SceIofilemgr_stub
-        SceLibKernel_stub)
-    # Same room for the SCE data as the main app; see __sce_headroom above.
-    target_link_options(vitaplex_updater PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
-    vita_create_self(vitaplex_updater.self vitaplex_updater UNSAFE NOASLR)
-    # No FILE args: vita_create_vpk accumulates them in a variable it does
-    # not clear between calls, so any file listed here leaks into the main
-    # VitaPlex.vpk below and gets packed twice. The stub is headless (no
-    # LiveArea icon needed), so it ships with just its eboot + param.sfo.
-    vita_create_vpk(vitaplex_updater.vpk VPLXUPD01 vitaplex_updater.self
-        VERSION 01.00
-        NAME "VitaPlex Updater")
-
+    # Updates: VitaPlex cannot be installed over while it runs (the system's
+    # installer refuses the running title), so it unpacks the update and its
+    # quick menu plugin, in SceShell, installs it once VitaPlex has quit and
+    # launches it again (utils/vita_install.hpp, qm_protocol.h's
+    # QM_CMD_INSTALL_UPDATE). Up to build 2055 a second app did that, the
+    # updater stub (VPLXUPD01), carried inside VitaPlex.vpk as updater.vpk.
     vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE NOASLR)
 
     # App icons, XML layouts and the PSV hint-button art are globbed at
@@ -1414,12 +1374,6 @@ if(PLATFORM_PSV)
         # the Vita vpk uses an explicit allow-list, so it must be named here
         # or every HTTPS handshake on Vita fails.
         FILE resources/cacert.pem                         resources/cacert.pem
-
-        # The bundled updater stub, installed + launched at self-update
-        # time. Listing it as a FILE makes the main vpk's build command
-        # depend on this path, which is the output of the stub's
-        # vita_create_vpk above, so CMake builds the stub vpk first.
-        FILE ${CMAKE_BINARY_DIR}/vitaplex_updater.vpk     updater.vpk
     )
 
     # ── VitaPlex's quick menu plugin (src/qm_plugin_psv) ────────────────
@@ -1452,12 +1406,15 @@ if(PLATFORM_PSV)
         target_compile_options(vitaplex_qm PRIVATE
             "$<$<COMPILE_LANGUAGE:CXX>:-O2;-fno-rtti;-fno-exceptions;-fno-builtin;-fshort-wchar;-fno-threadsafe-statics;-fno-sized-deallocation;-Wno-unused-function;-Wno-sign-compare;-Wno-template-body;-D__declspec(x)=>")
         target_link_options(vitaplex_qm PRIVATE -nostartfiles -nostdlib)
+        # The title it installs VitaPlex's updates for and launches again.
+        target_compile_definitions(vitaplex_qm PRIVATE VITAPLEX_TITLEID=\"${VITA_TITLEID}\")
         target_link_libraries(vitaplex_qm
             SceLibKernel_stub
             SceAppMgr_stub
             SceIofilemgr_stub
             SceKernelThreadMgr_stub
             SceRtc_stub
+            SceSysmodule_stub  # the system's installer, for VitaPlex's updates
             gcc)
         # With no C runtime, nothing runs static constructors in it, and a
         # global object that needs one stays all zeros (build 2023's white).
@@ -1493,8 +1450,7 @@ if(PLATFORM_PSV)
     # included, where a game is frozen. Packaged so as VitaPlex BG (VPLEX0002,
     # builds 2003 to 2046), it could also allocate 342 MB of main memory
     # against the game's 172 MB heap (BG Test 4, docs/DESIGN_NOTES.md;
-    # utils/background_audio.hpp). Appended here, after the updater stub's
-    # package, which stays a game as it was.
+    # utils/background_audio.hpp).
     set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
     vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
         VERSION ${VITA_VERSION}
@@ -1565,8 +1521,8 @@ elseif(PLATFORM_PS4)
     # process. So at update time VitaPlex launches this helper and quits;
     # with VitaPlex closed the helper uninstalls VPLX00002 and hands the
     # downloaded pkg to the system installer (BGFT), which finishes in the
-    # background. Shipped as its own pkg, installed once (like the Vita
-    # updater stub VPLXUPD01). It has no UI, so it needs only the borealis
+    # background. Shipped as its own pkg, installed once (as the Vita's
+    # updater stub VPLXUPD01 was, up to build 2055). It has no UI, so it needs only the borealis
     # PS4 base (sce_module + sce_sys) — no app resources.
     if(PS4)
         add_executable(vitaplex_updater_ps4 src/updater_ps4/main.cpp)

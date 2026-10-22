@@ -1599,6 +1599,24 @@ void setOfflineSkip(bool on) {
                        on ? "on to the songs on the memory card" : "songs passed over");
 }
 
+bool installUpdate() {
+    if (!shellPluginOpen()) {
+        brls::Logger::warning("[bgaudio] update: VitaPlex's quick menu plugin is not there to "
+                              "install it");
+        return false;
+    }
+    const int rc = qmInstallUpdate();
+    brls::Logger::info("[bgaudio] update: the plugin asked to install it once VitaPlex has gone: "
+                       "{}",
+                       hex(rc));
+    if (rc < 0) return false;
+    // As onRequestQuit does as the system closes VitaPlex.
+    quickMenuRelease("the app quits to be updated");
+    releasePort("quitting to be updated");
+    if (!handOver("VitaPlex quits to be updated")) dropReadySong();
+    return true;
+}
+
 bool keepPlaying() { return g_keepPlaying; }
 
 void exitProcess(int code) {

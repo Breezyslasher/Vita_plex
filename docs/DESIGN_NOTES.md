@@ -3447,6 +3447,52 @@ setting on by default.
   fails as with Wi-Fi off. The plugin builds at 47346 bytes, with build
   2053's imports.
 
+**Build 2056: updates through the plugin.** The user's word: no second app
+inside VitaPlex for its updates; the plugin should do them.
+
+- Up to build 2055 VitaPlex.vpk carried a second app as updater.vpk, the
+  updater stub (VPLXUPD01). The system's installer, ScePromoterUtil, refuses
+  the title running, so VitaPlex installed the stub, launched it and quit;
+  the stub installed the downloaded VPK and launched VitaPlex again, which
+  removed the stub on its next start.
+- Now the quick menu plugin does it from SceShell, which no app closes.
+  VitaPlex downloads the VPK as before, unpacks it to
+  `ux0:data/VitaPlex/update-stage` and forges its package head
+  (`vita::stageVpk`), asks the plugin (`QM_CMD_INSTALL_UPDATE`, protocol 15),
+  hands music playing to SceShell by the setting, as when the system closes
+  it, and quits.
+- The plugin waits for VitaPlex to be gone (`sceAppMgrGetIdByName`, 30 s at
+  most). It reaches the installer as Vitacompanion's SceShell module does
+  (devnoname120/vitacompanion, src/promote.c): ScePromoterUtil loaded through
+  `sceSysmoduleLoadModuleInternal` unless SceShell has it, its functions
+  found by NID with taiGetModuleExportFunc, its client begun once and never
+  ended, and the module never unloaded, as SceShell's own client shares them.
+  It waits for the installer to be idle (60 s at most) and drives it as the
+  stub did: PromotePkg, its state looked at until idle (5 minutes at most),
+  then its result; again 2 s on, up to three times, while it says the title
+  is running (0x80101114). The outcome goes to `update-result.txt`, and
+  VitaPlex is launched again either way (`psgm:play`, flags 0x20000, as
+  Vitacompanion's `launch` does).
+- It does this on a thread of its own with a 64 KB stack, twice the fetch
+  threads': the installer's calls and its module's start run on it, and what
+  they take has not been measured. Should that thread not begin, the outcome
+  says so, for VitaPlex to show once it is opened again, as nothing launches
+  it then.
+- VitaPlex reads that file as it starts, whatever the update check's
+  setting: on a failure a dialog says why and that the VPK is kept for
+  VitaShell; either way the stage goes. It still removes VPLXUPD01 where it
+  is installed, as the update into this build is made by the build before,
+  through the stub.
+- The plugin's new imports: sceSysmoduleIsLoadedInternal and
+  sceSysmoduleLoadModuleInternal (SceSysmodule), and sceAppMgrGetIdByName
+  and sceAppMgrLaunchAppByUri (SceAppMgrUser, which it imported from
+  already). Vitacompanion's SceShell module imports the same. None of this
+  has run on the console yet.
+- On a host the harness passes 243 checks, 14 of them on updates: VitaPlex
+  gone at once, late or never, the installer loaded already or not, busy,
+  taking the title for running, refusing, missing a function or not loading,
+  and no thread. The plugin builds at 49891 bytes.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

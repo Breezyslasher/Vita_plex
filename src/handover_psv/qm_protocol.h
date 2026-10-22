@@ -18,8 +18,9 @@
 // that were tried gone. Version 13 has the files handover.h names, and keeps
 // the song before and the songs fetched ahead for VitaPlex to play on.
 // Version 14 stops the shell's song itself as VitaPlex takes the music back.
-#define QM_PIPE_TO_PLUGIN   "VitaPlexQM14::ToPlugin"
-#define QM_PIPE_FROM_PLUGIN "VitaPlexQM14::FromPlugin"
+// Version 15 installs VitaPlex's updates (QM_CMD_INSTALL_UPDATE).
+#define QM_PIPE_TO_PLUGIN   "VitaPlexQM15::ToPlugin"
+#define QM_PIPE_FROM_PLUGIN "VitaPlexQM15::FromPlugin"
 
 // SceShell carries the queue on. The system closes VitaPlex to start a game,
 // and SceShell is never ended. So VitaPlex hands its queue to SceShell as it
@@ -78,9 +79,22 @@ enum {
     // and file= when the app made that song ready as a file), and takes the
     // row for it. Sent once the row has been given back, and the queue
     // written whole.
-    QM_CMD_PLAY_QUEUE
+    QM_CMD_PLAY_QUEUE,
+    // From VitaPlex as it quits to be updated: its update, unpacked to
+    // QM_UPDATE_DIR with its package head made, is installed once VitaPlex
+    // has gone, which the system's installer needs (it refuses the title
+    // running), and VitaPlex launched again; the outcome in QM_UPDATE_RESULT.
+    // Up to version 14 VitaPlex installed an app of its own for it, the
+    // updater stub (VPLXUPD01).
+    QM_CMD_INSTALL_UPDATE
 };
 enum { QM_OWNER_APP = 1 };
+
+// VitaPlex's update for the plugin to install (QM_CMD_INSTALL_UPDATE): the
+// package's folder, and the outcome, "result=0x%08X" a line, with
+// "why=<what failed>" on another when it did, and "end".
+#define QM_UPDATE_DIR    "ux0:data/VitaPlex/update-stage"
+#define QM_UPDATE_RESULT "ux0:data/VitaPlex/update-result.txt"
 
 // A song's cover for SceShell to show as it carries the queue on: a PNG as
 // QM_ART_PATH_FMT's, in the folder of songs (handover.h's HANDOVER_SONGS)

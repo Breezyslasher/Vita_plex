@@ -264,6 +264,13 @@ int qmTakeBack(void) {
     return rc;
 }
 
+int qmInstallUpdate(void) {
+    lock();
+    const int rc = sendCommandLocked(QM_CMD_INSTALL_UPDATE, 0);
+    unlock();
+    return rc;
+}
+
 int qmPoll(void) {
     lock();
     int press = QM_NONE;

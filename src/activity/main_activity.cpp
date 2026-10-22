@@ -155,6 +155,9 @@ void MainActivity::onContentAvailable() {
     });
     consumeDeepLink();
 
+    // What the last update left: on the Vita, its outcome from the plugin that installed it.
+    app_update::afterStart();
+
     // Startup update check — the module delays itself so login and the first content fetches get the pipe first.
     if (Application::getInstance().getSettings().autoCheckUpdates)
         app_update::checkForUpdates(false);

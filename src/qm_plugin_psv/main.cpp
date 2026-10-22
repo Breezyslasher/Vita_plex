@@ -36,6 +36,9 @@
  *   from the server through Sony's HTTP library as SceShell has it, the
  *   server's MP3 of those in formats the shell does not play, and their
  *   covers, and marks the songs it played to their end played.
+ * - It installs VitaPlex's updates once VitaPlex has quit
+ *   (QM_CMD_INSTALL_UPDATE), as the system's installer refuses the title
+ *   running, and launches VitaPlex again.
  *
  * Built with vitasdk against the PAF headers scripts/vita/fetch_paf_headers.sh
  * fetches; its PAF imports are in paf_stubs.S. Logs to
@@ -49,6 +52,7 @@
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/rtc.h>
+#include <psp2/sysmodule.h>
 
 #include <limits>  // before PAF's headers: their vector uses it without including it
 #include <stdarg.h>
@@ -78,6 +82,8 @@ typedef struct TaiHookUser {
 extern "C" SceUID vitaplexQmHookFunctionImport(TaiHookRef* hook, TaiHookArgs* args);
 extern "C" int vitaplexQmGetModuleExportFunc(const char* module, uint32_t libnid,
                                              uint32_t funcnid, uintptr_t* func);
+// Not declared by every SDK's headers (qm_link.c declares it the same way).
+extern "C" int sceAppMgrGetIdByName(SceUID* pid, const char* name);
 
 // No C runtime here: what the compiler may call for it, from the kernel's.
 // new and delete are PAF's (built with -fno-sized-deallocation, so delete is
@@ -4040,6 +4046,221 @@ void stopCarry(const char* why, int how) {
     if (g_musicSema >= 0) sceKernelSignalSema(g_musicSema, 1);
 }
 
+// ── VitaPlex's updates ──────────────────────────────────────────────────────
+// The system's installer, ScePromoterUtil, refuses a title while it runs, so
+// VitaPlex cannot install its own update. Up to build 2055 it installed an
+// app for it, the updater stub (VPLXUPD01), launched it and quit, and the
+// stub installed the update and launched VitaPlex again. SceShell, which no
+// app closes, does it now (QM_CMD_INSTALL_UPDATE): VitaPlex unpacks the
+// update to QM_UPDATE_DIR with its package head made, asks, and quits. This
+// waits for it to be gone, has the installer install the folder, writes what
+// came of it to QM_UPDATE_RESULT, and launches VitaPlex again, the old one if
+// the install failed, which then says so. The installer is reached as
+// Vitacompanion's SceShell module reaches it (devnoname120/vitacompanion,
+// promote.c): its module loaded through SceSysmodule unless SceShell has it,
+// its functions found by NID, and both left as they are after, the client
+// being SceShell's too: no Exit, no unload. It is driven as the stub drove
+// it, which installed VitaPlex: PromotePkg, its state looked at until idle,
+// then its result.
+const uint32_t kPromoterLibrary = 0x31F237B6;      // ScePromoterUtil, in module ScePromoterUtil
+const unsigned kSysmoduleNotLoaded = 0x805A1001u;  // sceSysmoduleIsLoadedInternal's "not loaded"
+// What the installer gave VitaPlex trying to install itself while it ran.
+const unsigned kPromoterInUse = 0x80101114u;
+enum { kPromInit, kPromGetState, kPromPromote, kPromGetResult, kPromFns };
+LibFn g_promoter[kPromFns] = {{"scePromoterUtilityInit", 0x93451536, 0},
+                              {"scePromoterUtilityGetState", 0xABEC74D2, 0},
+                              {"scePromoterUtilityPromotePkg", 0x716C81F4, 0},
+                              {"scePromoterUtilityGetResult", 0x49B473F0, 0}};
+typedef int (*FnPromInit)(void);
+typedef int (*FnPromState)(int*);
+typedef int (*FnPromote)(const char*, int);
+// How long VitaPlex has to go, the installer to be idle, and an install to end.
+const uint32_t kUpdateGoneMs = 30000, kUpdateIdleMs = 60000, kUpdateInstallMs = 300000;
+const uint32_t kUpdateLookMs = 250;
+// The update thread's stack. The installer's calls run on it, and its module's
+// start as it loads, with what they take not known here: twice the fetch
+// threads'.
+const int kUpdateStack = 0x10000;
+int g_updating;        // under g_lock: the update thread runs
+int g_promoterInited;  // the update thread's: Init called once, its client kept
+
+// Waits up to `ms` while VitaPlex runs. true once it has gone.
+bool updateWaitGone(uint32_t ms) {
+    for (uint32_t waited = 0;; waited += kUpdateLookMs) {
+        SceUID pid = -1;
+        if (sceAppMgrGetIdByName(&pid, VITAPLEX_TITLEID) < 0) {
+            logLine("update: VitaPlex gone, %s s after it asked", secsOf(waited).s);
+            return true;
+        }
+        if (waited >= ms) return false;
+        sceKernelDelayThread(kUpdateLookMs * 1000);
+    }
+}
+
+// The installer's state once idle, waiting up to `ms`: 0, else what reading
+// it gave, or 1 if it stayed busy.
+int updateWaitIdle(uint32_t ms) {
+    for (uint32_t waited = 0;; waited += kUpdateLookMs) {
+        int state = -1;
+        const int rc = ((FnPromState)g_promoter[kPromGetState].fn)(&state);
+        if (rc < 0) return rc;
+        if (state == 0) return 0;
+        if (waited >= ms) return 1;
+        if (waited % 10000 == 0)
+            logLine("update: the installer busy (%d), %s s on", state, secsOf(waited).s);
+        sceKernelDelayThread(kUpdateLookMs * 1000);
+    }
+}
+
+// The installer loaded and its functions found. 0, else the code, with why.
+int updateFindPromoter(char* why, int cap) {
+    int rc = sceSysmoduleIsLoadedInternal(SCE_SYSMODULE_INTERNAL_PROMOTER_UTIL);
+    if ((unsigned)rc == kSysmoduleNotLoaded) {
+        rc = sceSysmoduleLoadModuleInternal(SCE_SYSMODULE_INTERNAL_PROMOTER_UTIL);
+        logLine("update: the system's installer loaded into SceShell: 0x%08X", (unsigned)rc);
+    }
+    if (rc < 0) {
+        sceClibSnprintf(why, cap, "the system's installer would not load (0x%08X)", (unsigned)rc);
+        return rc;
+    }
+    for (int i = 0; i < kPromFns; i++) {
+        uintptr_t fn = 0;
+        rc = vitaplexQmGetModuleExportFunc("ScePromoterUtil", kPromoterLibrary, g_promoter[i].nid, &fn);
+        if (rc < 0 || !fn) {
+            sceClibSnprintf(why, cap, "%s not in the system's installer (0x%08X)", g_promoter[i].name,
+                            (unsigned)rc);
+            return rc < 0 ? rc : -1;
+        }
+        g_promoter[i].fn = fn;
+    }
+    return 0;
+}
+
+// QM_UPDATE_DIR installed: once begun, its state looked at until idle, and
+// its result read. 0, else the code, with why.
+int updatePromote(char* why, int cap) {
+    const SceUInt64 began = sceKernelGetSystemTimeWide();
+    int rc = ((FnPromote)g_promoter[kPromPromote].fn)(QM_UPDATE_DIR, 0);
+    if (rc < 0) {
+        sceClibSnprintf(why, cap, "the system's installer would not begin (0x%08X)", (unsigned)rc);
+        return rc;
+    }
+    const int idle = updateWaitIdle(kUpdateInstallMs);
+    const uint32_t took = (uint32_t)(sceKernelGetSystemTimeWide() - began) / 1000u;
+    if (idle != 0) {
+        sceClibSnprintf(why, cap, "the system's installer %s after %s s (0x%08X)",
+                        idle == 1 ? "had not finished" : "could not be asked how it went",
+                        secsOf(took).s, (unsigned)idle);
+        return idle < 0 ? idle : -1;
+    }
+    int result = 0;
+    rc = ((FnPromState)g_promoter[kPromGetResult].fn)(&result);
+    logLine("update: installed in %s s: result 0x%08X (0x%08X)", secsOf(took).s, (unsigned)result,
+            (unsigned)rc);
+    if (rc < 0 || result < 0) {
+        const int code = rc < 0 ? rc : result;
+        sceClibSnprintf(why, cap, "the system's installer refused it (0x%08X)", (unsigned)code);
+        return code;
+    }
+    return 0;
+}
+
+// The whole install. 0, else the code, with why.
+int updateInstall(char* why, int cap) {
+    if (!exists(QM_UPDATE_DIR "/eboot.bin") || !exists(QM_UPDATE_DIR "/sce_sys/package/head.bin")) {
+        sceClibSnprintf(why, cap, "nothing to install at %s", QM_UPDATE_DIR);
+        return -1;
+    }
+    if (!updateWaitGone(kUpdateGoneMs)) {
+        sceClibSnprintf(why, cap, "VitaPlex was still running %s s after it asked",
+                        secsOf(kUpdateGoneMs).s);
+        return -1;
+    }
+    int rc = updateFindPromoter(why, cap);
+    if (rc < 0) return rc;
+    // Idle first, as SceShell may be installing something itself; then its
+    // client begun, once, as Vitacompanion's module does.
+    const int idle = updateWaitIdle(kUpdateIdleMs);
+    if (idle != 0) {
+        sceClibSnprintf(why, cap, "the system's installer was busy (0x%08X)", (unsigned)idle);
+        return idle < 0 ? idle : -1;
+    }
+    if (!g_promoterInited) {
+        g_promoterInited = 1;
+        rc = ((FnPromInit)g_promoter[kPromInit].fn)();
+        logLine("update: the installer's client begun: 0x%08X", (unsigned)rc);
+    }
+    // The title can be taken for running a moment after its process has gone.
+    for (int attempt = 1;; attempt++) {
+        rc = updatePromote(why, cap);
+        if ((unsigned)rc != kPromoterInUse || attempt == 3) return rc;
+        logLine("update: VitaPlex still taken for running (0x%08X): again in 2 s", (unsigned)rc);
+        sceKernelDelayThread(2 * 1000 * 1000);
+    }
+}
+
+// What came of it, for VitaPlex to read as it starts (QM_UPDATE_RESULT).
+void updateResult(int rc, const char* why) {
+    char text[224];
+    const int n = sceClibSnprintf(text, sizeof(text), "result=0x%08X\n%s%s%send\n", (unsigned)rc,
+                                  why[0] ? "why=" : "", why, why[0] ? "\n" : "");
+    const char* const part = QM_UPDATE_RESULT ".part";
+    const SceUID fd = sceIoOpen(part, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+    int res = fd;
+    if (fd >= 0) {
+        const int wrote = sceIoWrite(fd, text, (SceSize)n);
+        sceIoClose(fd);
+        res = wrote == n ? 0 : wrote < 0 ? wrote : -1;
+    }
+    if (res == 0) {
+        sceIoRemove(QM_UPDATE_RESULT);
+        res = sceIoRename(part, QM_UPDATE_RESULT);
+    }
+    if (res < 0) logLine("update: %s not written: 0x%08X", QM_UPDATE_RESULT, (unsigned)res);
+}
+
+// The update thread: installs, says how it went, launches VitaPlex again.
+int updateThread(SceSize, void*) {
+    char why[128];
+    why[0] = 0;
+    const int rc = updateInstall(why, sizeof(why));
+    if (rc == 0)
+        logLine("update: VitaPlex updated");
+    else
+        logLine("update: not installed (0x%08X): %s", (unsigned)rc, why);
+    updateResult(rc, why);
+    char uri[48];
+    sceClibSnprintf(uri, sizeof(uri), "psgm:play?titleid=%s", VITAPLEX_TITLEID);
+    const int rcLaunch = sceAppMgrLaunchAppByUri(0x20000, uri);
+    logLine("update: VitaPlex launched again: 0x%08X", (unsigned)rcLaunch);
+    lock();
+    g_updating = 0;
+    unlock();
+    return sceKernelExitDeleteThread(0);
+}
+
+// From VitaPlex as it quits to be updated (QM_CMD_INSTALL_UPDATE), the update
+// thread begun. Under g_lock.
+void startUpdate() {
+    if (g_updating) {
+        logLine("update: asked again while one is under way");
+        return;
+    }
+    logLine("update: VitaPlex asks for its update at %s to be installed once it has gone",
+            QM_UPDATE_DIR);
+    const SceUID thread = sceKernelCreateThread("VitaPlexQM::Update", updateThread, kThreadPriority,
+                                                kUpdateStack, 0, 0, NULL);
+    const int rc = thread < 0 ? thread : sceKernelStartThread(thread, 0, NULL);
+    if (rc < 0) {
+        if (thread >= 0) sceKernelDeleteThread(thread);
+        logLine("update: no thread to install it: 0x%08X", (unsigned)rc);
+        // For VitaPlex to say so once it is opened again: nothing launches it.
+        updateResult(rc, "the quick menu plugin had no thread to install it");
+        return;
+    }
+    g_updating = 1;
+}
+
 // ── Threads ─────────────────────────────────────────────────────────────────
 // The note of an open begun, as the quick menu is seen open. Under g_lock.
 void noteOpened() {
@@ -4219,6 +4440,9 @@ private:
                     g_carry ? "" : "; no queue carried on here");
             g_playQueueDue = 0;  // a queue handed over and not yet begun is not begun
             stopCarry("VitaPlex takes the music back", kEndTakeBack);
+            break;
+        case QM_CMD_INSTALL_UPDATE:
+            startUpdate();
             break;
         default:
             logLine("unknown command %u", (unsigned)m.cmd);

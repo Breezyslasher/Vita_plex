@@ -34,6 +34,8 @@
 #ifdef __PSV__
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
+#include "qm_protocol.h"
+#include "utils/background_audio.hpp"
 #include "utils/vita_install.hpp"
 #endif
 #ifdef ANDROID
@@ -1223,54 +1225,76 @@ void startInstall(const ReleaseInfo rel) {
             return;
         }
 #else
-        // VitaPlex can't promote over itself while it is the running title
-        // (the installer returns 0x80101114 "in use"), so hand the install
-        // to a tiny bundled stub app — the AutoPlugin2 technique. VitaPlex
-        // installs the stub (the stub isn't running, so promoting IT is
-        // fine), launches it, and quits; with VitaPlex closed the stub
-        // promotes the downloaded update.vpk and relaunches VitaPlex.
+        // VitaPlex can't be installed over while it is the running title (the
+        // system's installer refuses it), so its quick menu plugin installs
+        // the update from SceShell once VitaPlex has quit, and launches it
+        // again (qm_protocol.h's QM_CMD_INSTALL_UPDATE). VitaPlex unpacks it
+        // here first and forges its package head. Up to build 2055 a second
+        // app carried in VitaPlex.vpk did the install, the updater stub
+        // (VPLXUPD01), which VitaPlex installed and launched.
         brls::sync([ui]() {
-            if (!ui->dismissed->load())
-                stepActive(ui->install, "Preparing installer\xE2\x80\xA6", -1.0f);
+            if (!ui->dismissed->load()) stepActive(ui->install, "Unpacking\xE2\x80\xA6 0%", 0.0f);
         });
-        // Hand the target version to the stub's progress screen (best-effort;
-        // the stub omits the version clause if this file is absent).
-        {
-            std::string vpath = platformPath("update_version.txt");
-            SceUID vf = sceIoOpen(vpath.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
-            if (vf >= 0) { sceIoWrite(vf, rel.tag.c_str(), rel.tag.size()); sceIoClose(vf); }
-        }
-        std::string err;
-        int rc = vita::installVpk("app0:updater.vpk", platformPath("updater_stage"), err);
-        if (rc != 0) {
-            // Couldn't stage the stub — fall back to the manual VitaShell
-            // path so the download isn't wasted. update.vpk is kept.
+        auto manualInstall = [ui, path](const std::string& why) {
+            // The download isn't wasted: update.vpk is kept for VitaShell.
             brls::sync([ui]() {
                 if (!ui->dismissed->load()) stepDone(ui->install, "Downloaded");
             });
-            finishInstall(ui, [path]() {
-                auto* d = new brls::Dialog(
-                    "Update downloaded.\n\nThe in-app installer couldn't start, so "
-                    "open VitaShell and install this file to finish:\n\n" + path);
+            finishInstall(ui, [path, why]() {
+                auto* d = new brls::Dialog("Update downloaded.\n\n" + why +
+                                           ", so open VitaShell and install this file to finish:\n\n" +
+                                           path);
                 d->addButton("OK", []() {});
                 d->open();
             });
+        };
+        std::string err;
+        int lastPct = -1;
+        const int rc = vita::stageVpk(path, QM_UPDATE_DIR, err,
+            [ui, &lastPct](int phase, int done, int total) {
+                if (phase == vita::PHASE_EXTRACT && total > 0) {
+                    const int pct = done * 100 / total;
+                    if (pct == lastPct) return;
+                    lastPct = pct;
+                    brls::sync([ui, pct]() {
+                        if (!ui->dismissed->load())
+                            stepActive(ui->install,
+                                       "Unpacking\xE2\x80\xA6 " + std::to_string(pct) + "%",
+                                       pct / 100.0f);
+                    });
+                } else if (phase == vita::PHASE_VERIFY && done == 0) {
+                    brls::sync([ui]() {
+                        if (!ui->dismissed->load())
+                            stepActive(ui->install, "Verifying\xE2\x80\xA6", -1.0f);
+                    });
+                }
+            });
+        if (rc != 0) {
+            brls::Logger::error("app_update: the update could not be unpacked: {}", err);
+            manualInstall("It could not be unpacked (" + err + ")");
             s_busy = false;
             return;
         }
-        // Stub installed. Launch it and quit automatically — no OK dialog, so
-        // it closes hands-off like the desktop paths. The progress overlay's
-        // "Installing update…" relaunch step already shows what's happening; the
-        // stub promotes the VPK and reopens VitaPlex. (The Vita OS still shows
-        // its own "application will close" confirmation when one title launches
-        // another — once here, once when the stub relaunches us — that's a
-        // system dialog, not ours.)
+        // Closes hands-off, as the desktop paths do, once the step has been
+        // seen: nothing of VitaPlex is on screen while the plugin installs.
         brls::sync([ui]() {
-            if (!ui->dismissed->load()) stepActive(ui->relaunch, "Installing update\xE2\x80\xA6", -1.0f);
+            if (!ui->dismissed->load()) {
+                stepDone(ui->install, "Unpacked");
+                stepActive(ui->relaunch, "Closing to install \xC2\xB7 reopens by itself", -1.0f);
+            }
         });
-        finishInstall(ui, []() {
-            vita::launchTitle("VPLXUPD01");
-            brls::Application::quit();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        finishInstall(ui, [path]() {
+            if (bgaudio::installUpdate()) {
+                brls::Application::quit();
+                return;
+            }
+            vita::removeTree(QM_UPDATE_DIR);
+            auto* d = new brls::Dialog(
+                "Update downloaded.\n\nVitaPlex's quick menu plugin, which installs it, could "
+                "not be loaded, so open VitaShell and install this file to finish:\n\n" + path);
+            d->addButton("OK", []() {});
+            d->open();
         });
 #endif
         s_busy = false;
@@ -1872,6 +1896,60 @@ void setSelfPath(const char* argv0) {
     if (argv0 && argv0[0]) s_selfPath = argv0;
 }
 
+void afterStart() {
+#ifdef __PSV__
+    asyncRun([]() {
+        // The updater stub (VPLXUPD01) builds up to 2055 installed for each
+        // update and left on the LiveArea, as the update into this build was
+        // made: removed from HERE, a different title (a title can't uninstall
+        // its own running self). No-op when it isn't installed. With what
+        // that way of updating left behind should it have failed.
+        vita::removeUpdaterStub();
+        for (const char* old : {"update_version.txt", "updater_stage", "updater_work"})
+            vita::removeTree(platformPath(old));
+
+        // What the quick menu plugin made of the update it installed as
+        // VitaPlex quit (qm_protocol.h's QM_UPDATE_RESULT), read once.
+        std::string text;
+        if (FILE* f = std::fopen(QM_UPDATE_RESULT, "rb")) {
+            char buf[256];
+            const size_t n = std::fread(buf, 1, sizeof(buf), f);
+            std::fclose(f);
+            text.assign(buf, n);
+        }
+        if (text.empty()) return;
+        std::remove(QM_UPDATE_RESULT);
+        vita::removeTree(QM_UPDATE_DIR);
+        unsigned long result = 1;
+        std::string why;
+        for (size_t at = 0; at < text.size();) {
+            size_t end = text.find('\n', at);
+            if (end == std::string::npos) end = text.size();
+            const std::string line = text.substr(at, end - at);
+            at = end + 1;
+            if (line.rfind("result=", 0) == 0) result = std::strtoul(line.c_str() + 7, nullptr, 16);
+            else if (line.rfind("why=", 0) == 0) why = line.substr(4);
+        }
+        const std::string vpk = platformPath("update.vpk");
+        if (result == 0) {
+            brls::Logger::info("app_update: the quick menu plugin installed the update");
+            std::remove(vpk.c_str());
+            return;
+        }
+        brls::Logger::error("app_update: the quick menu plugin did not install the update "
+                            "(0x{:08X}): {}", result, why);
+        brls::sync([why, vpk]() {
+            auto* d = new brls::Dialog(
+                "The update could not be installed" + (why.empty() ? std::string() : ": " + why) +
+                ".\n\nIt is kept at " + vpk +
+                ": install it with VitaShell, or check for updates again in Settings.");
+            d->addButton("OK", []() {});
+            d->open();
+        });
+    });
+#endif
+}
+
 void checkForUpdates(bool manual) {
     bool expected = false;
     if (!s_busy.compare_exchange_strong(expected, true)) return;
@@ -1890,15 +1968,6 @@ void checkForUpdates(bool manual) {
         // quietly.
         ps4::removeUpdaterApp();
 #endif
-#ifdef __PSV__
-        // Same idea on Vita: the updater stub (VPLXUPD01) is installed fresh
-        // from the bundled updater.vpk each update and left on the LiveArea
-        // afterwards. Remove it from HERE (a different title, so it's safe —
-        // a title can't uninstall its own running self), not from the stub.
-        // No-op on a normal boot when the stub isn't installed.
-        vita::removeUpdaterStub();
-#endif
-
         HttpClient client;
         HttpRequest req;
         // VitaPlex publishes pre-releases; /releases/latest never returns

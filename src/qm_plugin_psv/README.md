@@ -129,6 +129,22 @@ the plugin.
   change and every 10 s, under VitaPlex's own client id, so that Plex shows
   the music going on as VitaPlex's (build 2048). One report waits at most; a
   server that does not answer is logged once and holds nothing up.
+- **VitaPlex's updates (build 2056):** the system's installer,
+  ScePromoterUtil, refuses a title while it runs. Up to build 2055 VitaPlex
+  installed a second app for its updates, the updater stub (VPLXUPD01),
+  launched it and quit. Now VitaPlex unpacks the update to
+  `ux0:data/VitaPlex/update-stage`, forges its package head, asks the plugin
+  (`QM_CMD_INSTALL_UPDATE`, protocol 15) and quits. The plugin waits for it
+  to be gone (`sceAppMgrGetIdByName`, 30 s at most), then has the installer
+  install the folder. It reaches the installer as
+  [Vitacompanion](https://github.com/devnoname120/vitacompanion)'s SceShell
+  module does: the module loaded through SceSysmodule unless SceShell has it,
+  its functions found by NID, and both kept, as the client is SceShell's
+  too. It drives it as the stub did: PromotePkg, the state looked at until
+  idle, then the result; again 2 s on, up to three times, while the title is
+  taken for running. The outcome goes to `ux0:data/VitaPlex/update-result.txt`
+  and VitaPlex is launched again either way; on its next start VitaPlex shows
+  a failure, and keeps the downloaded VPK for VitaShell.
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system

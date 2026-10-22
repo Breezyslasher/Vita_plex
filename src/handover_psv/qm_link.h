@@ -70,6 +70,11 @@ int qmPlayQueue(void);
 // the plugin is not there).
 int qmTakeBack(void);
 
+// As VitaPlex quits to be updated: the plugin installs the update unpacked to
+// QM_UPDATE_DIR once VitaPlex has gone, and launches it again
+// (QM_CMD_INSTALL_UPDATE). 0 when sent.
+int qmInstallUpdate(void);
+
 // A press waiting on the row, or QM_NONE. Never waits.
 int qmPoll(void);
 

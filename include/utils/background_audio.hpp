@@ -69,6 +69,13 @@ bool keepPlaying();
 // passed over, and three in a row stop the queue. Goes with each hand-over.
 void setOfflineSkip(bool on);
 
+// As VitaPlex quits to be updated, on the UI thread: its quick menu plugin is
+// asked to install the update unpacked to qm_protocol.h's QM_UPDATE_DIR once
+// VitaPlex has gone, and to launch it again; then music playing goes to
+// SceShell by the setting, as when the system closes VitaPlex, and plays on
+// meanwhile. false when the plugin could not be asked, with nothing changed.
+bool installUpdate();
+
 // Ends the process.
 [[noreturn]] void exitProcess(int code);
 
@@ -108,6 +115,7 @@ inline void setOutsideMusic(int) {}
 inline int outsideMusic() { return 0; }
 inline bool keepPlaying() { return false; }
 inline void setOfflineSkip(bool) {}
+inline bool installUpdate() { return false; }
 inline void onAudioPlayback(bool) {}
 inline void onPlayerShutdown() {}
 inline void setQuickMenuControls(bool) {}
