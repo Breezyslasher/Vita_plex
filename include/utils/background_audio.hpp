@@ -10,8 +10,9 @@
  * which plays on beside games, and fetches the songs that are not on the
  * memory card as they come up (qm_protocol.h, handover.h). By the setting it
  * goes there as soon as the app is left. Opened again, VitaPlex takes the
- * music back where SceShell got to, and plays on from the songs' files
- * SceShell had, where it can (songFile).
+ * music back where SceShell got to, once its player is ready to play it
+ * (takeBackNow), and plays on from the songs' files SceShell had, where it
+ * can (songFile).
  *
  * The same plugin puts the song, its cover and working buttons in the quick
  * menu's Music row while VitaPlex plays.
@@ -26,6 +27,14 @@
 
 namespace vitaplex {
 namespace bgaudio {
+
+// Where a queue taken back from SceShell goes on (takeBackNow): whether it
+// does, its song's place in the queue, and where in the song.
+struct ShellPlace {
+    bool play = false;
+    int index = -1;
+    long long atMs = 0;
+};
 
 #if defined(__vita__)
 
@@ -76,6 +85,12 @@ void quickMenuNowPlayingCleared();
 // song before. VitaPlex plays it in place of the server's stream. "" for none.
 std::string songFile(const std::string& ratingKey);
 
+// For the player of a queue taken back from SceShell, once it is ready to
+// play, and off the UI thread: SceShell, which has carried the queue on
+// meanwhile, is told to stop, and says where it stopped. Up to a second and a
+// half for its answer.
+ShellPlace takeBackNow();
+
 #else
 
 inline bool available() { return false; }
@@ -90,6 +105,7 @@ inline void quickMenuNowPlaying(const std::string&, const std::string&, const st
                                 const std::string&, bool) {}
 inline void quickMenuNowPlayingCleared() {}
 inline std::string songFile(const std::string&) { return std::string(); }
+inline ShellPlace takeBackNow() { return ShellPlace(); }
 
 #endif
 

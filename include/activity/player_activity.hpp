@@ -47,9 +47,12 @@ public:
 
     // A queue VitaPlex takes back from SceShell (utils/background_audio.hpp),
     // set as it is: in the order it played, with no server play queue or shuffle, its
-    // first track loaded from startOffsetMs.
+    // first track loaded from startOffsetMs. fromShell: SceShell plays the queue on
+    // meanwhile, and is asked for it as the first track is loaded, which then goes on
+    // from wherever SceShell stopped (bgaudio::takeBackNow).
     static PlayerActivity* createWithRestoredQueue(const std::vector<MediaItem>& tracks,
-                                                   int startIndex, long long startOffsetMs);
+                                                   int startIndex, long long startOffsetMs,
+                                                   bool fromShell = false);
 
     // True while a player is on screen; the SyncLounge prompt skips prompting when we are already watching.
     static bool isActive();
@@ -407,6 +410,11 @@ private:
     double m_pendingSeek = 0.0;    // Pending seek position (set when resuming)
     // Where the queue's first track starts, for a queue taken back part-way through one; spent by the first load.
     long long m_queueStartOffsetMs = 0;
+    // A queue SceShell still plays: the first load sets mpv up, then takes the music back
+    // from SceShell (bgaudio::takeBackNow) and loads where it stopped.
+    bool m_takeBackFromShell = false;
+    // mpv to be set up on the next tick, with nothing loaded, before SceShell is asked.
+    bool m_pendingMpvInit = false;
     int m_transcodeBaseOffsetMs = 0;  // Base offset (ms) used to start current transcode
     int m_mediaDurationMs = 0;        // Full media length (ms) from Plex metadata; 0 = unknown
     // Track length handed to loadUrl so an early end-of-stream is told from a real one; 0 means unknown.

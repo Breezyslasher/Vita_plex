@@ -57,13 +57,19 @@ the plugin.
   did through libShellAudio up to build 2045: from the queue's song and
   place in it, that song from the file VitaPlex made ready (`file=`), else
   from its download, else from the server, and the shell taken to the place
-  as it is given the song, so that the song's start is not heard (build
-  2048; asked again once it plays, if the shell did not go there). It finds the service's client (`sceShellSvcGetSvcObj`) at
-  run time with taiHEN's `taiGetModuleExportFunc` (`taihen_stub.S`), and
-  loads `vs0:sys/external/libshellsvc.suprx` into SceShell if no module
-  there has it. It writes the status (`src/handover_psv/handover.h`) with
-  `by=SceShell`, so that VitaPlex takes the music back where SceShell got to
-  (`QM_CMD_TAKE_BACK`). The row stays, its buttons acting on this music. A
+  so that the song's start is not heard: the seek time set before play, the
+  seek asked for right after it, and, as the shell took neither in build
+  2048, the music thread looking every 25 ms for 4 s and asking again the
+  moment the shell plays (build 2049). It finds the service's client
+  (`sceShellSvcGetSvcObj`) at run time with taiHEN's `taiGetModuleExportFunc`
+  (`taihen_stub.S`), and loads `vs0:sys/external/libshellsvc.suprx` into
+  SceShell if no module there has it. It writes the status
+  (`src/handover_psv/handover.h`) with `by=SceShell` every 2 s and at every
+  change, so that VitaPlex takes the music back where SceShell got to
+  (`QM_CMD_TAKE_BACK`), which it asks for once its player is ready: the
+  plugin then stops the shell's song and writes where (build 2049; up to
+  build 2048 the song was left for VitaPlex to stop). The row stays, its
+  buttons acting on this music. A
   song that goes on away from where it stopped, as an M4A download went on
   35 s back after a pause, is sought back there (build 2036), and one the
   power button stops plays again at once, and every second while it stays

@@ -3166,6 +3166,67 @@ and the tests go.
 - On a host, the plugin's harness passes 184 checks, the pipe test 23. The
   plugin builds at 42009 bytes, with build 2047's imports.
 
+**Build 2049: what build 2048's run showed.** Logs `d6e76980` (the plugin),
+`bee2026e` and `7c38c1fa` (VitaPlex, before and after the hand-over), and the
+user's word: the music played on with the Vita off, and the row showed the
+second song's cover.
+
+- The power button: the shell stopped the song three times (at 0:02, 0:26
+  and 0:30), and the plugin played it again 0.5 s later each time.
+- The old names: VitaPlex removed 6 files at its first start.
+- An OGG song, fetched by SceShell as the server's MP3 while the one before
+  played: 5.62 MB in 12.9 s, framed as it came, 7404 frames making 3:13,
+  which the shell took as 3:13. Next from the row played it at once. Its
+  cover was on the card already, which the fetch takes without a line.
+- The hand-over's start: the seek right after play went unheeded. Play at
+  20.783, the shell at state 1 and 0:00 at 21.366, the look that saw its clock
+  move at 22.028, the seek asked for then, and the song at 1:39 by 22.532:
+  about a second of its start heard. The seek time is now set before play as
+  well, and the music thread looks every 25 ms for 4 s after play, and asks
+  for the place the moment the shell plays, not once its clock is seen to
+  move; three seeks at most. The log says "began at" when the shell began
+  there, "taken there as it began" when a seek took it, and how long after
+  play either way.
+- The take-back: VitaPlex told SceShell at 39.324, and SceShell stopped
+  carrying the queue on and left its song playing, as it did up to then, for
+  VitaPlex to stop. VitaPlex's log has nothing more of the take-back, and
+  ends 2.8 s later, at 42.147, before the line it writes once it has read the
+  queue, of 1000 songs. Build 2045's 1000-song take-back (log `7c97dfa5`)
+  took 1.3 s from telling SceShell to that line, against 0.23 and 0.35 s for
+  10 songs in build 2046. The song played on in the shell with nothing
+  looking after it, the Vita off too. What stopped VitaPlex there the log
+  does not say: the power callback's line, which would have, went in build
+  2047. It is back.
+- So the take-back goes the other way round. VitaPlex reads SceShell's status
+  and queue without telling it, and sets its player up with the queue,
+  SceShell playing on meanwhile. The player sets mpv up, 2.5 s in build
+  2046's logs (`4e8bcb05`, `5ab8fb2f`), and only then tells SceShell, which
+  stops its song and writes where; the player loads the track from there, or
+  the one SceShell went on to meanwhile. VitaPlex gone or slow before then
+  leaves SceShell carrying the queue on, standby and all. The take-back's
+  silence was all of that before: 5.2 s in log `4e8bcb05`, the shell stopped
+  at 59.77 and the file loaded at 04.90. Now it is SceShell's answer, 0.14 s
+  after it was told in log `d6e76980`, and the load of a file on the card. A
+  plugin that does not answer within 1.5 s, one of before build 2049 or one
+  whose queue is over, has its song stopped by VitaPlex as before, when it is
+  the queue's. A song paused from the row plays on as VitaPlex takes it back:
+  mpv has no way to load one paused here.
+- SceShell writes its status every 2 s as it waits for a song too, as it does
+  as it plays: VitaPlex takes a status not written for 10 s for a queue
+  SceShell no longer carries on.
+- The queue is read whole, in 64 KB reads; line by line, stdio read it 1 KB
+  at a time. On a host the reader gives the old one's results for a 1000-song
+  queue, CRLF lines, no last newline, no "end", and an empty file. The status
+  is read again, four times at most, 20 ms apart, when it is not there or not
+  whole: the plugin removes it before moving the new one in.
+- The protocol is version 14 (`VitaPlexQM14`): the take-back stops the song.
+- On a host the plugin's harness passes 194 checks, among them a shell as
+  the console's (it plays 0.58 s after play, from 0:00, and heeds no seek
+  before), which is at the place within 50 ms of beginning; one that takes
+  the seek time set before play; and one that never plays, given up after 30
+  half-second looks, not after 30 of 25 ms. The pipe test passes 23. The
+  plugin builds at 42839 bytes, with build 2048's imports.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

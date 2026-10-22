@@ -1314,11 +1314,17 @@ int httpOpen(int tmpl, const char* who, const char* what, const char* url, const
 // ended as an app with extended memory opened, which VitaPlex no longer has;
 // the comments' player.c is its source, in the history.
 const int kLookAhead = 20;        // songs looked at for the next on the card
-// Stopping: the place written and the music left, for VitaPlex to take
-// back; the music left to a process that took the row, with nothing written;
-// something else in the shell, the status saying stopped; the queue played
-// out, or nothing more on the card: the service stopped and ended.
-enum { kEndTakeBack = 1, kEndYield, kEndOther, kEndOver, kEndStopped };
+// How long the music thread looks every 25 ms after VitaPlex's song is
+// played, for the seek to its place (Carry::fastUntilUs).
+const SceUInt64 kFastLookUs = 4 * 1000 * 1000;
+const SceUInt kFastLookEveryUs = 25 * 1000;
+// Stopping: VitaPlex taking the music back, ready to play it, the service
+// stopped and ended and the place it stopped at written; the row given back,
+// the place written and the music left; the music left to a process that
+// took the row, with nothing written; something else in the shell, the
+// status saying stopped; the queue played out, or nothing more on the card:
+// the service stopped and ended.
+enum { kEndTakeBack = 1, kEndRowBack, kEndYield, kEndOther, kEndOver, kEndStopped };
 
 // Under g_lock:
 int g_carry;             // 2 while SceShell carries a queue on, else 0
@@ -1404,6 +1410,10 @@ struct Carry {
     uint32_t seekWantMs;
     SceUInt64 seekUs;
     int seekTries;
+    // Until when the music thread looks every 25 ms, not every 500: from
+    // the play of VitaPlex's song to its seek landing, so that the seek goes
+    // as soon as the shell plays (kFastLookUs). 0 when not.
+    SceUInt64 fastUntilUs;
     // What the server was last told of the music (report), and when.
     const char* reportState;
     SceUInt64 reportUs;
@@ -2952,11 +2962,22 @@ void carryEnd(const char* why, int how) {
     int state = 0;
     uint32_t time = 0;
     musicStatus(&state, &time);
+    // VitaPlex takes the music back with its player ready, and plays on from
+    // the place written below: the shell is stopped first, so that the status
+    // it reads is never one with the shell still playing. Up to build 2048
+    // the song was left for VitaPlex to stop, which it never did when it went
+    // before it got that far, and the song played on in the shell with
+    // nothing looking after it (log 7c38c1fa).
+    int rcStop = 0, rcEnd = 0;
+    if (how == kEndTakeBack) {
+        rcStop = musicEvent(kEventStop);
+        rcEnd = musicTracked(0x30001);
+    }
     // The queue has gone on to a song being fetched: the music plays, as far
     // as VitaPlex is to know, from that song's start.
     const bool waiting = g_c.waitIndex >= 0;
     const char* written = "nothing";
-    if (how == kEndTakeBack) {
+    if (how == kEndTakeBack || how == kEndRowBack) {
         written = state == 1 || waiting ? HANDOVER_STATE_PLAYING : HANDOVER_STATE_STOPPED;
     } else if (how == kEndOther || how == kEndStopped) {
         written = HANDOVER_STATE_STOPPED;
@@ -2982,13 +3003,12 @@ void carryEnd(const char* why, int how) {
     if (fetching) __atomic_store_n(&g_fetch.cancel, 1, __ATOMIC_SEQ_CST);
     unlock();
     // Taken back, the songs' files stay: VitaPlex plays on from them.
-    if (how == kEndTakeBack) {
+    if (how == kEndTakeBack || how == kEndRowBack) {
         takeFetched();
         forgetFetched();
     } else {
         dropFetched();
     }
-    int rcStop = 0, rcEnd = 0;
     if (how == kEndOver || how == kEndStopped) {
         rcStop = musicEvent(kEventStop);
         rcEnd = musicTracked(0x30001);
@@ -3003,6 +3023,7 @@ void carryEnd(const char* why, int how) {
             g_c.cur.index + 1, g_c.count, mmss(time).s, state, also, why, written,
             (unsigned)rcStop, (unsigned)rcEnd, fetching ? "; its fetch stopped" : "");
     g_c.waitIndex = -1;
+    g_c.fastUntilUs = 0;  // the music thread back to its half-second looks
     lock();
     g_carry = 0;
     g_carryStop = NULL;
@@ -3068,12 +3089,22 @@ void seekTo(uint32_t ms);
 // Hands t to the shell: stop, open and play, as the player did. true when it
 // took the file.
 bool carryPlay(const Track* t, const char* why) {
-    const int rcStop = musicEvent(kEventStop), rcOpen = musicOpen(t->path),
-              rcPlay = musicEvent(kEventPlay);
-    logLine("carry on: song %d of %d (%s), \"%s\" by %s, %s, %s: stop 0x%08X, open 0x%08X, "
+    // VitaPlex's place is for its own song alone.
+    if (t->index != g_c.startIndex) g_c.startAtMs = 0;
+    const uint32_t at = startAt(t);
+    const int rcStop = musicEvent(kEventStop), rcOpen = musicOpen(t->path);
+    // The place set before play too: should the shell take it then, the
+    // song begins there. A seek event right after play went unheeded, and a
+    // second of the song's start played before the one after it took (log
+    // d6e76980, build 2048).
+    const int rcFirst = at >= 2000 ? musicSeekTime(at) : 0;
+    const int rcPlay = musicEvent(kEventPlay);
+    char first[48] = "";
+    if (at >= 2000) sceClibSnprintf(first, sizeof(first), ", seek time first 0x%08X", (unsigned)rcFirst);
+    logLine("carry on: song %d of %d (%s), \"%s\" by %s, %s, %s: stop 0x%08X, open 0x%08X%s, "
             "play 0x%08X",
             t->index + 1, g_c.count, why, t->title, t->artist, mmss(t->durationMs).s, t->path,
-            (unsigned)rcStop, (unsigned)rcOpen, (unsigned)rcPlay);
+            (unsigned)rcStop, (unsigned)rcOpen, first, (unsigned)rcPlay);
     if (rcOpen < 0) return false;
     coverFrom(t, &g_c.cur);
     // The song before keeps its file, for previous; the one before that
@@ -3104,12 +3135,15 @@ bool carryPlay(const Track* t, const char* why) {
     g_c.seekWantMs = 0;
     g_c.seekTries = 0;
     g_c.reportState = NULL;  // told once it plays
-    // VitaPlex's place is for its own song alone. Asked for at once, so that
-    // the song's start is not heard first (1.3 s of it in log 8e7a4b23); if
-    // the shell does not take a seek before it plays, carryTick asks again
-    // once it does.
-    if (t->index != g_c.startIndex) g_c.startAtMs = 0;
-    if (startAt(t) >= 2000) seekTo(startAt(t));
+    g_c.fastUntilUs = 0;
+    // VitaPlex's place, asked for at once as well, so that the song's start
+    // is not heard first (1.3 s of it in log 8e7a4b23). The shell did not
+    // take this seek in log d6e76980; so the music thread looks every 25 ms
+    // until it plays, and carryTick asks again the moment it does.
+    if (at >= 2000) {
+        seekTo(at);
+        g_c.fastUntilUs = g_c.songUs + kFastLookUs;
+    }
     // A fetched song, played: its file is the shell's now, removed once the
     // shell is two songs on.
     takeFetched();
@@ -3326,6 +3360,11 @@ void carryPress(int press, int state, uint32_t time) {
 // buttons act on it: play/pause holds it back once fetched, previous goes
 // back to the song before from its start, next passes it over.
 void carryWait() {
+    // Written every 2 s while it waits, as while it plays: VitaPlex takes a
+    // status not written for a while for a queue SceShell no longer carries
+    // on.
+    if ((uint32_t)(sceKernelGetSystemTimeWide() - g_c.statusUs) >= 2000000u)
+        carryStatusOf(&g_c.wait, HANDOVER_STATE_PLAYING, startAt(&g_c.wait), true);
     const int press = __atomic_exchange_n(&g_carryPress, 0, __ATOMIC_SEQ_CST);
     if (press == QM_PRESS_NEXT) {
         logLine("carry on: next, from the row, as song %d is fetched", g_c.waitIndex + 1);
@@ -3440,6 +3479,16 @@ void carryTick() {
         return;
     }
     if (!g_c.started) {
+        // VitaPlex's song playing, short of its place: taken there at once,
+        // not once its clock is seen to move, which took another 0.66 s in log
+        // d6e76980 (state 1 at 0:00 0.58 s after play). Twice more at most,
+        // half a second apart, should the shell not take it yet.
+        const uint32_t place = startAt(&g_c.cur);
+        if (state == 1 && now < g_c.fastUntilUs && place >= 2000 && time + 5000 < place &&
+            g_c.seekTries < 3 && (g_c.seekTries == 1 || (uint32_t)(now - g_c.seekUs) >= 500000u)) {
+            seekTo(place);
+            return;
+        }
         if (state == 1 && g_c.havePrev && time > g_c.prevTime) {
             uint32_t len = 0;
             musicLength(&len);
@@ -3465,9 +3514,14 @@ void carryTick() {
                     // Begun there, the seek asked for with the song taken:
                     // else asked for again now that it plays.
                     if (time + 5000 >= at && time <= at + 6000) {
-                        logLine("carry on: song %d of %d began at %s, where VitaPlex was",
-                                g_c.cur.index + 1, g_c.count, mmss(time).s);
+                        logLine("carry on: song %d of %d %s %s, where VitaPlex was, %s s after "
+                                "play%s",
+                                g_c.cur.index + 1, g_c.count,
+                                g_c.seekTries > 1 ? "at" : "began at", mmss(time).s,
+                                secsOf((uint32_t)(now - g_c.songUs) / 1000u).s,
+                                g_c.seekTries > 1 ? ", taken there as it began" : "");
                         g_c.seekWantMs = 0;
+                        g_c.fastUntilUs = 0;
                     } else {
                         g_c.seekTries = 0;
                         seekTo(at);
@@ -3484,7 +3538,9 @@ void carryTick() {
                         g_c.cur.index + 1, g_c.count, mmss(len).s, mmss(g_c.cur.durationMs).s);
             }
         }
-        if (!g_c.started && ++g_c.waitTicks > 30) {
+        // Counted in half-second looks, not the 25 ms ones after VitaPlex's
+        // song is played.
+        if (!g_c.started && now >= g_c.fastUntilUs && ++g_c.waitTicks > 30) {
             logLine("carry on: song %d of %d: the shell never started it", g_c.cur.index + 1,
                     g_c.count);
             if (++g_c.failures >= 3)
@@ -3511,10 +3567,12 @@ void carryTick() {
             const uint32_t want = g_c.seekWantMs;
             const uint32_t since = (uint32_t)(now - g_c.seekUs) / 1000u;
             if (time + 5000 >= want && time <= want + 6000) {
-                logLine("carry on: song %d of %d at %s, %s s after the seek to %s",
+                logLine("carry on: song %d of %d at %s, %s s after the seek to %s, %s s after "
+                        "play",
                         g_c.cur.index + 1, g_c.count, mmss(time).s, secsOf(since).s,
-                        mmss(want).s);
+                        mmss(want).s, secsOf((uint32_t)(now - g_c.songUs) / 1000u).s);
                 g_c.seekWantMs = 0;
+                g_c.fastUntilUs = 0;
             } else if (since >= 4000) {
                 if (g_c.seekTries < 2) {
                     logLine("carry on: song %d of %d at %s, not %s, 4 s after the seek: again",
@@ -3619,14 +3677,17 @@ void musicStep() {
     }
 }
 
-// The music thread: musicStep every half second, and as soon as asked.
+// The music thread: musicStep every half second, every 25 ms just after
+// VitaPlex's song is played (kFastLookUs), and as soon as asked.
 class MusicThread : public paf::thread::Thread {
 public:
     using paf::thread::Thread::Thread;
 
     void EntryFunction() override {
         while (!IsCanceled()) {
-            SceUInt timeout = 500 * 1000;
+            // Every 25 ms while VitaPlex's song is taken to its place.
+            SceUInt timeout = g_c.fastUntilUs > sceKernelGetSystemTimeWide() ? kFastLookEveryUs
+                                                                             : 500 * 1000;
             sceKernelWaitSema(g_musicSema, 1, &timeout);
             musicStep();
         }
@@ -3764,7 +3825,7 @@ private:
             break;
         case QM_CMD_DEACTIVATE:
             if (g_active) logLine("row given back by %s", ownerName(g_owner));
-            stopCarry("the row given back", kEndTakeBack);
+            stopCarry("the row given back", kEndRowBack);
             g_active = 0;
             g_releaseDue = 1;
             g_artSerial = 0;

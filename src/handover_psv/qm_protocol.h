@@ -17,8 +17,9 @@
 // itself carries, with the tests and the ways of switching the buttons on
 // that were tried gone. Version 13 has the files handover.h names, and keeps
 // the song before and the songs fetched ahead for VitaPlex to play on.
-#define QM_PIPE_TO_PLUGIN   "VitaPlexQM13::ToPlugin"
-#define QM_PIPE_FROM_PLUGIN "VitaPlexQM13::FromPlugin"
+// Version 14 stops the shell's song itself as VitaPlex takes the music back.
+#define QM_PIPE_TO_PLUGIN   "VitaPlexQM14::ToPlugin"
+#define QM_PIPE_FROM_PLUGIN "VitaPlexQM14::FromPlugin"
 
 // SceShell carries the queue on. The system closes VitaPlex to start a game,
 // and SceShell is never ended. So VitaPlex hands its queue to SceShell as it
@@ -45,7 +46,8 @@
 // - The status (handover.h) is written with "by=SceShell" in it, so that
 //   VitaPlex takes the music back where SceShell has got to; with
 //   "fetching=1" while it waits for a song, which VitaPlex then plays from
-//   where the status says. It asks first (QM_CMD_TAKE_BACK).
+//   where the status says. It asks first (QM_CMD_TAKE_BACK), once its player
+//   is ready to play: SceShell carries the queue on until then.
 // - It stops at the queue's end, when no further song is on the card or the
 //   server, when three songs in a row will not come, when the shell plays
 //   something else, and when any process takes the row.
@@ -65,11 +67,11 @@ enum {
     // sender's: the plugin forgets it when the row is given back or another
     // owner takes it.
     QM_CMD_ART,
-    // From VitaPlex, once ready to go on with the music it handed over: it
-    // takes the music back. A queue SceShell carries on stops where it is,
-    // with the song left playing for VitaPlex to stop, and the status
-    // written one last time; a queue handed over and not yet begun is not
-    // begun.
+    // From VitaPlex, its player ready to go on with the music it handed over:
+    // it takes the music back. A queue SceShell carries on stops where it is,
+    // the shell's song stopped, and the status written one last time with
+    // the place it stopped at; a queue handed over and not yet begun is not
+    // begun. Up to version 13 the song was left playing for VitaPlex to stop.
     QM_CMD_TAKE_BACK,
     // From VitaPlex as it goes: SceShell plays the queue at HANDOVER_QUEUE
     // (handover.h) itself, from its song and place there (index=, positionMs=,

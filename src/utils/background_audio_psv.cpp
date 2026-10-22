@@ -154,13 +154,16 @@ std::atomic<SceInt64> g_handedOverAt{0};
 // The last press of PS (the power callback): a deactivation within 2 s of
 // one is the user leaving, as BG Tests 20 and 21 took it.
 std::atomic<SceInt64> g_psPressUs{0};
-// When this process set up handing the music over, on the system clock,
-// which runs on from one process to the next as the notes have it.
-double g_initSecs = 0;
-// VitaPlex's quick menu plugin was in SceShell already, and was told this app
-// takes the music back (takeBack, qm_link.h's qmTakeBack): any queue SceShell
-// played then stopped, and its last status follows.
-bool g_takeBackSent = false;
+// The queue SceShell carries on, as takeBack read it for the player it set
+// up, which takes the music back once ready (takeBackNow): the queue's
+// "written", its songs' ratingKeys, and whether it repeats all.
+struct ShellQueue {
+    double written = -1;
+    std::vector<std::string> keys;
+    bool repeatAll = false;
+};
+std::mutex g_shellQueueMutex;
+ShellQueue g_shellQueue;
 bool handOver(const char* why);
 void dropReadySong();
 
@@ -415,6 +418,30 @@ void drainAppEvents(SceInt64 now) {
 }
 
 int powerCallback(int, int, int powerInfo, void*) {
+    // Each logged: build 2047 dropped it, and log 7c38c1fa could not say
+    // whether the power button or PS was pressed as its log stopped.
+    std::string what;
+    const struct {
+        unsigned bit;
+        const char* name;
+    } kBits[] = {
+        {SCE_POWER_CB_APP_SUSPEND, "app suspend"},
+        {SCE_POWER_CB_APP_RESUME, "app resume"},
+        {SCE_POWER_CB_APP_RESUMING, "app resuming"},
+        {SCE_POWER_CB_SYSTEM_SUSPEND, "system suspend"},
+        {SCE_POWER_CB_SYSTEM_RESUME, "system resume"},
+        {SCE_POWER_CB_BUTTON_PS_PRESS, "PS button"},
+        {SCE_POWER_CB_BUTTON_PS_HOLD, "PS held (quick menu)"},
+        {SCE_POWER_CB_BUTTON_POWER_PRESS, "power button"},
+    };
+    for (const auto& k : kBits) {
+        if ((unsigned)powerInfo & k.bit) {
+            if (!what.empty()) what += ", ";
+            what += k.name;
+        }
+    }
+    brls::Logger::info("[bgaudio] power callback {}{}{}", hex(powerInfo), what.empty() ? "" : ": ",
+                       what);
     if ((unsigned)powerInfo & SCE_POWER_CB_BUTTON_PS_PRESS)
         g_psPressUs = sceKernelGetSystemTimeWide();
     // Back from standby: the main loop at its own pace, should the system
@@ -1147,16 +1174,30 @@ bool handOver(const char* why) {
 
 // ── Taking the music back ────────────────────────────────────────────────
 
+// A status SceShell wrote longer ago than this is not of a queue it carries on
+// now: it writes one every 2 s as it does.
+const double kCarryingSecs = 10.0;
+
 // A note as handover.h lays them out: "key=value" lines, and "end" last. The
 // track lines in order, split into their fields, in *tracks when asked for.
 bool readNote(const char* path, std::map<std::string, std::string>& fields,
               std::vector<std::vector<std::string>>* tracks) {
-    FILE* f = std::fopen(path, "r");
+    FILE* f = std::fopen(path, "rb");
     if (!f) return false;
+    // Read whole, in 64 KB reads: a queue of a thousand songs, some 200 KB,
+    // took 1.3 s to read through stdio's 1 KB reads with VitaPlex starting
+    // (log 7c97dfa5), and more than 2.8 s in log 7c38c1fa.
+    std::setvbuf(f, nullptr, _IOFBF, 64 * 1024);
+    std::string text;
+    char buf[16384];
+    for (std::size_t n; (n = std::fread(buf, 1, sizeof(buf), f)) > 0;) text.append(buf, n);
+    std::fclose(f);
     bool whole = false;
-    char buf[2048];
-    while (std::fgets(buf, sizeof(buf), f)) {
-        std::string line = buf;
+    for (std::size_t at = 0; at < text.size();) {
+        std::size_t end = text.find('\n', at);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(at, end - at);
+        at = end + 1;
         while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
         if (line == "end") {
             whole = true;
@@ -1168,21 +1209,32 @@ bool readNote(const char* path, std::map<std::string, std::string>& fields,
         const std::string value = line.substr(eq + 1);
         if (key == "track" && tracks) {
             std::vector<std::string> parts;
-            std::size_t at = 0;
+            std::size_t from = 0;
             for (;;) {
-                const std::size_t bar = value.find('|', at);
-                parts.push_back(value.substr(at, bar == std::string::npos ? bar : bar - at));
+                const std::size_t bar = value.find('|', from);
+                parts.push_back(value.substr(from, bar == std::string::npos ? bar : bar - from));
                 if (bar == std::string::npos) break;
-                at = bar + 1;
+                from = bar + 1;
             }
             parts.resize(HANDOVER_TRACK_FIELDS);
-            tracks->push_back(parts);
+            tracks->push_back(std::move(parts));
         } else if (key != "track") {
             fields[key] = value;
         }
     }
-    std::fclose(f);
     return whole;
+}
+
+// SceShell's status, read again a few times when it is missing or not whole:
+// the plugin replaces it by removing it and moving the new one in
+// (carryStatusOf), and one read between the two finds none.
+bool readStatus(std::map<std::string, std::string>& status) {
+    for (int i = 0; i < 5; i++) {
+        if (i) sceKernelDelayThread(20 * 1000);
+        status.clear();
+        if (readNote(HANDOVER_STATUS, status, nullptr)) return true;
+    }
+    return false;
 }
 
 double fieldNum(const std::map<std::string, std::string>& m, const char* key) {
@@ -1205,10 +1257,11 @@ void removePlayerSongs(const std::vector<std::string>& keep = {}) {
                            keep.empty() ? "" : ", but for those of the songs near the one taken back");
 }
 
-// The song the shell plays on for SceShell's queue as VitaPlex opens: its
-// clock read twice, half a second apart, and its length checked against the
-// queue's song, so that the system Music app's song is left alone (BG Test
-// 21, build 2012). Stopped when it is the queue's. Where it was, or -1.
+// The song the shell plays on for SceShell's queue, when the plugin did not
+// stop it as told (takeBackFromShell): its clock read twice, half a second
+// apart, and its length checked against the queue's song, so that the system
+// Music app's song is left alone (BG Test 21, build 2012). Stopped when it is
+// the queue's. Where it was, or -1.
 long long takeFromShell(int durationMs) {
     const int rcInit = sceMusicPlayerServiceInitialize(0);
     if (rcInit < 0) {
@@ -1265,113 +1318,64 @@ std::string queueProblem(bool haveQueue, const std::map<std::string, std::string
     return why;
 }
 
-// What SceShell had got to with the queue handed over, taken back as VitaPlex
-// opens: told to stop going on, it writes where it got to, and its song, left
-// playing in the shell, is stopped there. The queue then plays on here from
-// that song and place. Off the UI thread: it waits on the shell.
+// A queue SceShell carries on (qm_protocol.h), as VitaPlex opens: its player
+// set up here at SceShell's song and place, with SceShell playing on, and the
+// music taken back by the player once it is ready to play it (takeBackNow).
+// Up to build 2048 SceShell was told first and its song stopped here before
+// the player was set up, and mpv with it: 5 s of silence (log 4e8bcb05), or,
+// when VitaPlex went before it got to the shell, the song left playing there
+// with nothing looking after it (log 7c38c1fa). Off the UI thread: it reads
+// the queue, of a thousand songs at most.
 void takeBack() {
-    // SceShell, if it plays a queue, stops there now that this app is ready
-    // to go on with it, and writes where it got to (qm_link.h's qmTakeBack).
-    // Not as the app starts: one closed before it got this far left
-    // SceShell's song to play out with nothing to go on after it (log
-    // dcb5cc5d, build 2043). Never loads the plugin.
-    const double askedShell = systemSecs();
-    const int rcShell = qmTakeBack();
-    g_takeBackSent = rcShell >= 0;
-    if (g_takeBackSent)
-        brls::Logger::info("[bgaudio] quick menu plugin told VitaPlex takes the music back ({})",
-                           hex(rcShell));
     std::map<std::string, std::string> status, queue;
     std::vector<std::vector<std::string>> tracks;
-    const bool haveQueue = readNote(HANDOVER_QUEUE, queue, &tracks);
-    if (!readNote(HANDOVER_STATUS, status, nullptr)) {
+    if (!readStatus(status)) {
         removePlayerSongs();   // never handed over, or long done
         return;
     }
+    const double now = systemSecs();
+    const double written = fieldNum(status, "written");
     // The system clock starts again with the Vita, so a status written later
     // than now is from before it last started: one read as written 1101 s
     // after VitaPlex started (log fbc54add). Nothing of it plays.
-    if (fieldNum(status, "written") > systemSecs() + 1.0) {
+    if (written > now + 1.0) {
         brls::Logger::info("[bgaudio] take back: SceShell's status (\"{}\") is from before the "
                            "Vita last started",
                            fieldText(status, "state"));
         removePlayerSongs();
         return;
     }
-    // SceShell playing the queue (qm_protocol.h) was told above to stop, and
-    // says where it stopped: its status is read again until it is one written
-    // after that.
-    for (int i = 0; i < 20 && g_takeBackSent && fieldNum(status, "written") < askedShell &&
-                    fieldText(status, "state") == HANDOVER_STATE_PLAYING;
-         i++) {
-        sceKernelDelayThread(100 * 1000);
-        status.clear();
-        readNote(HANDOVER_STATUS, status, nullptr);
+    const std::string state = fieldText(status, "state");
+    const int index = (int)fieldNum(status, "index");
+    const long long at = (long long)std::max(0.0, fieldNum(status, "positionMs"));
+    brls::Logger::info("[bgaudio] take back: SceShell last said \"{}\", song {} at {}{}, {:.1f} s "
+                       "ago",
+                       state, index + 1, mmss((unsigned)at),
+                       fieldNum(status, "fetching") == 1 ? " as it is fetched" : "",
+                       now - written);
+    // SceShell writes its status every 2 s as it carries a queue on: one not
+    // written for longer is of music over, or of a plugin no longer there.
+    // Its files stay then, as the shell may yet play one of them: a file
+    // written over as the shell played it preceded a crash (logs 8fe35d97,
+    // 7ba90482). VitaPlex's own music clears them as it goes (pruneSongs).
+    if (state != HANDOVER_STATE_PLAYING) {
+        removePlayerSongs();
+        return;
     }
-    // Written as it stopped, after it was told; else as it played, which it
-    // writes every 2 s, before this app started. A status older than that is
-    // of music long over.
-    const double written = fieldNum(status, "written");
-    const bool fresh = written >= askedShell || g_initSecs - written < 20.0;
-    brls::Logger::info("[bgaudio] take back: SceShell last said \"{}\", song {} at {}, {:.1f} s "
-                       "{} VitaPlex started",
-                       fieldText(status, "state"), (int)fieldNum(status, "index") + 1,
-                       mmss((unsigned)std::max(0.0, fieldNum(status, "positionMs"))),
-                       std::fabs(written - g_initSecs), written >= g_initSecs ? "after" : "before");
-    const bool said = fieldText(status, "state") == HANDOVER_STATE_PLAYING;
-    int index = -1;
-    long long at = -1;
-    if (said && !fresh) {
-        brls::Logger::info("[bgaudio] take back: that is too long ago to go on from");
-    } else if (said) {
-        // The shell's song is stopped only with the queue to go on with here:
-        // log c8dab58b stopped one with none, and left silence.
-        const std::string problem = queueProblem(haveQueue, queue, tracks.size(), status);
-        if (!problem.empty()) {
-            brls::Logger::warning("[bgaudio] take back: {}; its song is left to play on in the "
-                                  "system player",
-                                  problem);
-            return;
-        }
-        if (fieldNum(status, "fetching") == 1) {
-            // SceShell had stopped the shell to fetch the song it names
-            // (qm_protocol.h): nothing plays there, and the song goes on here
-            // from its start.
-            index = (int)fieldNum(status, "index");
-            at = (long long)std::max(0.0, fieldNum(status, "positionMs"));
-            brls::Logger::info("[bgaudio] take back: SceShell was fetching song {}; it plays here "
-                               "from {}",
-                               index + 1, mmss((unsigned)at));
-        } else {
-            at = takeFromShell((int)fieldNum(status, "durationMs"));
-            if (at >= 0) index = (int)fieldNum(status, "index");
-        }
+    if (now - written > kCarryingSecs) {
+        brls::Logger::info("[bgaudio] take back: that is too long ago for SceShell to be "
+                           "carrying it on");
+        return;
     }
-    // Not while the shell may still play one of them: a file written over as
-    // the shell played it preceded a crash (logs 8fe35d97, 7ba90482). The
-    // songs near the one taken back keep their files, which VitaPlex plays on
-    // from (songFile): the song before, for previous, that song, made ready
-    // for the next hand-over too, and the next, which SceShell fetched ahead
-    // (log 8e7a4b23: 22.6 s to stream it again).
-    if (!said || at >= 0) {
-        std::vector<std::string> near;
-        if (index >= 0) {
-            std::vector<std::string> keys;
-            for (const auto& t : tracks) keys.push_back(t[HANDOVER_TRACK_KEY]);
-            near = nearKeys(keys, index, (int)fieldNum(queue, "repeat") == HANDOVER_REPEAT_ALL);
-        }
-        removePlayerSongs(near);
-        const std::string key = index >= 0 ? fieldText(status, "ratingKey") : std::string();
-        const std::string kept = songFileFor(key);
-        if (!kept.empty()) keepReadySong(key, kept);
-        for (const std::string& k : near)
-            if (!songFileFor(k).empty())
-                brls::Logger::info("[bgaudio] take back: kept the file of song {}, {}", k,
-                                   k == key ? "the one taken back" : "near it");
+    const bool haveQueue = readNote(HANDOVER_QUEUE, queue, &tracks);
+    const std::string problem = queueProblem(haveQueue, queue, tracks.size(), status);
+    if (!problem.empty()) {
+        brls::Logger::warning("[bgaudio] take back: {}; SceShell plays on", problem);
+        return;
     }
-    if (index < 0 || at < 0) return;
 
     std::vector<MediaItem> items;
+    items.reserve(tracks.size());
     for (const auto& t : tracks) {
         MediaItem item;
         item.ratingKey = t[HANDOVER_TRACK_KEY];
@@ -1383,9 +1387,16 @@ void takeBack() {
         item.parentTitle = t[HANDOVER_TRACK_ALBUM];
         item.type = "track";
         item.mediaType = MediaType::MUSIC_TRACK;
-        items.push_back(item);
+        items.push_back(std::move(item));
     }
     const int repeat = (int)fieldNum(queue, "repeat");
+    {
+        std::lock_guard<std::mutex> lock(g_shellQueueMutex);
+        g_shellQueue.written = fieldNum(queue, "written");
+        g_shellQueue.keys.clear();
+        for (const auto& t : tracks) g_shellQueue.keys.push_back(t[HANDOVER_TRACK_KEY]);
+        g_shellQueue.repeatAll = repeat == HANDOVER_REPEAT_ALL;
+    }
     brls::sync([items, index, at, repeat]() {
         const MpvPlayer::Snapshot s = MpvPlayer::getInstance().snapshot();
         if (s.initialized && s.state != MpvPlayerState::IDLE && s.state != MpvPlayerState::ENDED &&
@@ -1397,11 +1408,91 @@ void takeBack() {
         MusicQueue::getInstance().setRepeatMode(repeat == HANDOVER_REPEAT_ONE ? RepeatMode::ONE
                                                 : repeat == HANDOVER_REPEAT_ALL ? RepeatMode::ALL
                                                                                 : RepeatMode::OFF);
-        brls::Logger::info("[bgaudio] take back: the queue goes on here, \"{}\" at {}",
-                           items[(std::size_t)index].title, mmss((unsigned)at));
+        brls::Logger::info("[bgaudio] take back: the queue goes on here from \"{}\" once its "
+                           "player is ready; SceShell plays on until then",
+                           items[(std::size_t)index].title);
         brls::Application::pushActivity(
-            PlayerActivity::createWithRestoredQueue(items, index, at));
+            PlayerActivity::createWithRestoredQueue(items, index, at, true));
     });
+}
+
+// The music taken back from SceShell for the player takeBack set up, now
+// that it is ready to play (takeBackNow): SceShell is told to stop, stops its
+// song, and writes where in the status once more, which it did 0.14 s after
+// it was told in log d6e76980. The songs near the one going on here keep
+// their files, which VitaPlex plays on from (songFile): the song before, for
+// previous, that song, made ready for the next hand-over too, and the next,
+// which SceShell fetched ahead (log 8e7a4b23: 22.6 s to stream it again).
+// Off the UI thread: it waits on the shell.
+ShellPlace takeBackFromShell() {
+    ShellQueue q;
+    {
+        std::lock_guard<std::mutex> lock(g_shellQueueMutex);
+        q = g_shellQueue;
+    }
+    ShellPlace place;
+    const double asked = systemSecs();
+    const int rc = qmTakeBack();
+    std::map<std::string, std::string> status;
+    bool answered = false;
+    for (int i = 0; rc >= 0 && i < 60 && !answered; i++) {
+        sceKernelDelayThread(25 * 1000);
+        status.clear();
+        answered = readNote(HANDOVER_STATUS, status, nullptr) &&
+                   fieldNum(status, "written") >= asked;
+    }
+    const double took = systemSecs() - asked;
+    // The files go only with nothing of the queue playing in the shell: a
+    // file written over as the shell played it preceded a crash (logs
+    // 8fe35d97, 7ba90482).
+    bool prune = answered;
+    if (answered) {
+        place.index = (int)fieldNum(status, "index");
+        place.atMs = (long long)std::max(0.0, fieldNum(status, "positionMs"));
+        place.play = fieldNum(status, "queue") == q.written;
+        brls::Logger::info("[bgaudio] take back: SceShell stopped at song {}, {} (\"{}\"), {:.2f} s "
+                           "after it was told{}",
+                           place.index + 1, mmss((unsigned)place.atMs), fieldText(status, "state"),
+                           took, place.play ? "" : ", in another queue");
+    } else {
+        // No answer: SceShell carried nothing on by then, its queue over or
+        // something else playing in the shell, or its plugin is one of before
+        // build 2049, which leaves its song playing. A song of the queue still
+        // in the shell is stopped here, as it was up to build 2048.
+        readStatus(status);
+        const std::string state = fieldText(status, "state");
+        brls::Logger::info("[bgaudio] take back: no answer from SceShell in {:.1f} s ({}); it "
+                           "last said \"{}\"",
+                           took, hex(rc), state);
+        prune = state != HANDOVER_STATE_PLAYING;
+        if (state == HANDOVER_STATE_PLAYING && fieldNum(status, "queue") == q.written) {
+            const long long at = takeFromShell((int)fieldNum(status, "durationMs"));
+            if (at >= 0) {
+                place.play = true;
+                place.index = (int)fieldNum(status, "index");
+                place.atMs = at;
+                prune = true;
+            }
+        }
+    }
+    if (place.play && (place.index < 0 || place.index >= (int)q.keys.size())) {
+        brls::Logger::warning("[bgaudio] take back: its song {} is not among the {} of the queue",
+                              place.index + 1, q.keys.size());
+        place.play = false;
+    }
+    if (prune) {
+        std::vector<std::string> near;
+        if (place.play) near = nearKeys(q.keys, place.index, q.repeatAll);
+        removePlayerSongs(near);
+        const std::string key = place.play ? q.keys[(std::size_t)place.index] : std::string();
+        const std::string kept = songFileFor(key);
+        if (!kept.empty()) keepReadySong(key, kept);
+        for (const std::string& k : near)
+            if (!songFileFor(k).empty())
+                brls::Logger::info("[bgaudio] take back: kept the file of song {}, {}", k,
+                                   k == key ? "the one taken back" : "near it");
+    }
+    return place;
 }
 
 // What builds up to 2047 left under the background player's names
@@ -1446,12 +1537,13 @@ void removeOldNames() {
 
 std::string songFile(const std::string& ratingKey) { return songFileFor(ratingKey); }
 
+ShellPlace takeBackNow() { return takeBackFromShell(); }
+
 void init(int outsideMusic) {
     if (outsideMusic < kOutsideStops || outsideMusic > kOutsideHandsOver)
         outsideMusic = kOutsideStops;
     g_outsideMusic = outsideMusic;
     g_keepPlaying = outsideMusic != kOutsideStops;
-    g_initSecs = systemSecs();
     qmInit();
     brls::Logger::info("[bgaudio] music after leaving: {}",
                        outsideMusic == kOutsidePlaysOn     ? "plays on, then SceShell"
@@ -1459,10 +1551,11 @@ void init(int outsideMusic) {
                                                            : "stops");
     startWatcher();
     // SceShell may be playing a queue handed over before (qm_link.h): it
-    // plays on until takeBack, once the first frame is up, tells it to stop.
-    // Whatever the setting: music handed over before it was changed comes
-    // back all the same. In the first frame, once the server is connected
-    // and the main screen is up; the song plays on in the shell until then.
+    // plays on until the player takeBack sets up for it, once the first
+    // frame is up, is ready and tells it to stop (takeBackNow). Whatever the
+    // setting: music handed over before it was changed comes back all the
+    // same. In the first frame, once the server is connected and the main
+    // screen is up; the song plays on in the shell until then.
     brls::sync([]() {
         platform::launchThread([]() {
             takeBack();

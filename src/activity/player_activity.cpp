@@ -239,10 +239,12 @@ PlayerActivity* PlayerActivity::createResumeQueue() {
 }
 
 PlayerActivity* PlayerActivity::createWithRestoredQueue(const std::vector<MediaItem>& tracks,
-                                                        int startIndex, long long startOffsetMs) {
+                                                        int startIndex, long long startOffsetMs,
+                                                        bool fromShell) {
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isQueueMode = true;
     activity->m_queueStartOffsetMs = startOffsetMs > 0 ? startOffsetMs : 0;
+    activity->m_takeBackFromShell = fromShell;
 
     // Shuffle off first: setQueue would shuffle the order it was played in again.
     MusicQueue& queue = MusicQueue::getInstance();
@@ -1276,6 +1278,42 @@ void PlayerActivity::loadFromQueue() {
     // Update queue info display
     updateQueueDisplay();
 
+    // A queue SceShell plays on: mpv set up first, which took 2.5 s (log
+    // 4e8bcb05), and then SceShell asked for the music, off this thread, and
+    // the track loaded where it stopped, the next one should it have gone on
+    // meanwhile. Up to build 2048 SceShell was stopped before any of this,
+    // and the silence lasted all of it, 5 s.
+    if (m_takeBackFromShell) {
+        m_loadingMedia = false;
+        if (!MpvPlayer::getInstance().isInitialized()) {
+            // As the deferred load below does on MPV's first init.
+            ImageLoader::clearCache();
+            m_pendingMpvInit = true;
+            m_queueStartOffsetMs = startAt;
+            return;
+        }
+        m_takeBackFromShell = false;
+        auto alive = m_alive;
+        platform::launchThread([this, alive]() {
+            const bgaudio::ShellPlace place = bgaudio::takeBackNow();
+            brls::sync([this, alive, place]() {
+                if (!alive->load() || m_destroying) return;
+                if (!place.play) {
+                    brls::Logger::info("PlayerActivity: SceShell had nothing to go on with; the "
+                                       "queue waits here");
+                    m_isPlaying = false;
+                    updatePlayPauseLabel();
+                    return;
+                }
+                MusicQueue& q = MusicQueue::getInstance();
+                if (place.index != q.getCurrentIndex()) q.playTrack(place.index);
+                m_queueStartOffsetMs = place.atMs;
+                loadFromQueue();
+            });
+        });
+        return;
+    }
+
     // Use the rating key to get the playback URL
     m_mediaKey = track->ratingKey;
 
@@ -1928,6 +1966,27 @@ void PlayerActivity::updateProgress() {
 
     // Keeps the pills, mute glyph and speed honest after anything changes them. No-op in the other two layouts.
     updateVideoOsd();
+
+    // A queue SceShell plays on: MPV set up with nothing loaded, and the first
+    // load again on the next frame, which asks SceShell for the music.
+    if (m_pendingMpvInit) {
+        m_pendingMpvInit = false;
+        brls::Logger::info("PlayerActivity: setting MPV up before SceShell is asked for the music...");
+        MpvPlayer& player = MpvPlayer::getInstance();
+        player.setAudioOnly(true);
+        setBackgroundTransparent(false);
+        if (!player.isInitialized() && !player.init()) {
+            brls::Logger::error("PlayerActivity: MPV init failed; SceShell keeps the music");
+            m_takeBackFromShell = false;
+            return;
+        }
+        auto alive = m_alive;
+        brls::sync([this, alive]() {
+            if (!alive->load() || m_destroying) return;
+            loadFromQueue();
+        });
+        return;
+    }
 
     // Phase 1 of 2: create MPV and its render context; loadUrl waits for the next frame.
     if (!m_pendingPlayUrl.empty()) {
