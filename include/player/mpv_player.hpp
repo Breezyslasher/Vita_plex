@@ -184,6 +184,10 @@ public:
     // until something new is loaded, so this is how a caller that polls tells
     // a new failure from the one it has already handled.
     uint32_t errorSerial() const { return m_errorSerial.load(); }
+    // Whether the server refused to go on with the stream loaded last, as
+    // ffmpeg reconnected to it after a drop (an HTTP 4xx): what mpv buffered
+    // plays out, and the stream ends early. The server is there all the same.
+    bool streamRefused() const { return m_streamRefused.load(); }
 
     // A copy of what the event pump last saw, for code on another thread.
     // Takes the pump lock and never calls into libmpv, so it is safe to call
@@ -274,6 +278,7 @@ private:
     std::string m_currentUrl;
     // Server-reported length of the loaded track, milliseconds; 0 when unknown. See loadUrl().
     std::atomic<int64_t> m_expectedDurationMs{0};
+    std::atomic<bool> m_streamRefused{false};    // see streamRefused()
     bool m_subtitlesVisible = true;
     std::atomic<bool> m_stopping{false};        // Shutdown in progress (accessed from mpv thread)
     // These three are set while handling events and read by callers on the UI

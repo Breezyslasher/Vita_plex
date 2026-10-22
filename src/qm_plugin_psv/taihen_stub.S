@@ -8,7 +8,7 @@
  *                                 uint32_t funcnid, uintptr_t* func)
  *       taiGetModuleExportFunc, taihen 0x203D1A28, function 0x6231AAD1
  *
- * The layout of src/bgplayer_psv/qm_link_stub.S.
+ * The layout of src/handover_psv/qm_link_stub.S.
  */
 
 	.arm

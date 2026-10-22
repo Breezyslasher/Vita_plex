@@ -237,6 +237,7 @@ private:
         bool toldUser = false;          // "lost connection" has been shown
         bool busy = false;              // a check or a URL resolve is in flight
         bool reloading = false;         // a reload is loading; waiting to see it play
+        bool serverUp = false;          // the server answered as the stream broke: reload unchecked
         std::chrono::steady_clock::time_point startedAt{}, nextAt{}, reloadAt{};
     };
     Recovery m_recover;

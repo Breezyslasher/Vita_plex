@@ -8,9 +8,10 @@
  * to SceShell, which no app or game closes: VitaPlex's quick menu plugin
  * (src/qm_plugin_psv) plays it on there through the shell's music player,
  * which plays on beside games, and fetches the songs that are not on the
- * memory card as they come up (qm_protocol.h, bgplayer.h). By the setting it
+ * memory card as they come up (qm_protocol.h, handover.h). By the setting it
  * goes there as soon as the app is left. Opened again, VitaPlex takes the
- * music back where SceShell got to.
+ * music back where SceShell got to, and plays on from the songs' files
+ * SceShell had, where it can (songFile).
  *
  * The same plugin puts the song, its cover and working buttons in the quick
  * menu's Music row while VitaPlex plays.
@@ -58,7 +59,7 @@ void onAudioPlayback(bool playing);
 void onPlayerShutdown();
 
 // The quick menu's Music row, through VitaPlex's quick menu plugin
-// (src/bgplayer_psv/qm_link.h): the song on it and its three buttons working
+// (src/handover_psv/qm_link.h): the song on it and its three buttons working
 // while VitaPlex plays. SceShell takes the row itself as it plays the queue
 // handed over. On or off, as saved.
 void setQuickMenuControls(bool on);
@@ -68,6 +69,12 @@ void setQuickMenuControls(bool on);
 void quickMenuNowPlaying(const std::string& title, const std::string& artist,
                          const std::string& album, const std::string& artUrl, bool playing);
 void quickMenuNowPlayingCleared();
+
+// A whole file of the song at ratingKey in the folder of songs handed to
+// SceShell (handover.h's HANDOVER_SONGS): fetched there for SceShell, by
+// VitaPlex or by SceShell itself, and kept as the music came back, or the
+// song before. VitaPlex plays it in place of the server's stream. "" for none.
+std::string songFile(const std::string& ratingKey);
 
 #else
 
@@ -82,6 +89,7 @@ inline void setQuickMenuControls(bool) {}
 inline void quickMenuNowPlaying(const std::string&, const std::string&, const std::string&,
                                 const std::string&, bool) {}
 inline void quickMenuNowPlayingCleared() {}
+inline std::string songFile(const std::string&) { return std::string(); }
 
 #endif
 

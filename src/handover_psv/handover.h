@@ -20,27 +20,37 @@
  *            in the song, and whether it plays. Written by the plugin every
  *            few seconds and at every change; read by the app as it opens.
  *
- * The names are those of the background player VitaPlex had up to build
- * 2045, a program of its own in the package that played the queue the same
- * way, and wrote the same files, until the system ended it as an app with
- * extended memory opened.
+ * Up to build 2047 they were named after the background player VitaPlex had
+ * up to build 2045 (bgplayer-queue.txt, bgplayer-status.txt and the folder
+ * bgplayer), a program of its own in the package that played the queue the
+ * same way until the system ended it as an app with extended memory opened.
+ * VitaPlex removes what is left under those names (HANDOVER_OLD_*).
  *
  * Plain C, for the plugin's sake, and included by the app's C++ as well.
  */
 
-#ifndef VITAPLEX_BGPLAYER_H
-#define VITAPLEX_BGPLAYER_H
+#ifndef VITAPLEX_HANDOVER_H
+#define VITAPLEX_HANDOVER_H
 
-#define BGPLAYER_DIR       "ux0:data/VitaPlex/"
-#define BGPLAYER_QUEUE     BGPLAYER_DIR "bgplayer-queue.txt"
-#define BGPLAYER_STATUS    BGPLAYER_DIR "bgplayer-status.txt"
-// The songs handed to the shell: the one playing and the next, named
-// "<ratingKey>.<extension>", with their covers. A file is written beside its
-// name, with ".part" on the end, and moved in once whole; VitaPlex writes
-// the song it makes ready for a hand-over with ".ready" on the end instead,
-// so that it never shares a file with the plugin's fetch of the same song,
-// and the plugin a cover it copies with ".copy".
-#define BGPLAYER_SONGS     BGPLAYER_DIR "bgplayer"
+#define HANDOVER_DIR       "ux0:data/VitaPlex/"
+#define HANDOVER_QUEUE     HANDOVER_DIR "handover-queue.txt"
+#define HANDOVER_STATUS    HANDOVER_DIR "handover-status.txt"
+// The songs handed to the shell, named "<ratingKey>.<extension>", with their
+// covers: the song before, for previous, the one playing, and the next,
+// whichever of the two plays them; VitaPlex plays them too, once it has the
+// music back. The server's MP3 of a song the shell does not play is named
+// ".mp3", as the plugin and VitaPlex both fetch it. A file is written beside
+// its name, with ".part" on the end, and moved in once whole; VitaPlex
+// writes the song it makes ready for a hand-over with ".ready" on the end
+// instead, so that it never shares a file with the plugin's fetch of the
+// same song, and the plugin a cover it copies with ".copy".
+#define HANDOVER_SONGS     HANDOVER_DIR "handover"
+// The same up to build 2047, and the background player's logs before that.
+#define HANDOVER_OLD_QUEUE  HANDOVER_DIR "bgplayer-queue.txt"
+#define HANDOVER_OLD_STATUS HANDOVER_DIR "bgplayer-status.txt"
+#define HANDOVER_OLD_SONGS  HANDOVER_DIR "bgplayer"
+#define HANDOVER_OLD_LOG    HANDOVER_DIR "bgplayer.log"
+#define HANDOVER_OLD_LOG2   HANDOVER_DIR "bgplayer.prev.log"
 
 // The queue, one "key=value" a line:
 //
@@ -57,28 +67,28 @@
 // A queue with no "end" line is not whole, and is not read. Lines it does
 // not know of are passed over: queues written up to build 2045 had port=
 // and qm= for the background player.
-#define BGPLAYER_REPEAT_OFF 0
-#define BGPLAYER_REPEAT_ONE 1
-#define BGPLAYER_REPEAT_ALL 2
+#define HANDOVER_REPEAT_OFF 0
+#define HANDOVER_REPEAT_ONE 1
+#define HANDOVER_REPEAT_ALL 2
 // The most songs a queue holds; the app writes no more than these, from the
 // one it had got to on.
-#define BGPLAYER_MAX_TRACKS 1000
+#define HANDOVER_MAX_TRACKS 1000
 
 // A track line's fields, separated by '|', which the app leaves out of them.
 // The plugin reads all but the rating; the app all but the cover, to set its
 // queue up again without asking the server. A line with fewer, from an older
 // app, has the rest empty.
 enum {
-    BGPLAYER_TRACK_KEY,       // the ratingKey
-    BGPLAYER_TRACK_DURATION,  // ms, as the server gives it
-    BGPLAYER_TRACK_LOCAL,     // a download of it on the memory card, or nothing
-    BGPLAYER_TRACK_RATING,    // the user's rating, 0 to 10
-    BGPLAYER_TRACK_THUMB,     // its cover on the server (a path), or nothing
-    BGPLAYER_TRACK_TITLE,
-    BGPLAYER_TRACK_ARTIST,
-    BGPLAYER_TRACK_ALBUM,
-    BGPLAYER_TRACK_COVER,     // the download's cover as a PNG of QM_ART_SIZE, or nothing
-    BGPLAYER_TRACK_FIELDS
+    HANDOVER_TRACK_KEY,       // the ratingKey
+    HANDOVER_TRACK_DURATION,  // ms, as the server gives it
+    HANDOVER_TRACK_LOCAL,     // a download of it on the memory card, or nothing
+    HANDOVER_TRACK_RATING,    // the user's rating, 0 to 10
+    HANDOVER_TRACK_THUMB,     // its cover on the server (a path), or nothing
+    HANDOVER_TRACK_TITLE,
+    HANDOVER_TRACK_ARTIST,
+    HANDOVER_TRACK_ALBUM,
+    HANDOVER_TRACK_COVER,     // the download's cover as a PNG of QM_ART_SIZE, or nothing
+    HANDOVER_TRACK_FIELDS
 };
 
 // The status, the same way:
@@ -96,8 +106,8 @@ enum {
 //             it names, which plays from positionMs once fetched; missing
 //             otherwise>
 //   end
-#define BGPLAYER_STATE_PLAYING "playing"   // handed to the shell
-#define BGPLAYER_STATE_OVER    "over"      // the queue has played out
-#define BGPLAYER_STATE_STOPPED "stopped"   // ended without the queue being over
+#define HANDOVER_STATE_PLAYING "playing"   // handed to the shell
+#define HANDOVER_STATE_OVER    "over"      // the queue has played out
+#define HANDOVER_STATE_STOPPED "stopped"   // ended without the queue being over
 
 #endif

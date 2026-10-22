@@ -11,6 +11,7 @@
 #include "app/synclounge_session.hpp"
 #include "player/mpv_player.hpp"
 #include "utils/async.hpp"
+#include "utils/background_audio.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
 #include "utils/media_keys.hpp"
@@ -1291,11 +1292,19 @@ void PlayerActivity::loadFromQueue() {
     DownloadsManager& downloads = DownloadsManager::getInstance();
     DownloadItem dlItem;
     bool useLocalFile = false;
+    // Where a file mpv can seek in starts: at the place a queue taken back
+    // had got to, from the load itself, so its first moment is never heard.
+    double startSec = 0.0;
+    // A file of the track SceShell or VitaPlex fetched for a hand-over, kept
+    // as the music came back (utils/background_audio.hpp): played in place of
+    // the server's stream, which took 7.3 s to begin after a take-back. The
+    // server still hears of it, as of a stream.
+    const std::string keptFile = bgaudio::songFile(track->ratingKey);
     if (downloads.getDownloadCopy(track->ratingKey, dlItem) && dlItem.state == DownloadState::COMPLETED) {
         url = dlItem.localPath;
         useLocalFile = true;
         m_isLocalFile = true;  // Suppress timeline reports when offline
-        if (startAt > 0) m_pendingSeek = startAt / 1000.0;
+        if (startAt > 0) startSec = startAt / 1000.0;
         brls::Logger::info("PlayerActivity: Using downloaded file for track: {}", url);
 
         // Load cover art from local file if available (preferred over server URL)
@@ -1309,6 +1318,12 @@ void PlayerActivity::loadFromQueue() {
         m_isLocalFile = false;  // Reset in case previous track was local
         PlexClient& client = PlexClient::getInstance();
 
+        if (!keptFile.empty()) {
+            url = keptFile;
+            if (startAt > 0) startSec = startAt / 1000.0;
+            brls::Logger::info("PlayerActivity: Using the file kept from SceShell for track: {}", url);
+        }
+
         // Use a prefetch resolved during the previous track; see kPrefetchMaxAgeMs, an expired session is answered 400.
         const int64_t prefetchAgeMs =
             m_prefetchAtMs > 0 ? (brls::getCPUTimeUsec() / 1000) - m_prefetchAtMs : 0;
@@ -1321,7 +1336,7 @@ void PlayerActivity::loadFromQueue() {
                                 m_prefetchKey == track->ratingKey &&
                                 m_prefetchVersion == queue.getVersion() &&
                                 !prefetchStale;
-        if (prefetched) {
+        if (prefetched && keptFile.empty()) {
             url = m_prefetchUrl;
             // The speculative resolve left the live session alone; now this URL is playing, it becomes current.
             client.adoptTranscodeSession(m_prefetchSession);
@@ -1334,7 +1349,7 @@ void PlayerActivity::loadFromQueue() {
         m_prefetchSession.clear();
         m_prefetchAtMs = 0;
 
-        if (!prefetched && !client.getTranscodeUrl(track->ratingKey, url, (int)startAt)) {
+        if (!prefetched && keptFile.empty() && !client.getTranscodeUrl(track->ratingKey, url, (int)startAt)) {
             brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
             m_loadingMedia = false;
             // Usually the connection: this used to be the end of it, with the
@@ -1344,13 +1359,13 @@ void PlayerActivity::loadFromQueue() {
             updatePlayPauseLabel();
             return;
         }
-        if (startAt > 0 && !prefetched) {
+        if (startAt > 0 && !prefetched && keptFile.empty()) {
             // A transcode starts there itself, so mpv's clock runs from 0 and the controller adds
-            // the offset back; the server's own file is sought in instead.
+            // the offset back; the server's own file starts there from the load.
             if (url.find("/transcode/universal/start") != std::string::npos)
                 MusicController::getInstance().setStreamStartOffset(startAt);
             else
-                m_pendingSeek = startAt / 1000.0;
+                startSec = startAt / 1000.0;
         }
 
         // Unpause briefly so loadAsync accepts the album-art request, then re-pause to block other page loads.
@@ -1388,6 +1403,7 @@ void PlayerActivity::loadFromQueue() {
         m_pendingPlayUrl = url;
         m_pendingPlayTitle = track->title;
         m_pendingDurationMs = expectedMs;
+        m_pendingStartSec = startSec;
         m_pendingIsAudio = true;
         m_isPlaying = true;
         m_loadingMedia = false;
@@ -1395,7 +1411,7 @@ void PlayerActivity::loadFromQueue() {
     }
 
     // Player already initialized (track change) - load immediately
-    if (!player.loadUrl(url, track->title, expectedMs)) {
+    if (!player.loadUrl(url, track->title, expectedMs, startSec)) {
         brls::Logger::error("Failed to load URL: {}", redactTokensInUrl(url));
         m_loadingMedia = false;
         return;
@@ -1417,10 +1433,21 @@ void PlayerActivity::prefetchNextTrack() {
     // Already resolved or already failed for this track and queue state; without it the 1s caller re-resolves forever.
     if (m_prefetchKey == next->ratingKey && m_prefetchVersion == version) return;
 
-    // A downloaded track plays from disk; there is no URL to resolve.
+    // A downloaded track plays from disk, as does one whose file was kept from
+    // SceShell; there is no URL to resolve.
     DownloadItem dl;
     if (DownloadsManager::getInstance().getDownloadCopy(next->ratingKey, dl) &&
         dl.state == DownloadState::COMPLETED && !dl.localPath.empty()) {
+        return;
+    }
+    if (!bgaudio::songFile(next->ratingKey).empty()) {
+        // Recorded with no URL, as a failed resolve is, so the card is not
+        // looked at again every tick.
+        m_prefetchKey = next->ratingKey;
+        m_prefetchUrl.clear();
+        m_prefetchSession.clear();
+        m_prefetchVersion = version;
+        m_prefetchAtMs = 0;
         return;
     }
 
@@ -1926,14 +1953,16 @@ void PlayerActivity::updateProgress() {
         // Phase 2: loadUrl next iteration, so NanoVG draws a full frame of fresh GXM state before the decoder touches it.
         auto alive = m_alive;
         const int64_t durationMs = m_pendingDurationMs;
-        brls::sync([this, url, title, isAudio, alive, durationMs]() {
+        const double startSec = m_pendingStartSec;
+        m_pendingStartSec = 0.0;
+        brls::sync([this, url, title, isAudio, alive, durationMs, startSec]() {
             if (!alive->load() || m_destroying) return;
 
             brls::Logger::info("PlayerActivity: Deferred MPV load (phase 2: loadUrl)...");
 
             MpvPlayer& player = MpvPlayer::getInstance();
 
-            if (player.loadUrl(url, title, durationMs)) {
+            if (player.loadUrl(url, title, durationMs, startSec)) {
                 if (videoView && !isAudio) {
                     videoView->setVisibility(brls::Visibility::VISIBLE);
                     videoView->setVideoVisible(true);

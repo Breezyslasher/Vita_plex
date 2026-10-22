@@ -195,7 +195,7 @@ public:
 #ifdef __vita__
     // Beside a download's cover (thumbPath): the same as the PNG of
     // QM_ART_SIZE that VitaPlex's quick menu plugin shows in SceShell, which
-    // can make none of the JPEG (bgplayer_psv/qm_protocol.h); the server
+    // can make none of the JPEG (handover_psv/qm_protocol.h); the server
     // makes it as the track is downloaded. "" for a cover of another name.
     static std::string smallCoverPath(const std::string& thumbPath);
 #endif

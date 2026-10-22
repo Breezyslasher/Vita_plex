@@ -5,8 +5,8 @@ previous buttons that work, in the Music row of the PS Vita's quick menu
 (hold PS); and VitaPlex's music played on from inside SceShell, which no app
 or game closes, once VitaPlex has gone. VitaPlex loads it into SceShell with
 taiHEN the first time it wants the row or hands its music over in a boot
-(`src/bgplayer_psv/qm_link.c`), and talks to it through the two message
-pipes `src/bgplayer_psv/qm_protocol.h` lays out. It stays until the Vita
+(`src/handover_psv/qm_link.c`), and talks to it through the two message
+pipes `src/handover_psv/qm_protocol.h` lays out. It stays until the Vita
 restarts. Nothing goes in taiHEN's config.txt.
 
 It is based on the quick menu plugin of
@@ -41,10 +41,12 @@ the plugin.
   icon's texture (`0xB26E4562`, a second icon at play's place, sized 0x0),
   as SceShell's own row shows ⏸ while its Music app plays.
 - **The cover:** the Music heading's icon (`0xE219E0DE`) shows the song's
-  cover, a 64x64 PNG: VitaPlex's (`src/bgplayer_psv/qm_cover.c`,
+  cover, a 64x64 PNG: VitaPlex's (`src/handover_psv/qm_cover.c`,
   `QM_ART_PATH_FMT`, `QM_CMD_ART`) while it plays, and as SceShell plays on,
   a download's own, which the server made as it was downloaded, or the
-  server's, fetched, or the one of a song before it of the same album. The
+  server's, fetched before the song's file so that it shows while the song
+  is waited for (build 2048), or the one of a song before it of the same
+  album. The
   plugin loads it with PAF's own decoder (`LocalFile::Open`,
   `Surface::Load`) into power_manage_plugin's texture pool, and the icon
   keeps the only reference to it. The icon gets its ♫ back when the row is
@@ -55,16 +57,18 @@ the plugin.
   did through libShellAudio up to build 2045: from the queue's song and
   place in it, that song from the file VitaPlex made ready (`file=`), else
   from its download, else from the server, and the shell taken to the place
-  once it plays. It finds the service's client (`sceShellSvcGetSvcObj`) at
+  as it is given the song, so that the song's start is not heard (build
+  2048; asked again once it plays, if the shell did not go there). It finds the service's client (`sceShellSvcGetSvcObj`) at
   run time with taiHEN's `taiGetModuleExportFunc` (`taihen_stub.S`), and
   loads `vs0:sys/external/libshellsvc.suprx` into SceShell if no module
-  there has it. It writes the status (`src/bgplayer_psv/bgplayer.h`) with
+  there has it. It writes the status (`src/handover_psv/handover.h`) with
   `by=SceShell`, so that VitaPlex takes the music back where SceShell got to
   (`QM_CMD_TAKE_BACK`). The row stays, its buttons acting on this music. A
   song that goes on away from where it stopped, as an M4A download went on
   35 s back after a pause, is sought back there (build 2036), and one the
-  power button stops plays again. A song played to its end is marked played
-  on the server. Its log lines begin "carry on:".
+  power button stops plays again at once, and every second while it stays
+  stopped (build 2048). A song played to its end is marked played on the
+  server. Its log lines begin "carry on:".
 - **Fetching the queue's songs (build 2042):** songs not on the memory card
   are fetched from VitaPlex's server, the next while the one before plays.
   The plugin finds Sony's SSL and HTTP libraries in SceShell at run time, as
@@ -74,9 +78,12 @@ the plugin.
   certificates, which hold for all of SceShell, it leaves alone. Each song's
   file comes as the server has it when the shell plays its format, with its
   cover as a PNG from the server's photo transcoder. Both go into the folder
-  of songs (`BGPLAYER_SONGS`), and both are removed once played. A song
-  wanted before it has come is waited for, with the shell stopped, and the
-  status says `fetching=1` so that VitaPlex can take the music back. One
+  of songs (`HANDOVER_SONGS`), where they stay while their song is near: the
+  song before, for previous, the one playing, and the next. All of them stay
+  as VitaPlex takes the music back, which plays on from them (build 2048),
+  and a song's file found there is played as it is. A song wanted before it
+  has come is waited for, with the shell stopped, and the status says
+  `fetching=1` so that VitaPlex can take the music back. One
   fetch runs at a time, on a thread of its own. The server and the token come
   from VitaPlex's settings; the token is read for each fetch, sent as a
   header, wiped after it, and never logged. From build 2046, a song in a
@@ -84,7 +91,15 @@ the plugin.
   it: the transcode decision, then start.mp3. A streamed transcode has no
   length header, so the frames go to the shell behind a Xing frame giving
   their count, without the ID3 tag; without one the shell read a 2:51 song
-  as 19:17 long.
+  as 19:17 long. From build 2048 the frames are put behind it as they come
+  (`src/handover_psv/mp3_frames.h`, which VitaPlex uses too as it makes the
+  server's MP3 of its song ready), not in two passes after.
+- **Telling the server:** while SceShell plays the queue, the server is told
+  where the music is as VitaPlex tells it (`/:/timeline`): the song, playing,
+  paused, buffering while it is fetched, or stopped, and where in it, at each
+  change and every 10 s, under VitaPlex's own client id, so that Plex shows
+  the music going on as VitaPlex's (build 2048). One report waits at most; a
+  server that does not answer is logged once and holds nothing up.
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system

@@ -15,9 +15,10 @@
 // then asks for the row. docs/DESIGN_NOTES.md has what each version up to
 // 11 added, the tests among them; version 12's is the one VitaPlex.vpk
 // itself carries, with the tests and the ways of switching the buttons on
-// that were tried gone.
-#define QM_PIPE_TO_PLUGIN   "VitaPlexQM12::ToPlugin"
-#define QM_PIPE_FROM_PLUGIN "VitaPlexQM12::FromPlugin"
+// that were tried gone. Version 13 has the files handover.h names, and keeps
+// the song before and the songs fetched ahead for VitaPlex to play on.
+#define QM_PIPE_TO_PLUGIN   "VitaPlexQM13::ToPlugin"
+#define QM_PIPE_FROM_PLUGIN "VitaPlexQM13::FromPlugin"
 
 // SceShell carries the queue on. The system closes VitaPlex to start a game,
 // and SceShell is never ended. So VitaPlex hands its queue to SceShell as it
@@ -27,17 +28,21 @@
 // - That song plays from the file VitaPlex made ready, else its download,
 //   else it is fetched; then the queue's next song: its download if the shell
 //   plays its format, else the song's file fetched from VitaPlex's server
-//   into the folder of songs (bgplayer.h's BGPLAYER_SONGS), as the server's
+//   into the folder of songs (handover.h's HANDOVER_SONGS), as the server's
 //   MP3 of it with a length header in front when the shell does not play
 //   its format. The next song is fetched while the one before plays; one
 //   that has not come by the time it is wanted is waited for, the shell
 //   stopped meanwhile. Songs the server has no file of are passed over, as
 //   are all those not on the card when VitaPlex's settings name no server.
+//   The files of the song before, the one playing and the next stay there,
+//   and all of them as VitaPlex takes the music back, which plays on from
+//   them.
 // - The row is SceShell's: the song, its cover (QM_SONG_COVER_FMT, made by
 //   VitaPlex for its song and the downloads after it, fetched for the rest),
 //   and its buttons, which act on SceShell's music.
-// - A song played to its end is marked played on the server.
-// - The status (bgplayer.h) is written with "by=SceShell" in it, so that
+// - A song played to its end is marked played on the server, and the server
+//   is told where the music is, as VitaPlex tells it (its timeline).
+// - The status (handover.h) is written with "by=SceShell" in it, so that
 //   VitaPlex takes the music back where SceShell has got to; with
 //   "fetching=1" while it waits for a song, which VitaPlex then plays from
 //   where the status says. It asks first (QM_CMD_TAKE_BACK).
@@ -66,8 +71,8 @@ enum {
     // written one last time; a queue handed over and not yet begun is not
     // begun.
     QM_CMD_TAKE_BACK,
-    // From VitaPlex as it goes: SceShell plays the queue at BGPLAYER_QUEUE
-    // (bgplayer.h) itself, from its song and place there (index=, positionMs=,
+    // From VitaPlex as it goes: SceShell plays the queue at HANDOVER_QUEUE
+    // (handover.h) itself, from its song and place there (index=, positionMs=,
     // and file= when the app made that song ready as a file), and takes the
     // row for it. Sent once the row has been given back, and the queue
     // written whole.
@@ -76,11 +81,11 @@ enum {
 enum { QM_OWNER_APP = 1 };
 
 // A song's cover for SceShell to show as it carries the queue on: a PNG as
-// QM_ART_PATH_FMT's, in the folder of songs (bgplayer.h's BGPLAYER_SONGS)
+// QM_ART_PATH_FMT's, in the folder of songs (handover.h's HANDOVER_SONGS)
 // with the song's ratingKey in its name. VitaPlex puts its song's there as
 // it hands the queue over, and those of the downloads after it; SceShell
 // fetches the others, or takes the one of a song of the same album.
-#define QM_SONG_COVER_FMT "ux0:data/VitaPlex/bgplayer/%s.png"
+#define QM_SONG_COVER_FMT "ux0:data/VitaPlex/handover/%s.png"
 #define QM_ACTIVE_TIMEOUT_S 5
 
 // The plugin's log, one file a boot.

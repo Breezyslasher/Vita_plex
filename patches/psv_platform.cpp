@@ -41,6 +41,18 @@ extern "C" void vitaplex_set_audio_playback_active(bool active)
     s_audioPlaybackActive.store(active);
 }
 
+// When true, VitaPlex has been left for the LiveArea or another app, and runs
+// on unseen (utils/background_audio.hpp): mainLoopIteration sleeps a quarter
+// of a second, so the screen nobody sees is drawn four times a second while
+// the loop still advances the queue. Set by background_audio_psv.cpp from the
+// system's deactivate and activate events.
+static std::atomic<bool> s_appAway{false};
+
+extern "C" void vitaplex_set_app_away(bool away)
+{
+    s_appAway.store(away);
+}
+
 // Video render hook - called at the start of mainLoopIteration(), BEFORE
 // NanoVG/GXM touches the GPU. This ensures mpv renders its frame to the
 // offscreen FBO without conflicting with NanoVG's active GXM scene.
@@ -182,7 +194,9 @@ bool PsvPlatform::mainLoopIteration()
     // (only the progress bar updates once per second). Yield CPU time
     // so the ao_vita audio thread can feed the hardware without underruns.
     // ~33ms sleep gives ~30fps which is plenty for a static music player UI.
-    if (s_audioPlaybackActive.load(std::memory_order_relaxed)) {
+    if (s_appAway.load(std::memory_order_relaxed)) {
+        sceKernelDelayThread(250000);  // left, unseen: ~4fps
+    } else if (s_audioPlaybackActive.load(std::memory_order_relaxed)) {
         sceKernelDelayThread(33000);  // 33ms -> ~30fps
     }
     return true;

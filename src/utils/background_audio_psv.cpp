@@ -28,7 +28,8 @@
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
 
-#include "bgplayer.h"
+#include "handover.h"
+#include "mp3_frames.h"
 #include "qm_cover.h"
 #include "qm_link.h"
 
@@ -56,6 +57,8 @@ int sceAppMgrReceiveEventNum(int* eventNum);
 int sceAppMgrReceiveEvent(void* event);
 int sceAppMgrAcquireBgmPortWithPriority(int priority);
 int sceAppMgrReleaseBgmPort(void);
+// patches/psv_platform.cpp's: the main loop's pace while VitaPlex is left.
+void vitaplex_set_app_away(bool away);
 }
 
 namespace vitaplex {
@@ -71,6 +74,7 @@ struct AppEvent {
 };
 static_assert(sizeof(AppEvent) == 0x40, "SceAppMgrEvent is 0x40 bytes");
 
+constexpr int kEventActivate    = 0x10000001;
 constexpr int kEventDeactivate  = 0x10000002;
 constexpr int kEventRequestQuit = 0x20000001;
 
@@ -329,6 +333,10 @@ void releasePort(const char* why) {
 // the UI thread, which owns the player and the queue, and runs on in a
 // non-game app sent away (log a93baa71).
 void onDeactivate(SceInt64 now) {
+    // Its screen unseen meanwhile, the main loop goes a few times a second
+    // (patches/psv_platform.cpp), the queue going on all the same: it went
+    // round 96 times in 4 s away (log 4e8bcb05).
+    vitaplex_set_app_away(true);
     const MpvPlayer::Snapshot s = MpvPlayer::getInstance().snapshot();
     brls::Logger::info("[bgaudio] deactivated (left for the LiveArea or another app): {}",
                        describeMpv(s));
@@ -350,6 +358,12 @@ void onDeactivate(SceInt64 now) {
             if (handOver("left with PS")) brls::Application::quit();
         });
     }
+}
+
+// In front again: the main loop at its own pace.
+void onActivate() {
+    vitaplex_set_app_away(false);
+    brls::Logger::info("[bgaudio] activated (in front again)");
 }
 
 // When the system asked the app to quit; 0 until it has. Watcher thread only.
@@ -395,6 +409,7 @@ void drainAppEvents(SceInt64 now) {
         std::memset(&ev, 0, sizeof(ev));
         if (sceAppMgrReceiveEvent(&ev) < 0) break;
         if (ev.event == kEventDeactivate) onDeactivate(now);
+        else if (ev.event == kEventActivate) onActivate();
         else if (ev.event == kEventRequestQuit) onRequestQuit(now);
     }
 }
@@ -402,6 +417,12 @@ void drainAppEvents(SceInt64 now) {
 int powerCallback(int, int, int powerInfo, void*) {
     if ((unsigned)powerInfo & SCE_POWER_CB_BUTTON_PS_PRESS)
         g_psPressUs = sceKernelGetSystemTimeWide();
+    // Back from standby: the main loop at its own pace, should the system
+    // send no activate event for it (no log has VitaPlex in front through a
+    // standby). One that is still away then draws at its pace until left
+    // again: wasted, never slow.
+    if ((unsigned)powerInfo & (SCE_POWER_CB_APP_RESUME | SCE_POWER_CB_APP_RESUMING))
+        vitaplex_set_app_away(false);
     return 0;
 }
 
@@ -526,7 +547,7 @@ void startWatcher() {
 // there through the shell's music player, which plays on beside games
 // (docs/DESIGN_NOTES.md, BG Tests 10 to 21 and builds 2032 to 2047), and
 // fetches the songs not on the card as they come up. The two talk through the
-// files bgplayer.h lays out in ux0:data/VitaPlex and the plugin's pipes
+// files handover.h lays out in ux0:data/VitaPlex and the plugin's pipes
 // (qm_protocol.h). The app hands the queue over as it goes and takes the
 // music back as it opens again.
 
@@ -580,21 +601,27 @@ std::string trackField(std::string s) {
 }
 
 int repeatCode(RepeatMode m) {
-    return m == RepeatMode::ONE ? BGPLAYER_REPEAT_ONE
-         : m == RepeatMode::ALL ? BGPLAYER_REPEAT_ALL : BGPLAYER_REPEAT_OFF;
+    return m == RepeatMode::ONE ? HANDOVER_REPEAT_ONE
+         : m == RepeatMode::ALL ? HANDOVER_REPEAT_ALL : HANDOVER_REPEAT_OFF;
 }
 
-// ── The song made ready for SceShell ──────────────────────────────────────
+// ── The songs' files in the folder of songs ───────────────────────────────
 // SceShell plays files, so a song handed over that is not on the card is
 // fetched whole before it plays: 5.8 s and 5.0 s of silence in build 2045's
 // run (log 5ae2ab41), each time for the song VitaPlex had been playing. So
 // while a song plays here and could be handed over, its file is fetched in
 // the background to the folder of songs, as SceShell would fetch it, and the
-// queue names it (file=) once whole: SceShell plays it at once, and removes
-// it once played. A download is left alone, since SceShell plays it where it
-// is, and so is a song in a format the shell does not play, of which SceShell
-// fetches the server's MP3 itself. One song at a time: the song before's file
-// goes, and a fetch for a song no longer playing is stopped.
+// queue names it (file=) once whole: SceShell plays it at once. A download
+// is left alone, since SceShell plays it where it is. A song in a format the
+// shell does not play comes as the server's MP3 of it, as SceShell would
+// fetch that: it waited 23.3 s for one (log 8e7a4b23).
+//
+// The files stay while their songs are near: the song before, for previous,
+// the one playing, and the next, which SceShell fetches ahead. VitaPlex plays
+// them too, once it has the music back (songFile): its stream of a song
+// whose file it had took 7.3 s to begin (log 8e7a4b23). Files of other songs
+// go as the queue moves (pruneSongs). A fetch for a song no longer playing is
+// stopped.
 std::mutex g_readyMutex;
 struct ReadySong {
     std::string key;    // the song playing here, "" for none
@@ -612,6 +639,92 @@ long long sizeOnCard(const std::string& path) {
     SceIoStat st;
     std::memset(&st, 0, sizeof(st));
     return sceIoGetstat(path.c_str(), &st) >= 0 ? (long long)st.st_size : -1;
+}
+
+// The whole file of the song at key in the folder of songs, under the names
+// SceShell and VitaPlex give them (<key>.<extension>, moved in once whole);
+// "" for none.
+std::string songFileFor(const std::string& key) {
+    if (key.empty()) return std::string();
+    for (const char* ext : {"mp3", "m4a", "aac", "wav"}) {
+        const std::string path = std::string(HANDOVER_SONGS) + "/" + key + "." + ext;
+        if (sizeOnCard(path) > 0) return path;
+    }
+    return std::string();
+}
+
+// The queue in the order it plays, and the place of the song playing in it.
+// false when it has none.
+bool playOrder(std::vector<int>& order, int& at) {
+    MusicQueue& q = MusicQueue::getInstance();
+    const std::vector<QueueItem>& items = q.getQueue();
+    order.clear();
+    at = q.getCurrentIndex();
+    if (q.isShuffleEnabled() && q.getShuffleOrder().size() == items.size()) {
+        order = q.getShuffleOrder();
+        at = q.getShufflePosition();
+    } else {
+        for (int i = 0; i < (int)items.size(); i++) order.push_back(i);
+    }
+    return at >= 0 && at < (int)order.size();
+}
+
+// The ratingKeys of the song at `at` in `keys`, in play order, and of the
+// songs on either side of it, round the end with repeat all: the songs whose
+// files stay.
+std::vector<std::string> nearKeys(const std::vector<std::string>& keys, int at, bool round) {
+    std::vector<std::string> near;
+    const int n = (int)keys.size();
+    for (int d = -1; d <= 1 && n > 0; d++) {
+        int i = at + d;
+        if (round) i = ((i % n) + n) % n;
+        if (i >= 0 && i < n && !keys[(std::size_t)i].empty()) near.push_back(keys[(std::size_t)i]);
+    }
+    return near;
+}
+
+// The songs near the one playing here (nearKeys), from the queue. On the UI
+// thread, which owns it.
+std::vector<std::string> nearPlaying() {
+    std::vector<int> order;
+    int at = 0;
+    if (!playOrder(order, at)) return {};
+    const std::vector<QueueItem>& items = MusicQueue::getInstance().getQueue();
+    const bool round = MusicQueue::getInstance().getRepeatMode() == RepeatMode::ALL;
+    const int n = (int)order.size();
+    std::vector<std::string> near;
+    for (int d = -1; d <= 1; d++) {
+        int i = at + d;
+        if (round) i = ((i % n) + n) % n;
+        if (i < 0 || i >= n) continue;
+        const std::string& key = items[(std::size_t)order[(std::size_t)i]].ratingKey;
+        if (!key.empty()) near.push_back(key);
+    }
+    return near;
+}
+
+// The folder of songs cleared of all but the files of the songs at `keep`,
+// and their covers: whatever else SceShell or VitaPlex left there. How many
+// files went.
+int pruneSongs(const std::vector<std::string>& keep) {
+    const SceUID d = sceIoDopen(HANDOVER_SONGS);
+    if (d < 0) return 0;
+    SceIoDirent e;
+    int removed = 0;
+    for (;;) {
+        std::memset(&e, 0, sizeof(e));
+        if (sceIoDread(d, &e) <= 0) break;
+        if (e.d_name[0] == '.') continue;
+        const std::string name = e.d_name;
+        bool kept = false;
+        for (const std::string& key : keep)
+            kept = kept || (name.size() > key.size() && name.compare(0, key.size(), key) == 0 &&
+                            name[key.size()] == '.');
+        if (kept) continue;
+        if (std::remove((std::string(HANDOVER_SONGS) + "/" + name).c_str()) == 0) removed++;
+    }
+    sceIoDclose(d);
+    return removed;
 }
 
 // The song made ready forgotten, and its file removed: the music stopped, or
@@ -650,8 +763,79 @@ void keepReadySong(const std::string& key, const std::string& path) {
     g_ready.path = path;
 }
 
+// What the framer passes on (mp3_frames.h), into the file.
+int mp3Write(void* ctx, const uint8_t* data, uint32_t n) {
+    return std::fwrite(data, 1, n, (FILE*)ctx) == n ? 0 : -1;
+}
+
+// The server's MP3 of the song at key, as SceShell asks for it (the plugin's
+// fetchMp3), in a session of its own: the decision, then start.mp3, framed as
+// it comes into f, behind a frame that gives its length. true when it came
+// to its end, the bytes that came in *got and the frames' length in *ms;
+// else why in *why. Stopped once the song is no longer the one playing (gen).
+bool fetchServerMp3(unsigned gen, const std::string& key, const std::string& server,
+                    const std::string& token, FILE* f, long long* got, uint32_t* ms,
+                    std::string* why) {
+    static unsigned sessions = 0;
+    const std::string query =
+        "?path=" + HttpClient::urlEncode("/library/metadata/" + key) +
+        "&mediaIndex=0&partIndex=0&directPlay=0&directStream=1&directStreamAudio=1&hasMDE=1"
+        "&location=lan&audioBoost=100&audioChannelCount=2&protocol=http&musicBitrate=320"
+        "&session=vitaplex-ready-" + key + "-" + std::to_string(++sessions) +
+        "&X-Plex-Client-Profile-Name=Generic&X-Plex-Client-Profile-Extra=" +
+        HttpClient::urlEncode("add-transcode-target(type=musicProfile&context=streaming"
+                              "&protocol=http&container=mp3&audioCodec=mp3)");
+    const std::map<std::string, std::string> headers = {
+        {"X-Plex-Token", token},
+        {"X-Plex-Client-Identifier", "vitaplex-sceshell"},
+        {"X-Plex-Product", "VitaPlex"}};
+    HttpRequest req;
+    req.url = server + "/music/:/transcode/universal/decision" + query;
+    req.headers = headers;
+    req.timeout = 15;
+    HttpClient decision;
+    const HttpResponse r = decision.request(req);
+    if (r.statusCode != 200) {
+        *why = "its transcode decision: HTTP " + std::to_string(r.statusCode);
+        return false;
+    }
+    // As SceShell does, start.mp3 whatever the decision says.
+    std::unique_ptr<Mp3Frames> mp3(new Mp3Frames);
+    mp3fInit(mp3.get());
+    bool writeFailed = false;
+    HttpClient client;
+    const bool fetched = client.downloadFile(
+        server + "/music/:/transcode/universal/start.mp3" + query,
+        [&](const char* data, size_t size) {
+            if (readyGen() != gen) return false;
+            if (mp3fFeed(mp3.get(), (const uint8_t*)data, (uint32_t)size, mp3Write, f) < 0) {
+                writeFailed = true;
+                return false;
+            }
+            *got += (long long)size;
+            return true;
+        },
+        nullptr, headers, 0, nullptr, why);
+    if (!fetched || writeFailed) {
+        if (writeFailed) *why = "its file not written";
+        return false;
+    }
+    const int made = mp3fFinish(mp3.get());
+    if (made < 0) {
+        *why = "no MP3 frame in the server's MP3 of it";
+        return false;
+    }
+    *ms = mp3fMs(mp3.get());
+    if (made > 0 && (std::fseek(f, 0, SEEK_SET) != 0 ||
+                     std::fwrite(mp3->frame, 1, mp3->room, f) != mp3->room)) {
+        *why = "the frame giving its length not written";
+        return false;
+    }
+    return true;
+}
+
 // The fetch, on a thread of its own: the song's details, its first part, and
-// that file as the server has it into BGPLAYER_SONGS through a file beside
+// that file as the server has it into HANDOVER_SONGS through a file beside
 // it, moved in once all of it has come. It stops, and leaves nothing, once
 // the song is no longer the one playing (gen). That file ends in ".ready",
 // not in the plugin's ".part": SceShell, handed the queue as this stops, may
@@ -675,18 +859,22 @@ void readyFetch(unsigned gen, const std::string& key, const std::string& title,
                            title);
         return;
     }
-    // The formats the plugin plays as they are (its shellExt).
+    // The formats the plugin plays as they are (its shellExt); any other as
+    // the server's MP3 of it.
     std::string ext = lowerExt(item.partPath);
     if (ext == "mp4") ext = "m4a";
-    if (ext != "mp3" && ext != "m4a" && ext != "aac" && ext != "wav") {
-        brls::Logger::info("[bgaudio] SceShell: \"{}\" is {}: SceShell would fetch the server's MP3 "
-                           "of it itself",
-                           title, ext.empty() ? "of no known format" : ext);
-        return;
+    const bool asItIs = ext == "mp3" || ext == "m4a" || ext == "aac" || ext == "wav";
+    const std::string from = ext.empty() ? "a file of no known format" : ext;
+    if (!asItIs) ext = "mp3";
+    // A second transcode of the song, beside the one mpv plays it from, not
+    // until mpv's own is well under way: 10 s in.
+    for (int i = 0; !asItIs && i < 80; i++) {
+        sceKernelDelayThread(100 * 1000);
+        if (readyGen() != gen) return;
     }
-    const std::string path = std::string(BGPLAYER_SONGS) + "/" + key + "." + ext;
+    const std::string path = std::string(HANDOVER_SONGS) + "/" + key + "." + ext;
     const std::string part = path + ".ready";
-    sceIoMkdir(BGPLAYER_SONGS, 0777);
+    sceIoMkdir(HANDOVER_SONGS, 0777);
     FILE* f = std::fopen(part.c_str(), "wb");
     if (!f) {
         brls::Logger::info("[bgaudio] SceShell: \"{}\" not made ready: {} not written", title, part);
@@ -701,26 +889,41 @@ void readyFetch(unsigned gen, const std::string& key, const std::string& title,
     bool writeFailed = false;
     std::string why;
     const double t0 = systemSecs();
-    HttpClient client;
-    const bool fetched = client.downloadFile(
-        server + item.partPath + "?download=1",
-        [&](const char* data, size_t size) {
-            if (readyGen() != gen) return false;
-            if (std::fwrite(data, 1, size, f) != size) {
-                writeFailed = true;
-                return false;
-            }
-            got += (long long)size;
-            return true;
-        },
-        [&](int64_t total) { length = total; }, {{"X-Plex-Token", token}}, 0, nullptr, &why);
+    bool fetched;
+    if (asItIs) {
+        HttpClient client;
+        fetched = client.downloadFile(
+            server + item.partPath + "?download=1",
+            [&](const char* data, size_t size) {
+                if (readyGen() != gen) return false;
+                if (std::fwrite(data, 1, size, f) != size) {
+                    writeFailed = true;
+                    return false;
+                }
+                got += (long long)size;
+                return true;
+            },
+            [&](int64_t total) { length = total; }, {{"X-Plex-Token", token}}, 0, nullptr, &why);
+    } else {
+        brls::Logger::info("[bgaudio] SceShell: \"{}\" is {}: the server's MP3 of it made ready", title,
+                           from);
+        uint32_t ms = 0;
+        fetched = fetchServerMp3(gen, key, server, token, f, &got, &ms, &why);
+        // A transcode has no length, so one cut short ends as one done would:
+        // its frames are to make the song, to the 3 s the plugin allows.
+        if (fetched && item.duration > 0 && ms + 3000 < (uint32_t)item.duration) {
+            fetched = false;
+            why = "its frames make " + mmss(ms) + " of its " + mmss((unsigned)item.duration);
+        }
+    }
     const bool closed = std::fclose(f) == 0;
     // Whole, as the answer gave its size, else as the details did: the client
     // takes a transfer cut short for one done. The answer's first, since the
     // details can be older than the file: 4,418,566 bytes for a song that
     // came whole at 4,343,040, which was thrown away, and SceShell fetched it
-    // again with the music stopped (log dd6a5eb9, build 2046).
-    const long long want = length > 0 ? length : item.partSize;
+    // again with the music stopped (log dd6a5eb9, build 2046). A transcode
+    // sends no length: what the framer took is whole.
+    const long long want = !asItIs ? 0 : length > 0 ? length : item.partSize;
     const bool stopped = readyGen() != gen;
     if (!fetched || writeFailed || !closed || got <= 0 || (want > 0 && got != want) || stopped) {
         std::remove(part.c_str());
@@ -755,16 +958,26 @@ void readySongForPlaying() {
     const QueueItem* t = q.getCurrentTrack();
     if (!t || t->ratingKey.empty() || !q.isMusicQueue()) return;
     const std::string key = t->ratingKey, title = t->title;
-    std::string before;
     unsigned gen;
     {
         std::lock_guard<std::mutex> lock(g_readyMutex);
         if (g_ready.key == key) return;
-        before.swap(g_ready.path);
+        g_ready.path.clear();
         g_ready.key = key;
         gen = ++g_ready.gen;
     }
-    if (!before.empty()) std::remove(before.c_str());   // the song before's, not handed over
+    // The files of the songs near this one stay; the others go.
+    const int pruned = pruneSongs(nearPlaying());
+    if (pruned)
+        brls::Logger::info("[bgaudio] SceShell: {} file(s) of songs no longer near removed", pruned);
+    // Its file there already, kept as the music came back or fetched before:
+    // ready as it is.
+    const std::string kept = songFileFor(key);
+    if (!kept.empty()) {
+        std::lock_guard<std::mutex> lock(g_readyMutex);
+        if (g_ready.gen == gen) g_ready.path = kept;
+        return;
+    }
     DownloadItem dl;
     if (DownloadsManager::getInstance().getDownloadCopy(key, dl) &&
         dl.state == DownloadState::COMPLETED)
@@ -779,26 +992,20 @@ void readySongForPlaying() {
 }
 
 // The queue in the order it plays, the song playing and where in it, as
-// bgplayer.h lays it out. A queue longer than bgplayer.h allows goes from
+// handover.h lays it out. A queue longer than handover.h allows goes from
 // the song playing on; the song's file made ready, if it is whole, in file=,
 // and SceShell's from then. A download's cover is the PNG the server made of
-// it beside the download, which the plugin shows as it is (bgplayer.h's
-// BGPLAYER_TRACK_COVER). On the UI thread, which owns the queue. The song,
+// it beside the download, which the plugin shows as it is (handover.h's
+// HANDOVER_TRACK_COVER). On the UI thread, which owns the queue. The song,
 // for the log, in *what, and its ratingKey in *key.
 bool writeQueue(std::string& what, std::string& key) {
     MusicQueue& q = MusicQueue::getInstance();
     const std::vector<QueueItem>& items = q.getQueue();
     std::vector<int> order;
-    int at = q.getCurrentIndex();
-    if (q.isShuffleEnabled() && q.getShuffleOrder().size() == items.size()) {
-        order = q.getShuffleOrder();
-        at = q.getShufflePosition();
-    } else {
-        for (int i = 0; i < (int)items.size(); i++) order.push_back(i);
-    }
-    if (at < 0 || at >= (int)order.size()) return false;
+    int at = 0;
+    if (!playOrder(order, at)) return false;
     std::size_t from = 0;
-    if (order.size() > BGPLAYER_MAX_TRACKS) {
+    if (order.size() > HANDOVER_MAX_TRACKS) {
         from = (std::size_t)at;
         at = 0;
     }
@@ -818,7 +1025,7 @@ bool writeQueue(std::string& what, std::string& key) {
                   at, positionMs, repeatCode(q.getRepeatMode()), file.c_str());
     std::string text = head;
     DownloadsManager& downloads = DownloadsManager::getInstance();
-    for (std::size_t i = from; i < order.size() && i - from < BGPLAYER_MAX_TRACKS; i++) {
+    for (std::size_t i = from; i < order.size() && i - from < HANDOVER_MAX_TRACKS; i++) {
         const QueueItem& t = items[(std::size_t)order[i]];
         std::string local, cover;
         DownloadItem dl;
@@ -835,8 +1042,8 @@ bool writeQueue(std::string& what, std::string& key) {
                 "|" + trackField(cover) + "\n";
     }
     text += "end\n";
-    if (!writeWhole(BGPLAYER_QUEUE, text)) return false;
-    what = std::to_string(std::min<std::size_t>(order.size() - from, BGPLAYER_MAX_TRACKS)) +
+    if (!writeWhole(HANDOVER_QUEUE, text)) return false;
+    what = std::to_string(std::min<std::size_t>(order.size() - from, HANDOVER_MAX_TRACKS)) +
            " song(s), from \"" + now.title + "\" at " + mmss((unsigned)positionMs) +
            (file.empty() ? std::string(", for SceShell to fetch") : ", from " + file);
     key = now.ratingKey;
@@ -919,12 +1126,12 @@ bool handOver(const char* why) {
     std::string what, key;
     if (!writeQueue(what, key)) {
         brls::Logger::error("[bgaudio] SceShell: {}, but the queue could not be written to {}", why,
-                            BGPLAYER_QUEUE);
+                            HANDOVER_QUEUE);
         return false;
     }
     // The folder of songs, there for SceShell to fetch into, with the song's
     // cover.
-    sceIoMkdir(BGPLAYER_SONGS, 0777);
+    sceIoMkdir(HANDOVER_SONGS, 0777);
     shellSongCover(key);
     MusicController::getInstance().playPause(false);
     releasePort("handed to SceShell");
@@ -940,7 +1147,7 @@ bool handOver(const char* why) {
 
 // ── Taking the music back ────────────────────────────────────────────────
 
-// A note as bgplayer.h lays them out: "key=value" lines, and "end" last. The
+// A note as handover.h lays them out: "key=value" lines, and "end" last. The
 // track lines in order, split into their fields, in *tracks when asked for.
 bool readNote(const char* path, std::map<std::string, std::string>& fields,
               std::vector<std::vector<std::string>>* tracks) {
@@ -968,7 +1175,7 @@ bool readNote(const char* path, std::map<std::string, std::string>& fields,
                 if (bar == std::string::npos) break;
                 at = bar + 1;
             }
-            parts.resize(BGPLAYER_TRACK_FIELDS);
+            parts.resize(HANDOVER_TRACK_FIELDS);
             tracks->push_back(parts);
         } else if (key != "track") {
             fields[key] = value;
@@ -989,33 +1196,13 @@ std::string fieldText(const std::map<std::string, std::string>& m, const char* k
 }
 
 // The songs SceShell played the queue from, once nothing plays them; but for
-// the file of the song at keepKey, whole as the plugin moves its files in,
-// which goes on here. Its path, or "".
-std::string removePlayerSongs(const std::string& keepKey = std::string()) {
-    const SceUID d = sceIoDopen(BGPLAYER_SONGS);
-    if (d < 0) return std::string();
-    SceIoDirent e;
-    int removed = 0;
-    std::string kept;
-    for (;;) {
-        std::memset(&e, 0, sizeof(e));
-        if (sceIoDread(d, &e) <= 0) break;
-        if (e.d_name[0] == '.') continue;
-        const std::string name = e.d_name, path = std::string(BGPLAYER_SONGS) + "/" + name;
-        const std::string ext = lowerExt(name);
-        if (!keepKey.empty() && kept.empty() && name.rfind(keepKey + ".", 0) == 0 &&
-            name.find('.') == keepKey.size() && ext != "png" && ext != "part" && ext != "sent" &&
-            ext != "ready") {
-            kept = path;
-            continue;
-        }
-        if (std::remove(path.c_str()) == 0) removed++;
-    }
-    sceIoDclose(d);
+// the files of the songs at keep, whole as the plugin moves its files in,
+// which go on here. Logged when any went.
+void removePlayerSongs(const std::vector<std::string>& keep = {}) {
+    const int removed = pruneSongs(keep);
     if (removed)
-        brls::Logger::info("[bgaudio] take back: removed {} song file(s) SceShell left{}", removed,
-                           kept.empty() ? "" : ", but for the file of the song taken back");
-    return kept;
+        brls::Logger::info("[bgaudio] take back: removed {} file(s) SceShell left{}", removed,
+                           keep.empty() ? "" : ", but for those of the songs near the one taken back");
 }
 
 // The song the shell plays on for SceShell's queue as VitaPlex opens: its
@@ -1058,17 +1245,17 @@ long long takeFromShell(int durationMs) {
     return at;
 }
 
-// Why the queue at BGPLAYER_QUEUE is not the one SceShell played, as its
+// Why the queue at HANDOVER_QUEUE is not the one SceShell played, as its
 // status says, which the take-back goes on with; "" when it is.
 std::string queueProblem(bool haveQueue, const std::map<std::string, std::string>& queue,
                          std::size_t tracks, const std::map<std::string, std::string>& status) {
     char why[128];
     if (!haveQueue) {
-        std::snprintf(why, sizeof(why), "its queue at %s is %s", BGPLAYER_QUEUE,
-                      fileExists(BGPLAYER_QUEUE) ? "not whole" : "gone");
+        std::snprintf(why, sizeof(why), "its queue at %s is %s", HANDOVER_QUEUE,
+                      fileExists(HANDOVER_QUEUE) ? "not whole" : "gone");
     } else if (fieldNum(queue, "written") != fieldNum(status, "queue")) {
         std::snprintf(why, sizeof(why), "its queue at %s is another, written at %.6f, not %.6f",
-                      BGPLAYER_QUEUE, fieldNum(queue, "written"), fieldNum(status, "queue"));
+                      HANDOVER_QUEUE, fieldNum(queue, "written"), fieldNum(status, "queue"));
     } else if (fieldNum(status, "index") < 0 || fieldNum(status, "index") >= (double)tracks) {
         std::snprintf(why, sizeof(why), "its song %d is not among the %d of its queue",
                       (int)fieldNum(status, "index") + 1, (int)tracks);
@@ -1096,8 +1283,8 @@ void takeBack() {
                            hex(rcShell));
     std::map<std::string, std::string> status, queue;
     std::vector<std::vector<std::string>> tracks;
-    const bool haveQueue = readNote(BGPLAYER_QUEUE, queue, &tracks);
-    if (!readNote(BGPLAYER_STATUS, status, nullptr)) {
+    const bool haveQueue = readNote(HANDOVER_QUEUE, queue, &tracks);
+    if (!readNote(HANDOVER_STATUS, status, nullptr)) {
         removePlayerSongs();   // never handed over, or long done
         return;
     }
@@ -1115,11 +1302,11 @@ void takeBack() {
     // says where it stopped: its status is read again until it is one written
     // after that.
     for (int i = 0; i < 20 && g_takeBackSent && fieldNum(status, "written") < askedShell &&
-                    fieldText(status, "state") == BGPLAYER_STATE_PLAYING;
+                    fieldText(status, "state") == HANDOVER_STATE_PLAYING;
          i++) {
         sceKernelDelayThread(100 * 1000);
         status.clear();
-        readNote(BGPLAYER_STATUS, status, nullptr);
+        readNote(HANDOVER_STATUS, status, nullptr);
     }
     // Written as it stopped, after it was told; else as it played, which it
     // writes every 2 s, before this app started. A status older than that is
@@ -1131,7 +1318,7 @@ void takeBack() {
                        fieldText(status, "state"), (int)fieldNum(status, "index") + 1,
                        mmss((unsigned)std::max(0.0, fieldNum(status, "positionMs"))),
                        std::fabs(written - g_initSecs), written >= g_initSecs ? "after" : "before");
-    const bool said = fieldText(status, "state") == BGPLAYER_STATE_PLAYING;
+    const bool said = fieldText(status, "state") == HANDOVER_STATE_PLAYING;
     int index = -1;
     long long at = -1;
     if (said && !fresh) {
@@ -1162,24 +1349,38 @@ void takeBack() {
     }
     // Not while the shell may still play one of them: a file written over as
     // the shell played it preceded a crash (logs 8fe35d97, 7ba90482). The
-    // song taken back keeps its file, made ready for the next hand-over.
+    // songs near the one taken back keep their files, which VitaPlex plays on
+    // from (songFile): the song before, for previous, that song, made ready
+    // for the next hand-over too, and the next, which SceShell fetched ahead
+    // (log 8e7a4b23: 22.6 s to stream it again).
     if (!said || at >= 0) {
+        std::vector<std::string> near;
+        if (index >= 0) {
+            std::vector<std::string> keys;
+            for (const auto& t : tracks) keys.push_back(t[HANDOVER_TRACK_KEY]);
+            near = nearKeys(keys, index, (int)fieldNum(queue, "repeat") == HANDOVER_REPEAT_ALL);
+        }
+        removePlayerSongs(near);
         const std::string key = index >= 0 ? fieldText(status, "ratingKey") : std::string();
-        const std::string kept = removePlayerSongs(key);
+        const std::string kept = songFileFor(key);
         if (!kept.empty()) keepReadySong(key, kept);
+        for (const std::string& k : near)
+            if (!songFileFor(k).empty())
+                brls::Logger::info("[bgaudio] take back: kept the file of song {}, {}", k,
+                                   k == key ? "the one taken back" : "near it");
     }
     if (index < 0 || at < 0) return;
 
     std::vector<MediaItem> items;
     for (const auto& t : tracks) {
         MediaItem item;
-        item.ratingKey = t[BGPLAYER_TRACK_KEY];
-        item.duration = std::atoi(t[BGPLAYER_TRACK_DURATION].c_str());
-        item.userRating = (float)std::atof(t[BGPLAYER_TRACK_RATING].c_str());
-        item.thumb = t[BGPLAYER_TRACK_THUMB];
-        item.title = t[BGPLAYER_TRACK_TITLE];
-        item.grandparentTitle = t[BGPLAYER_TRACK_ARTIST];
-        item.parentTitle = t[BGPLAYER_TRACK_ALBUM];
+        item.ratingKey = t[HANDOVER_TRACK_KEY];
+        item.duration = std::atoi(t[HANDOVER_TRACK_DURATION].c_str());
+        item.userRating = (float)std::atof(t[HANDOVER_TRACK_RATING].c_str());
+        item.thumb = t[HANDOVER_TRACK_THUMB];
+        item.title = t[HANDOVER_TRACK_TITLE];
+        item.grandparentTitle = t[HANDOVER_TRACK_ARTIST];
+        item.parentTitle = t[HANDOVER_TRACK_ALBUM];
         item.type = "track";
         item.mediaType = MediaType::MUSIC_TRACK;
         items.push_back(item);
@@ -1193,8 +1394,8 @@ void takeBack() {
                                "is not taken back");
             return;
         }
-        MusicQueue::getInstance().setRepeatMode(repeat == BGPLAYER_REPEAT_ONE ? RepeatMode::ONE
-                                                : repeat == BGPLAYER_REPEAT_ALL ? RepeatMode::ALL
+        MusicQueue::getInstance().setRepeatMode(repeat == HANDOVER_REPEAT_ONE ? RepeatMode::ONE
+                                                : repeat == HANDOVER_REPEAT_ALL ? RepeatMode::ALL
                                                                                 : RepeatMode::OFF);
         brls::Logger::info("[bgaudio] take back: the queue goes on here, \"{}\" at {}",
                            items[(std::size_t)index].title, mmss((unsigned)at));
@@ -1203,7 +1404,47 @@ void takeBack() {
     });
 }
 
+// What builds up to 2047 left under the background player's names
+// (handover.h's HANDOVER_OLD_*), removed; but not while SceShell may still
+// play from them, a queue handed over by such a build carrying on in this
+// boot, its status written in the last 30 s.
+void removeOldNames() {
+    std::map<std::string, std::string> status;
+    const double written = readNote(HANDOVER_OLD_STATUS, status, nullptr)
+                               ? fieldNum(status, "written") : -1.0;
+    const double now = systemSecs();
+    if (fieldText(status, "state") == HANDOVER_STATE_PLAYING && written <= now + 1.0 &&
+        now - written < 30.0) {
+        brls::Logger::info("[bgaudio] the files of builds up to 2047 left as they are: SceShell "
+                           "may still play from them");
+        return;
+    }
+    int removed = 0;
+    for (const char* path :
+         {HANDOVER_OLD_QUEUE, HANDOVER_OLD_STATUS, HANDOVER_OLD_LOG, HANDOVER_OLD_LOG2})
+        removed += std::remove(path) == 0 ? 1 : 0;
+    const SceUID d = sceIoDopen(HANDOVER_OLD_SONGS);
+    if (d >= 0) {
+        SceIoDirent e;
+        for (;;) {
+            std::memset(&e, 0, sizeof(e));
+            if (sceIoDread(d, &e) <= 0) break;
+            if (e.d_name[0] == '.') continue;
+            const std::string path = std::string(HANDOVER_OLD_SONGS) + "/" + e.d_name;
+            removed += std::remove(path.c_str()) == 0 ? 1 : 0;
+        }
+        sceIoDclose(d);
+        sceIoRmdir(HANDOVER_OLD_SONGS);
+    }
+    if (removed)
+        brls::Logger::info("[bgaudio] removed {} file(s) under the names builds up to 2047 gave "
+                           "them",
+                           removed);
+}
+
 }  // namespace
+
+std::string songFile(const std::string& ratingKey) { return songFileFor(ratingKey); }
 
 void init(int outsideMusic) {
     if (outsideMusic < kOutsideStops || outsideMusic > kOutsideHandsOver)
@@ -1222,7 +1463,12 @@ void init(int outsideMusic) {
     // Whatever the setting: music handed over before it was changed comes
     // back all the same. In the first frame, once the server is connected
     // and the main screen is up; the song plays on in the shell until then.
-    brls::sync([]() { platform::launchThread([]() { takeBack(); }); });
+    brls::sync([]() {
+        platform::launchThread([]() {
+            takeBack();
+            removeOldNames();
+        });
+    });
 }
 
 void setOutsideMusic(int mode) {

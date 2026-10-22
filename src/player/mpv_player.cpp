@@ -828,6 +828,7 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
     // Set before anything can fail, and unconditionally, so a value from the
     // previous track can never be read against this one.
     m_expectedDurationMs.store(expectedDurationMs);
+    m_streamRefused.store(false);
 
     // A terminated core accepts commands and never runs them, so rebuild
     // it before loading rather than queueing into a dead handle. init()
@@ -1561,6 +1562,11 @@ void MpvPlayer::eventMainLoop() {
                     // exists to stop. Every level goes through it; the cost is
                     // a copy on a line we were already formatting.
                     const std::string text = redactTokensInUrl(msg->text ? msg->text : "");
+                    // A stream that dropped, its reconnect refused: "HTTP
+                    // error 400 Bad Request", three times, 13 to 17 s after
+                    // a transcode decision for the queue's next song (logs
+                    // 7c97dfa5, 6f40de92). See streamRefused().
+                    if (text.find("HTTP error 4") != std::string::npos) m_streamRefused.store(true);
                     if (msg->log_level <= MPV_LOG_LEVEL_ERROR) {
                         brls::Logger::error("mpv {}: {}", msg->prefix, text);
                     } else if (msg->log_level <= MPV_LOG_LEVEL_WARN) {

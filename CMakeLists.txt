@@ -821,7 +821,7 @@ int main() {
     # Music after leaving the app (utils/background_audio.hpp): the BGM port
     # calls come from SceAppMgr_stub, linked above. VitaPlex hands its queue
     # to SceShell through its quick menu plugin (qm_link.c), with the files
-    # bgplayer.h lays out, and the quick menu's Music row goes through the
+    # handover.h lays out, and the quick menu's Music row goes through the
     # same plugin, with the pipe and taiHEN calls the SDK leaves out in
     # qm_link_stub.S, and the song's cover through qm_cover.c, which decodes
     # with the stb_image borealis's nanovg builds. The music SceShell plays
@@ -831,16 +831,16 @@ int main() {
     enable_language(ASM)
     target_sources(${PROJECT_NAME} PRIVATE
         src/utils/background_audio_psv.cpp
-        src/bgplayer_psv/qm_cover.c
-        src/bgplayer_psv/qm_link.c
-        src/bgplayer_psv/qm_link_stub.S
+        src/handover_psv/qm_cover.c
+        src/handover_psv/qm_link.c
+        src/handover_psv/qm_link_stub.S
         lib/libshellaudio/ShellAudio.c
         lib/libshellaudio/shellsvc_stub.S)
     target_include_directories(${PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/bgplayer_psv)
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/handover_psv)
     target_compile_definitions(${PROJECT_NAME} PRIVATE
-        BGPLAYER_APP_TITLEID=\"${VITA_TITLEID}\")
+        VITAPLEX_TITLEID=\"${VITA_TITLEID}\")
 elseif(PLATFORM_SWITCH)
     # Required for __wrap_pthread_create in src/utils/switch_stubs.c — floors
     # libmpv/ffmpeg thread stacks above libnx's 128 KB default so they stop
@@ -1448,7 +1448,7 @@ if(PLATFORM_PSV)
             src/qm_plugin_psv/taihen_stub.S)
         target_include_directories(vitaplex_qm PRIVATE
             ${VITAPLEX_PAF_INCLUDE_DIR}
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/bgplayer_psv)
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/handover_psv)
         target_compile_options(vitaplex_qm PRIVATE
             "$<$<COMPILE_LANGUAGE:CXX>:-O2;-fno-rtti;-fno-exceptions;-fno-builtin;-fshort-wchar;-fno-threadsafe-statics;-fno-sized-deallocation;-Wno-unused-function;-Wno-sign-compare;-Wno-template-body;-D__declspec(x)=>")
         target_link_options(vitaplex_qm PRIVATE -nostartfiles -nostdlib)

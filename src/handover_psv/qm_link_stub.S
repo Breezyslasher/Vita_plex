@@ -12,10 +12,11 @@
  *       taiLoadStartModuleForPidForUser, taihenUnsafe 0xB2B67326, function
  *       0xE853ABCB, as libtaihen_stub.a has them in vitasdk's taihen package
  *       and in taiHEN v0.11's release alike. The library only unsafe
- *       homebrew may call, which VitaPlex and its player are, as ElevenMPV-A
- *       is (it links taihenUnsafe_stub for the same call).
+ *       homebrew may call, which VitaPlex is, as ElevenMPV-A is (it links
+ *       taihenUnsafe_stub for the same call).
  *
- * The layout of src/bgplayer_psv/raw_exit.S.
+ * Each stub as vitasdk's own stub libraries lay one out: a word for the
+ * loader, the library's NID, the function's NID, and a nop.
  */
 
 	.arm

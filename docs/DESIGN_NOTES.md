@@ -3096,6 +3096,76 @@ and the tests go.
   and the covers' added; the pipe test passes 23. The plugin builds at
   40361 bytes, with build 2042's imports less three.
 
+**Build 2048: the loose ends.** What build 2046's logs left, all of it:
+
+- The take-back plays the song's file kept on the card, not the server's
+  stream, which took 7.3 s to begin (`bgaudio::songFile`, PlayerActivity and
+  MusicController). mpv starts it at the place, from the load (`loadUrl`'s
+  start), as it now starts a download taken back too: a seek after the load
+  let its first moment out.
+- The files of the songs near the one playing stay in the folder of songs:
+  the song before, for previous (37.5 s waited for in build 2046), the one
+  playing, and the next. The plugin keeps them as VitaPlex takes the music
+  back, the song fetched ahead among them (22.6 s waited for); VitaPlex
+  plays on from them, and clears the others as its queue moves
+  (`pruneSongs`). A song's file found in the folder is played, by either,
+  without asking the server.
+- The server's MP3 of a song the shell does not play is framed as it comes
+  (`src/handover_psv/mp3_frames.h`), not in two passes after it has come
+  (9.6 s of build 2046's 23.3 s wait). VitaPlex makes it ready while the song
+  plays, as it does the file of a song the shell plays, from 10 s in, after
+  mpv's own transcode of it. On a host the framer gave the two passes' file,
+  byte for byte, for 12,000 streams fed in pieces of every size, but for one
+  with a Xing frame of its own, now passed on from that frame without its
+  ID3 tag.
+- The plugin fetches a song's cover before its file, and the row shows it
+  while the song is waited for.
+- A song the shell stops, as the screen goes off or on, plays again at once
+  and every second while it stays stopped; with 5 s between tries it stayed
+  stopped 2.6 s once (log `e18b5831`).
+- The song handed over is taken to VitaPlex's place as the shell is given
+  it, with the seek event right after play, not once the shell has been seen
+  playing it from 0:00 (1.3 s of its start heard). If the shell does not
+  take a seek then, it is asked again once it plays, as before. Whether it
+  does is for the console to say: the log says "began at" when it does.
+- While SceShell plays the queue, the plugin tells the server where the
+  music is, as VitaPlex does (`/:/timeline`, under VitaPlex's own client
+  id): playing at each song's start and every 10 s, paused and playing from
+  the row, buffering as a song is fetched, stopped as the queue ends; nothing
+  as VitaPlex takes it back, which goes on telling it.
+- Left for the LiveArea or another app, VitaPlex's main loop sleeps a quarter
+  of a second each time round (patches/psv_platform.cpp), from the
+  deactivate event to the activate event: its screen, unseen, was drawn 96
+  times in 4 s away (log `4e8bcb05`). In the logs every deactivate had its
+  activate, and the quick menu brings neither; but none has VitaPlex in
+  front through a standby, so a resume from one ends it too.
+- The names: `bgplayer.h` is `handover.h` in `src/handover_psv`, its macros
+  `HANDOVER_*`; on the card, `handover-queue.txt`, `handover-status.txt` and
+  the folder `handover`. VitaPlex removes what builds up to 2047 left under
+  the old names, unless SceShell may still play from them (a status of
+  theirs written in the last 30 s). The protocol is version 13
+  (`VitaPlexQM13`): the files moved, and a plugin of version 12 would read
+  the old ones.
+- mpv's stream dropping, its reconnects answered HTTP 400. Three logs have a
+  drop: `7c97dfa5` (build 2045) and `4e8bcb05` (build 2046), both streams of a
+  take-back, and `6f40de92` (build 1988), a song's own stream. Each dropped
+  20.2 to 22.6 s after it began, 1.23 to 1.33 MB in, with
+  `ffurl_read returned 0xdfb9b0bb`, AVERROR_EOF: the server closed it. In
+  two, ffmpeg's reconnects in the same session were answered 400 three
+  times; in `4e8bcb05` the one reconnect was not refused. Each came 13.2 to
+  16.7 s after a transcode decision for the queue's next song (the same song
+  with repeat one), but two other streams outlived such a decision by 21 and
+  81 s (`c0ea1fd8`, `9c16c0d6`), so that is not the cause on its own. Shuttle2
+  found the server refusing a new session for a song another session had had
+  (timusus/Shuttle2#888); these were refusals within one session. In none of
+  the logs did the music stop for it: each time it was handed over or
+  skipped while mpv still played what it had. So the take-back no longer
+  streams, and a stream whose reconnect the server refused is started again
+  at once when what mpv has runs out, with no wait and no check of the
+  server, which has just answered (`MpvPlayer::streamRefused`).
+- On a host, the plugin's harness passes 184 checks, the pipe test 23. The
+  plugin builds at 42009 bytes, with build 2047's imports.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

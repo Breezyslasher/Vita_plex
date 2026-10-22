@@ -26,12 +26,12 @@
 extern "C" {
 #endif
 
-#ifndef BGPLAYER_APP_TITLEID
-#error "CMakeLists.txt defines BGPLAYER_APP_TITLEID"
+#ifndef VITAPLEX_TITLEID
+#error "CMakeLists.txt defines VITAPLEX_TITLEID"
 #endif
 
 // VitaPlex's plugin, in its app's folder.
-#define QM_OWN_PLUGIN_PATH "ux0:app/" BGPLAYER_APP_TITLEID "/module/vitaplex_qm.suprx"
+#define QM_OWN_PLUGIN_PATH "ux0:app/" VITAPLEX_TITLEID "/module/vitaplex_qm.suprx"
 
 // A press on the row.
 enum { QM_NONE = 0, QM_PLAY_PAUSE, QM_NEXT, QM_PREVIOUS };
@@ -61,7 +61,7 @@ int qmSetPlaying(int playing);
 // The song's cover, written to QM_ART_PATH_FMT under this serial first; 0
 // for none.
 int qmSetArt(uint32_t serial);
-// As VitaPlex goes: SceShell plays its queue, written to BGPLAYER_QUEUE
+// As VitaPlex goes: SceShell plays its queue, written to HANDOVER_QUEUE
 // first, from the queue's song and place (QM_CMD_PLAY_QUEUE).
 int qmPlayQueue(void);
 // As VitaPlex opens: it takes the music back (QM_CMD_TAKE_BACK). Sent to the

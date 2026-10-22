@@ -411,6 +411,8 @@ private:
     int m_mediaDurationMs = 0;        // Full media length (ms) from Plex metadata; 0 = unknown
     // Track length handed to loadUrl so an early end-of-stream is told from a real one; 0 means unknown.
     int64_t m_pendingDurationMs = 0;
+    // Where in a seekable file the deferred load starts, so the track's first moment is never heard.
+    double m_pendingStartSec = 0.0;
     bool m_updatingSlider = false;  // Guard to prevent slider update from triggering seek
     brls::RepeatingTimer m_updateTimer;
     // Seek debounce: each input rewinds it, and one seek commits ~350ms after the last. Target < 0 means none pending.
