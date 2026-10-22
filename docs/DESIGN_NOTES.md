@@ -2760,6 +2760,50 @@ plugin's; `e9ecf378`, VitaPlex BG's).
 - VitaPlex BG also set aside, as build 2037 has it, the player's status from
   before the Vita was restarted.
 
+**Build 2042: SceShell fetches the queue's songs.** As it carries the queue
+on, the plugin now fetches the songs that are not on the memory card, the way
+the background player fetches them (protocol 9).
+
+- What it fetches: the song's details from `/library/metadata/<key>`, and from
+  them the Track's first Part. When the shell plays its format (MP3, M4A, AAC,
+  WAV), the file comes as the server has it (`?download=1`) into the player's
+  folder of songs, through a `.part` file moved in once whole. Then its cover
+  comes from the server's photo transcoder, asked for as a 64-pixel PNG and
+  kept only if it is one: nothing in the plugin can make a PNG from a JPEG.
+  Each file goes once the shell has the next song, as the player's own do.
+- When: the song after the one with the shell is fetched while that one
+  plays. A song wanted before it has come (the one before ended first, or
+  next or previous was pressed) is waited for: the shell is stopped, and the
+  row shows the song. There is one fetch at a time, on a thread of its own
+  with a 32 KB stack. A fetch for a song no longer wanted is stopped between
+  reads.
+- Failures: a song in a format the shell does not play, or one the server
+  does not have (404), is passed over and remembered, so it is not asked for
+  again. Any other failure is tried again once the song is wanted. A song
+  that fails twice is passed over, and after three such songs in a row the
+  carry-on stops.
+- The server comes from VitaPlex's settings, and so does the token. The token
+  is read for each fetch, sent as a header, wiped after it, and never logged.
+  With no server in the settings, songs not on the card are passed over as in
+  build 2037.
+- If VitaPlex BG takes the music back while the shell waits for a song, the
+  shell's clock says nothing. So the status names the song being fetched,
+  from its start, with state playing and `fetching=1`. VitaPlex BG then plays
+  it from there, without reading the shell.
+- Still passed over: songs in other formats, such as FLAC, which the player
+  has the server make MP3s of. Their length header (`giveHeader`) would have
+  to come into the plugin with them.
+- On a host, the plugin's harness has 62 new checks, 136 in all, under ASan
+  and UBSan. They cover a song fetched while the one before plays, played
+  from its file, and removed after it; the wait as one ends first, and the
+  status during it; FLAC and 404 passed over; take-backs during a fetch and
+  during a wait; a fetch stopped part-way and fetched again; play/pause, next
+  and previous during a wait; previous fetching the song before; a failure
+  tried again, then passed over; three in a row stopping the carry-on; a
+  JPEG cover left out; and the token on every request and in no log line.
+  The plugin builds for the Vita at 45490 bytes. Its new imports are
+  `sceKernelDeleteThread` and libgcc's 32-bit divide with remainder.
+
 
 ### PS4: the popup, and nothing to hang progress on
 

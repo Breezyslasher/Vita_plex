@@ -42,6 +42,8 @@
  * - For a test, it fetches the start of a song from the server through Sony's
  *   HTTP library as SceShell has it (QM_CMD_HTTP_TEST, build 2040): whether
  *   SceShell can fetch the queue's songs that are not on the memory card.
+ * - As it carries the queue on, it fetches those songs that way, each while
+ *   the one before plays, when the shell plays their format (build 2042).
  *
  * Built with vitasdk against the PAF headers scripts/vita/fetch_paf_headers.sh
  * fetches; its PAF imports are in paf_stubs.S. Logs to
@@ -1687,6 +1689,7 @@ const int kHttpVersion11 = 2;                    // SCE_HTTP_VERSION_1_1
 const int kHttpGet = 0;                          // SCE_HTTP_METHOD_GET
 const unsigned kHeaderOverwrite = 0;             // SCE_HTTP_HEADER_OVERWRITE
 const int kHttpAlreadyInited = (int)0x80431020;  // SCE_HTTP_ERROR_ALREADY_INITED
+const int kSslAlreadyInited = (int)0x80435020;   // what SceShell's gave (build 2040)
 // The pools, should this test be what starts the libraries.
 const unsigned kSslPool = 256 * 1024, kHttpPool = 64 * 1024;
 const char* const kHttpTestFile = "ux0:data/VitaPlex/qm-http-test.bin";
@@ -1702,15 +1705,17 @@ int g_httpBusy;
 uint8_t g_httpBuf[8192];  // the test thread's
 
 // A library's functions, from SceShell's module of it, else from its file
-// loaded into SceShell now. true when every one is found.
-bool findLibrary(const char* module, uint32_t libnid, const char* path, LibFn* fns, int count) {
+// loaded into SceShell now. `who` begins each line it logs. true when every
+// one is found.
+bool findLibrary(const char* who, const char* module, uint32_t libnid, const char* path,
+                 LibFn* fns, int count) {
     uintptr_t fn = 0;
     int rc = vitaplexQmGetModuleExportFunc(module, libnid, fns[0].nid, &fn);
-    logLine("http test: %s in SceShell already: 0x%08X", module, (unsigned)rc);
+    logLine("%s: %s in SceShell already: 0x%08X", who, module, (unsigned)rc);
     if (rc < 0) {
         int status = 0;
         const SceUID mod = sceKernelLoadStartModule(path, 0, NULL, 0, NULL, &status);
-        logLine("http test: %s loaded into SceShell: 0x%08X, its start 0x%08X", path,
+        logLine("%s: %s loaded into SceShell: 0x%08X, its start 0x%08X", who, path,
                 (unsigned)mod, (unsigned)status);
         if (mod < 0) return false;
     }
@@ -1721,10 +1726,63 @@ bool findLibrary(const char* module, uint32_t libnid, const char* path, LibFn* f
         fns[i].fn = rc >= 0 ? fn : 0;
         if (rc < 0) {
             all = false;
-            logLine("http test: %s not in %s: 0x%08X", fns[i].name, module, (unsigned)rc);
+            logLine("%s: %s not in %s: 0x%08X", who, fns[i].name, module, (unsigned)rc);
         }
     }
     return all;
+}
+
+// Both libraries' functions, for `who`.
+bool findLibraries(const char* who) {
+    return findLibrary(who, "SceLibSsl", kSslLibrary, "vs0:sys/external/libssl.suprx", g_ssl,
+                       kSslFns) &&
+           findLibrary(who, "SceLibHttp", kHttpLibrary, "vs0:sys/external/libhttp.suprx", g_http,
+                       kHttpFns);
+}
+
+// Both libraries started, unless SceShell has started them: their starts'
+// codes, which say what is to be ended after (httpEnd). Logged always, or
+// only when SceShell had not started them. true when the HTTP library can be
+// used.
+bool httpStart(const char* who, const char* what, bool always, int* rcSsl, int* rcHttp) {
+    *rcSsl = ((FnUnsigned)g_ssl[kSslInit].fn)(kSslPool);
+    if (always || *rcSsl != kSslAlreadyInited)
+        logLine("%s: SSL library started: 0x%08X%s%s", who, (unsigned)*rcSsl,
+                *rcSsl >= 0 ? ", here, for this " : "", *rcSsl >= 0 ? what : "");
+    *rcHttp = httpFn<FnUnsigned>(kHttpInit)(kHttpPool);
+    if (always || *rcHttp != kHttpAlreadyInited)
+        logLine("%s: HTTP library started: 0x%08X%s%s", who, (unsigned)*rcHttp,
+                *rcHttp >= 0                    ? ", here, for this "
+                : *rcHttp == kHttpAlreadyInited ? ", SceShell's already"
+                                                : "",
+                *rcHttp >= 0 ? what : "");
+    return *rcHttp >= 0 || *rcHttp == kHttpAlreadyInited;
+}
+
+// What httpStart started, ended.
+void httpEnd(const char* who, int rcSsl, int rcHttp) {
+    if (rcHttp >= 0)
+        logLine("%s: HTTP library ended: 0x%08X", who, (unsigned)httpFn<FnVoid>(kHttpTerm)());
+    if (rcSsl >= 0)
+        logLine("%s: SSL library ended: 0x%08X", who, (unsigned)((FnVoid)g_ssl[kSslTerm].fn)());
+}
+
+// A template with the time-outs the test found to do: 5 s to resolve and to
+// connect, 10 s to send and to receive. Its id, or the code it failed with.
+int httpTemplate(const char* who) {
+    const int tmpl = httpFn<FnTemplate>(kHttpCreateTemplate)("VitaPlex (SceShell)", kHttpVersion11, 1);
+    if (tmpl < 0) {
+        logLine("%s: template 0x%08X", who, (unsigned)tmpl);
+        return tmpl;
+    }
+    const int rcResolve = httpFn<FnIdUnsigned>(kHttpResolveTimeOut)(tmpl, 5000000u),
+              rcConnect = httpFn<FnIdUnsigned>(kHttpConnectTimeOut)(tmpl, 5000000u),
+              rcSend = httpFn<FnIdUnsigned>(kHttpSendTimeOut)(tmpl, 10000000u),
+              rcRecv = httpFn<FnIdUnsigned>(kHttpRecvTimeOut)(tmpl, 10000000u);
+    if (rcResolve < 0 || rcConnect < 0 || rcSend < 0 || rcRecv < 0)
+        logLine("%s: time-outs of 5, 5, 10 and 10 s: 0x%08X 0x%08X 0x%08X 0x%08X", who,
+                (unsigned)rcResolve, (unsigned)rcConnect, (unsigned)rcSend, (unsigned)rcRecv);
+    return tmpl;
 }
 
 // What sceHttpsGetSslError's detail says (SCE_HTTPS_ERROR_SSL_*), for the log.
@@ -1738,6 +1796,55 @@ void sslDetail(unsigned detail, char* out, int cap) {
         if (detail & (1u << i)) n += sceClibSnprintf(out + n, cap - n, "%s%s", n ? ", " : ": ", kWhy[i]);
 }
 
+// A request's connection and the request, deleted (either may be -1).
+void httpClose(int conn, int req) {
+    if (req >= 0) httpFn<FnId>(kHttpDeleteRequest)(req);
+    if (conn >= 0) httpFn<FnId>(kHttpDeleteConnection)(conn);
+}
+
+// A GET of url sent with the template tmpl: VitaPlex's names for itself as
+// headers, as the player sends them, the token too when given, and a range
+// when given. `who` and `what` name it in the log, which has the call that
+// failed, and why TLS refused it. 0, with *conn and *req to read from and
+// then close (httpClose); else the code of the call that failed, with
+// nothing left to close.
+int httpOpen(int tmpl, const char* who, const char* what, const char* url, const char* token,
+             const char* range, int* conn, int* req) {
+    *req = -1;
+    *conn = httpFn<FnConnection>(kHttpCreateConnection)(tmpl, url, 1);
+    if (*conn < 0) {
+        logLine("%s: %s: connection 0x%08X", who, what, (unsigned)*conn);
+        return *conn;
+    }
+    *req = httpFn<FnRequest>(kHttpCreateRequest)(*conn, kHttpGet, url, 0);
+    if (*req < 0) {
+        const int rc = *req;
+        logLine("%s: %s: request 0x%08X", who, what, (unsigned)rc);
+        httpClose(*conn, -1);
+        return rc;
+    }
+    int rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "X-Plex-Client-Identifier", "vitaplex-sceshell",
+                                              kHeaderOverwrite);
+    if (rc >= 0)
+        rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "X-Plex-Product", "VitaPlex", kHeaderOverwrite);
+    if (rc >= 0 && token && token[0])
+        rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "X-Plex-Token", token, kHeaderOverwrite);
+    if (rc >= 0 && range) rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "Range", range, kHeaderOverwrite);
+    if (rc >= 0) rc = httpFn<FnSend>(kHttpSend)(*req, NULL, 0);
+    if (rc < 0) {
+        int err = 0;
+        unsigned detail = 0;
+        const int rcSsl = httpFn<FnSslError>(kHttpsSslError)(*req, &err, &detail);
+        char why[128];
+        sslDetail(detail, why, sizeof(why));
+        logLine("%s: %s: failed 0x%08X; TLS error 0x%08X, detail 0x%X%s (0x%08X)", who, what,
+                (unsigned)rc, (unsigned)err, detail, why, (unsigned)rcSsl);
+        httpClose(*conn, *req);
+        return rc;
+    }
+    return 0;
+}
+
 // One GET of url with the template tmpl, `what` naming it in the log: the
 // token as a header when given, and only the first `bytes` asked for and read
 // when non-0, the body written to kHttpTestFile when `save`. The status code,
@@ -1745,83 +1852,56 @@ void sslDetail(unsigned detail, char* out, int cap) {
 int httpGet(int tmpl, const char* what, const char* url, const char* token, uint32_t bytes,
             bool save, uint32_t* got) {
     *got = 0;
-    const int conn = httpFn<FnConnection>(kHttpCreateConnection)(tmpl, url, 1);
-    if (conn < 0) {
-        logLine("http test: %s: connection 0x%08X", what, (unsigned)conn);
-        return conn;
-    }
-    const int req = httpFn<FnRequest>(kHttpCreateRequest)(conn, kHttpGet, url, 0);
-    int result = req;
-    if (req < 0) {
-        logLine("http test: %s: request 0x%08X", what, (unsigned)req);
-    } else {
-        int rc = 0;
-        if (token) rc = httpFn<FnHeader>(kHttpAddHeader)(req, "X-Plex-Token", token, kHeaderOverwrite);
-        if (rc >= 0 && bytes) {
-            char range[32];
-            sceClibSnprintf(range, sizeof(range), "bytes=0-%u", (unsigned)(bytes - 1));
-            rc = httpFn<FnHeader>(kHttpAddHeader)(req, "Range", range, kHeaderOverwrite);
+    char range[32];
+    if (bytes) sceClibSnprintf(range, sizeof(range), "bytes=0-%u", (unsigned)(bytes - 1));
+    const SceUInt64 t0 = sceKernelGetSystemTimeWide();
+    int conn, req;
+    const int rc = httpOpen(tmpl, "http test", what, url, token, bytes ? range : NULL, &conn, &req);
+    if (rc < 0) return rc;
+    int status = 0;
+    unsigned long long length = 0;
+    const int rcStatus = httpFn<FnStatus>(kHttpStatus)(req, &status);
+    const int rcLength = httpFn<FnLength>(kHttpLength)(req, &length);
+    const SceUID fd =
+        save ? sceIoOpen(kHttpTestFile, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666) : -1;
+    uint8_t first[8];
+    sceClibMemset(first, 0, sizeof(first));
+    int rcRead = 0, rcWrite = 0;
+    for (;;) {
+        uint32_t want = sizeof(g_httpBuf);
+        if (bytes && bytes - *got < want) want = bytes - *got;
+        if (want == 0) break;
+        rcRead = httpFn<FnRead>(kHttpRead)(req, g_httpBuf, want);
+        if (rcRead <= 0) break;
+        if (*got == 0) sceClibMemcpy(first, g_httpBuf, rcRead < 8 ? rcRead : 8);
+        if (fd >= 0 && rcWrite >= 0) {
+            const int w = sceIoWrite(fd, g_httpBuf, (SceSize)rcRead);
+            if (w != rcRead) rcWrite = w < 0 ? w : -1;
         }
-        const SceUInt64 t0 = sceKernelGetSystemTimeWide();
-        if (rc >= 0) rc = httpFn<FnSend>(kHttpSend)(req, NULL, 0);
-        if (rc < 0) {
-            int err = 0;
-            unsigned detail = 0;
-            const int rcSsl = httpFn<FnSslError>(kHttpsSslError)(req, &err, &detail);
-            char why[128];
-            sslDetail(detail, why, sizeof(why));
-            logLine("http test: %s: failed 0x%08X; TLS error 0x%08X, detail 0x%X%s (0x%08X)", what,
-                    (unsigned)rc, (unsigned)err, detail, why, (unsigned)rcSsl);
-            result = rc;
-        } else {
-            int status = 0;
-            unsigned long long length = 0;
-            const int rcStatus = httpFn<FnStatus>(kHttpStatus)(req, &status);
-            const int rcLength = httpFn<FnLength>(kHttpLength)(req, &length);
-            const SceUID fd =
-                save ? sceIoOpen(kHttpTestFile, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666) : -1;
-            uint8_t first[8];
-            sceClibMemset(first, 0, sizeof(first));
-            int rcRead = 0, rcWrite = 0;
-            for (;;) {
-                uint32_t want = sizeof(g_httpBuf);
-                if (bytes && bytes - *got < want) want = bytes - *got;
-                if (want == 0) break;
-                rcRead = httpFn<FnRead>(kHttpRead)(req, g_httpBuf, want);
-                if (rcRead <= 0) break;
-                if (*got == 0) sceClibMemcpy(first, g_httpBuf, rcRead < 8 ? rcRead : 8);
-                if (fd >= 0 && rcWrite >= 0) {
-                    const int w = sceIoWrite(fd, g_httpBuf, (SceSize)rcRead);
-                    if (w != rcRead) rcWrite = w < 0 ? w : -1;
-                }
-                *got += (uint32_t)rcRead;
-            }
-            if (fd >= 0) sceIoClose(fd);
-            // In 32 bits, as msOpen: a test is over in well under 71 minutes.
-            const uint32_t ms = (uint32_t)(sceKernelGetSystemTimeWide() - t0) / 1000u;
-            char len[24];
-            if (rcLength < 0)
-                sceClibSnprintf(len, sizeof(len), "none (0x%08X)", (unsigned)rcLength);
-            else if (length >> 32)
-                sceClibSnprintf(len, sizeof(len), "4 GB or more");
-            else
-                sceClibSnprintf(len, sizeof(len), "%u", (unsigned)length);
-            logLine("http test: %s: status %d (0x%08X), length %s; %u bytes in %u ms, %u KB/s, "
-                    "the last read 0x%08X",
-                    what, status, (unsigned)rcStatus, len, (unsigned)*got, (unsigned)ms,
-                    (unsigned)(*got / (ms ? ms : 1)), (unsigned)rcRead);
-            if (save)
-                logLine("http test: %s: written to %s: %s (0x%08X), its first bytes %02X %02X %02X "
-                        "%02X %02X %02X %02X %02X",
-                        what, kHttpTestFile, fd < 0 || rcWrite < 0 ? "no" : "yes",
-                        (unsigned)(fd < 0 ? fd : rcWrite), first[0], first[1], first[2], first[3],
-                        first[4], first[5], first[6], first[7]);
-            result = rcStatus < 0 ? rcStatus : status;
-        }
-        httpFn<FnId>(kHttpDeleteRequest)(req);
+        *got += (uint32_t)rcRead;
     }
-    httpFn<FnId>(kHttpDeleteConnection)(conn);
-    return result;
+    if (fd >= 0) sceIoClose(fd);
+    httpClose(conn, req);
+    // In 32 bits, as msOpen: a test is over in well under 71 minutes.
+    const uint32_t ms = (uint32_t)(sceKernelGetSystemTimeWide() - t0) / 1000u;
+    char len[24];
+    if (rcLength < 0)
+        sceClibSnprintf(len, sizeof(len), "none (0x%08X)", (unsigned)rcLength);
+    else if (length >> 32)
+        sceClibSnprintf(len, sizeof(len), "4 GB or more");
+    else
+        sceClibSnprintf(len, sizeof(len), "%u", (unsigned)length);
+    logLine("http test: %s: status %d (0x%08X), length %s; %u bytes in %u ms, %u KB/s, "
+            "the last read 0x%08X",
+            what, status, (unsigned)rcStatus, len, (unsigned)*got, (unsigned)ms,
+            (unsigned)(*got / (ms ? ms : 1)), (unsigned)rcRead);
+    if (save)
+        logLine("http test: %s: written to %s: %s (0x%08X), its first bytes %02X %02X %02X "
+                "%02X %02X %02X %02X %02X",
+                what, kHttpTestFile, fd < 0 || rcWrite < 0 ? "no" : "yes",
+                (unsigned)(fd < 0 ? fd : rcWrite), first[0], first[1], first[2], first[3],
+                first[4], first[5], first[6], first[7]);
+    return rcStatus < 0 ? rcStatus : status;
 }
 
 // The test: base's /identity with no token, and over plain http too, then
@@ -1830,32 +1910,16 @@ int httpGet(int tmpl, const char* what, const char* url, const char* token, uint
 const char* httpTest(const char* base, const char* path, const char* token, uint32_t bytes) {
     logLine("http test: %s, its /identity, then the first %u KB of %s, from inside SceShell",
             base, (unsigned)(bytes / 1024), path);
-    if (!findLibrary("SceLibSsl", kSslLibrary, "vs0:sys/external/libssl.suprx", g_ssl, kSslFns) ||
-        !findLibrary("SceLibHttp", kHttpLibrary, "vs0:sys/external/libhttp.suprx", g_http,
-                     kHttpFns))
+    if (!findLibraries("http test"))
         return "Sony's SSL and HTTP libraries are not all there in SceShell";
     // Begun here only if SceShell has not begun them, and then ended here.
-    const int rcSsl = ((FnUnsigned)g_ssl[kSslInit].fn)(kSslPool);
-    logLine("http test: SSL library started: 0x%08X%s", (unsigned)rcSsl,
-            rcSsl >= 0 ? ", here, for this test" : "");
-    const int rcHttp = httpFn<FnUnsigned>(kHttpInit)(kHttpPool);
-    logLine("http test: HTTP library started: 0x%08X%s", (unsigned)rcHttp,
-            rcHttp >= 0                    ? ", here, for this test"
-            : rcHttp == kHttpAlreadyInited ? ", SceShell's already"
-                                           : "");
+    int rcSsl, rcHttp;
     const char* outcome = "the HTTP library would not start";
-    if (rcHttp >= 0 || rcHttp == kHttpAlreadyInited) {
-        const int tmpl = httpFn<FnTemplate>(kHttpCreateTemplate)("VitaPlex (SceShell)",
-                                                                 kHttpVersion11, 1);
+    if (httpStart("http test", "test", true, &rcSsl, &rcHttp)) {
+        const int tmpl = httpTemplate("http test");
         logLine("http test: template 0x%08X", (unsigned)tmpl);
         outcome = "no template";
         if (tmpl >= 0) {
-            const int rcResolve = httpFn<FnIdUnsigned>(kHttpResolveTimeOut)(tmpl, 5000000u),
-                      rcConnect = httpFn<FnIdUnsigned>(kHttpConnectTimeOut)(tmpl, 5000000u),
-                      rcSend = httpFn<FnIdUnsigned>(kHttpSendTimeOut)(tmpl, 10000000u),
-                      rcRecv = httpFn<FnIdUnsigned>(kHttpRecvTimeOut)(tmpl, 10000000u);
-            logLine("http test: time-outs of 5, 5, 10 and 10 s: 0x%08X 0x%08X 0x%08X 0x%08X",
-                    (unsigned)rcResolve, (unsigned)rcConnect, (unsigned)rcSend, (unsigned)rcRecv);
             static char url[600];
             uint32_t got = 0;
             sceClibSnprintf(url, sizeof(url), "%s/identity", base);
@@ -1878,10 +1942,7 @@ const char* httpTest(const char* base, const char* path, const char* token, uint
                     (unsigned)httpFn<FnId>(kHttpDeleteTemplate)(tmpl));
         }
     }
-    if (rcHttp >= 0)
-        logLine("http test: HTTP library ended: 0x%08X", (unsigned)httpFn<FnVoid>(kHttpTerm)());
-    if (rcSsl >= 0)
-        logLine("http test: SSL library ended: 0x%08X", (unsigned)((FnVoid)g_ssl[kSslTerm].fn)());
+    httpEnd("http test", rcSsl, rcHttp);
     return outcome;
 }
 
@@ -1949,6 +2010,7 @@ struct Track {
     char key[16];       // its ratingKey
     uint32_t durationMs;  // the server's length, 0 if unknown
     char local[128];    // a download of it, or ""
+    char thumb[128];    // its cover on the server (a path), or ""
     char title[192], artist[128], album[128];  // UTF-8, for the row
     char path[128];     // the file the shell is given
     int own;            // the player's (BGPLAYER_SONGS): removed once played
@@ -1970,6 +2032,21 @@ struct Carry {
     SceUInt64 songUs;      // when it was handed to the shell
     SceUInt64 stoppedUs;   // stopped before its end since, 0 if not
     SceUInt64 lastPlayUs, statusUs, checkUs;
+    // A song not on the card, fetched to play next with the shell stopped
+    // meanwhile: its place, -1 when none; the song; since when; the fetches
+    // begun for it; why it is next (carryPlay's why); and looks in a row that
+    // found the shell playing something meanwhile.
+    int waitIndex;
+    Track wait;
+    SceUInt64 waitUs;
+    int waitTries;
+    const char* waitWhy;
+    int waitPlays;
+    int fetchWant;   // a song to fetch once the fetch running has stopped, -1 if none
+    int fetchEnds;   // g_fetch.ends as last seen
+    int aheadDue;    // the song after this one to be fetched, if it is not on the card
+    int lost[8];     // songs the server has no file of for the shell, the last 8
+    int lostCount;
 };
 Carry g_c;
 Track g_found;  // a song looked at for what comes next
@@ -2197,7 +2274,7 @@ void parseTrack(const char* p, int index, Track* t) {
     t->durationMs = toUint(num);
     wholeField(&p, t->local, sizeof(t->local));
     field(&p, skip, sizeof(skip));  // the rating
-    field(&p, skip, sizeof(skip));  // its cover on the server
+    wholeField(&p, t->thumb, sizeof(t->thumb));
     field(&p, t->title, sizeof(t->title));
     field(&p, t->artist, sizeof(t->artist));
     field(&p, t->album, sizeof(t->album));
@@ -2219,18 +2296,30 @@ bool trackAt(int index, Track* t) {
     return found;
 }
 
-// A format the shell plays (player.c's shellDecodes, with mp4 as m4a).
-bool shellPlays(const char* path) {
+// The extension of a path's last part, in lower case, with mp4 as m4a
+// (player.c's extOf); "" with none, and cut to fit.
+void extOf(const char* path, char* out, int cap) {
     const char* dot = NULL;
-    for (const char* p = path; *p; p++)
+    for (const char* p = path; *p; p++) {
         if (*p == '.') dot = p;
-    if (!dot) return false;
-    char ext[8];
+        if (*p == '/') dot = NULL;
+    }
     int n = 0;
-    for (const char* p = dot + 1; *p && n < 7; p++) ext[n++] = (*p >= 'A' && *p <= 'Z') ? *p + 32 : *p;
-    ext[n] = 0;
-    return same(ext, "mp3") || same(ext, "m4a") || same(ext, "mp4") || same(ext, "aac") ||
-           same(ext, "wav");
+    for (const char* p = dot ? dot + 1 : ""; *p && n < cap - 1; p++)
+        out[n++] = (*p >= 'A' && *p <= 'Z') ? *p + 32 : *p;
+    out[n] = 0;
+    if (same(out, "mp4")) sceClibSnprintf(out, cap, "m4a");
+}
+
+// A format the shell plays, by its extension (player.c's shellDecodes).
+bool shellExt(const char* ext) {
+    return same(ext, "mp3") || same(ext, "m4a") || same(ext, "aac") || same(ext, "wav");
+}
+
+bool shellPlays(const char* path) {
+    char ext[8];
+    extOf(path, ext, sizeof(ext));
+    return shellExt(ext);
 }
 
 // Where t is on the card, into t->path: its download if the shell plays its
@@ -2260,21 +2349,6 @@ int stepFrom(int from, int steps) {
     if (i >= 0 && i < g_c.count) return i;
     if (g_c.repeat != BGPLAYER_REPEAT_ALL || g_c.count <= 0) return -1;
     return ((i % g_c.count) + g_c.count) % g_c.count;
-}
-
-// The nearest song on the card after `from` (direction 1) or before it (-1),
-// within kLookAhead songs, into g_found; songs not on it are passed over.
-// true when there is one.
-bool nearestOnCard(int from, int direction) {
-    for (int d = 1; d <= kLookAhead; d++) {
-        const int i = stepFrom(from, direction * d);
-        if (i < 0 || i == from) return false;
-        if (!trackAt(i, &g_found)) return false;
-        if (onCard(&g_found)) return true;
-        logLine("carry on: song %d of %d, \"%s\", is not on the memory card: passed over", i + 1,
-                g_c.count, g_found.title);
-    }
-    return false;
 }
 
 // Whether the shell has a song of the length len (its own figure) where it
@@ -2331,8 +2405,9 @@ void fromUtf8(const char* s, uint16_t* out, int cap) {
 }
 
 // The status as the player writes it (player.c's writeStatus), with
-// "by=SceShell" on it.
-void carryStatus(const char* state, uint32_t positionMs) {
+// "by=SceShell" on it, for t: the song with the shell, or one the shell waits
+// for as it is fetched ("fetching=1").
+void carryStatusOf(const Track* t, const char* state, uint32_t positionMs, bool fetching) {
     static char text[448];
     const SceUInt64 now = sceKernelGetSystemTimeWide();
     uint32_t secs, micros;
@@ -2340,9 +2415,9 @@ void carryStatus(const char* state, uint32_t positionMs) {
     const int n = sceClibSnprintf(
         text, sizeof(text),
         "written=%u.%06u\nqueue=%s\nindex=%d\nratingKey=%s\npositionMs=%u\ndurationMs=%u\n"
-        "state=%s\nwasPlaying=0\nby=SceShell\nend\n",
-        (unsigned)secs, (unsigned)micros, g_c.queue, g_c.cur.index, g_c.cur.key,
-        (unsigned)positionMs, (unsigned)g_c.cur.durationMs, state);
+        "state=%s\nwasPlaying=0\nby=SceShell\n%send\n",
+        (unsigned)secs, (unsigned)micros, g_c.queue, t->index, t->key, (unsigned)positionMs,
+        (unsigned)t->durationMs, state, fetching ? "fetching=1\n" : "");
     const char* const part = BGPLAYER_STATUS ".part";
     const SceUID fd = sceIoOpen(part, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
     int rc = fd;
@@ -2362,6 +2437,10 @@ void carryStatus(const char* state, uint32_t positionMs) {
     g_c.statusUs = now;
 }
 
+void carryStatus(const char* state, uint32_t positionMs) {
+    carryStatusOf(&g_c.cur, state, positionMs, false);
+}
+
 // The player's file of a song played, and its cover, once the shell has
 // another: as player.c removes its own.
 void removeOwn(const Track* t) {
@@ -2373,7 +2452,8 @@ void removeOwn(const Track* t) {
     logLine("carry on: song %d's file removed: 0x%08X", t->index + 1, (unsigned)rc);
 }
 
-// The row as t is: its lines, ⏸, and its cover if the player made one.
+// The row as t is: its lines, ⏸, and its cover if the player made one, or a
+// fetch here.
 void showTrack(const Track* t) {
     char cover[160];
     sceClibSnprintf(cover, sizeof(cover), QM_SONG_COVER_FMT, t->key);
@@ -2392,31 +2472,616 @@ void showTrack(const Track* t) {
     unlock();
 }
 
+// ── Fetching the queue's songs ──────────────────────────────────────────────
+// A song the queue goes on to that is not on the memory card is fetched from
+// VitaPlex's server, as the background player fetches one (player.c's
+// prepareSong): its file as the server has it, when the shell plays its
+// format, into the player's folder of songs (BGPLAYER_SONGS), then its cover
+// for the row (QM_SONG_COVER_FMT). Each goes once played, as the player's own
+// files do. The song after the one with the shell is fetched while that one
+// plays; one wanted at once (that one ended first, or next was pressed) is
+// waited for, the shell stopped meanwhile. One fetch at a time, on a thread
+// of its own, through Sony's libraries as the test above finds them. The
+// server comes from VitaPlex's settings, and the token too, read for each
+// fetch and wiped after it. Songs in other formats, of which the player has
+// the server make MP3s, are passed over.
+enum { kFetchIdle, kFetchRunning, kFetchDone, kFetchFailed };
+const int kFetchStack = 0x8000;
+const int kFetchStopped = 1;  // fetchBody's: stopped by a cancel
+
+// Under g_lock. t is the fetch thread's as it runs, but for its place and key.
+struct Fetch {
+    int state;    // kFetch*
+    int cancel;   // set to stop it
+    int ends;     // fetches ended so far
+    int forGood;  // failed in a way another try would not mend
+    int stopped;  // failed as it was stopped
+    int count;    // the queue's songs, for the log
+    Track t;      // the song; its file in t.path once fetched
+};
+Fetch g_fetch;
+char g_server[256];  // the music thread's: VitaPlex's server, "" with none
+Track g_ahead;       // the music thread's: a song looked at to fetch
+// The fetch thread's: the libraries' functions found; what it reads (the
+// settings, a song's details) or passes on to the card; a request's URL and
+// the file beside the one it is for.
+int g_netFound;
+uint8_t g_fetchBuf[16384];
+char g_fetchUrl[1024], g_fetchPart[168];
+
+// The string value of "key" in VitaPlex's settings, a flat object with \ and
+// " escaped (player.c's jsonString). Its length, or -1 with out "".
+int jsonString(const char* json, const char* key, char* out, int cap) {
+    char pat[40];
+    const int plen = sceClibSnprintf(pat, sizeof(pat), "\"%s\"", key);
+    out[0] = 0;
+    const char* v = json;
+    while (*v && !startsWith(v, pat)) v++;
+    if (!*v) return -1;
+    v += plen;
+    while (*v && *v != ':') v++;
+    while (*v && *v != '"') v++;
+    if (!*v) return -1;
+    v++;
+    int n = 0;
+    while (*v && *v != '"' && n < cap - 1) {
+        if (*v == '\\' && v[1]) v++;
+        out[n++] = *v++;
+    }
+    out[n] = 0;
+    if (*v == '"') return n;
+    out[0] = 0;
+    return -1;
+}
+
+// VitaPlex's server, with no '/' at its end, and its token, from the start
+// of its settings, where VitaPlex writes both, read into buf and wiped from
+// it after. true when there is a server; the token may be "".
+bool readServer(char* buf, int cap, char* server, int serverCap, char* token, int tokenCap) {
+    const int n = readFile(BGPLAYER_DIR "settings.json", buf, cap);
+    if (n <= 0 || jsonString(buf, "serverUrl", server, serverCap) <= 0) server[0] = 0;
+    if (n <= 0 || jsonString(buf, "authToken", token, tokenCap) < 0) token[0] = 0;
+    sceClibMemset(buf, 0, cap);
+    int len = (int)sceClibStrnlen(server, serverCap);
+    while (len > 0 && server[len - 1] == '/') server[--len] = 0;
+    return server[0] != 0;
+}
+
+// Where `what` first is in s, or NULL.
+const char* findText(const char* s, const char* what) {
+    for (; *s; s++)
+        if (startsWith(s, what)) return s;
+    return NULL;
+}
+
+// The value of attribute name in the XML element at el, which ends at its
+// '>', with the predefined entities decoded (player.c's xmlAttr, but for
+// character references, which a part's key and size do not have). true when
+// it is there, whole.
+bool xmlAttr(const char* el, const char* name, char* out, int cap) {
+    static const char* const kEntities[5][2] = {
+        {"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""}, {"&apos;", "'"}};
+    char pat[40];
+    const int plen = sceClibSnprintf(pat, sizeof(pat), " %s=\"", name);
+    out[0] = 0;
+    const char* p = el;
+    while (*p && *p != '>' && !startsWith(p, pat)) p++;
+    if (!*p || *p == '>') return false;
+    p += plen;
+    int n = 0;
+    while (*p && *p != '"' && *p != '>' && n < cap - 1) {
+        int skip = 0;
+        for (int e = 0; *p == '&' && e < 5 && !skip; e++)
+            if (startsWith(p, kEntities[e][0])) {
+                out[n++] = kEntities[e][1][0];
+                skip = (int)sceClibStrnlen(kEntities[e][0], 8);
+            }
+        if (skip)
+            p += skip;
+        else
+            out[n++] = *p++;
+    }
+    out[n] = 0;
+    return *p == '"';
+}
+
+// s with all but letters, digits and -_.~ as %XX, into out, cut to fit, as
+// curl_easy_escape makes the cover's path in player.c's fetchCover.
+void urlEncode(const char* s, char* out, int cap) {
+    static const char kHex[] = "0123456789ABCDEF";
+    int n = 0;
+    for (; *s; s++) {
+        const unsigned char c = (unsigned char)*s;
+        const bool plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                           (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~';
+        if (n + (plain ? 1 : 3) > cap - 1) break;
+        if (plain) {
+            out[n++] = (char)c;
+        } else {
+            out[n++] = '%';
+            out[n++] = kHex[c >> 4];
+            out[n++] = kHex[c & 15];
+        }
+    }
+    out[n] = 0;
+}
+
+// Bytes as megabytes, "x.yy", and milliseconds as seconds, "x.y", for the
+// log: in 32 bits, with no division but by constants.
+struct Num {
+    char s[16];
+};
+Num mbOf(uint32_t bytes) {
+    Num m;
+    sceClibSnprintf(m.s, sizeof(m.s), "%u.%02u", (unsigned)(bytes >> 20),
+                    (unsigned)(((bytes & 0xFFFFF) * 100u) >> 20));
+    return m;
+}
+Num secsOf(uint32_t ms) {
+    Num m;
+    sceClibSnprintf(m.s, sizeof(m.s), "%u.%u", (unsigned)(ms / 1000), (unsigned)(ms % 1000 / 100));
+    return m;
+}
+
+// The body of req: into fd a chunk at a time through g_fetchBuf, or with fd
+// < 0 into g_fetchBuf, as much as fits, ended with 0. Its first 8 bytes into
+// first, if given; a file's progress logged every 10 s under label, if
+// given. 0 at the body's end (or with g_fetchBuf full), kFetchStopped at a
+// cancel, or the code of the read or write that failed; the bytes in *got.
+int fetchBody(int req, SceUID fd, const char* label, uint8_t* first, uint32_t* got) {
+    *got = 0;
+    SceUInt64 logged = sceKernelGetSystemTimeWide();
+    int rc = 0;
+    for (;;) {
+        if (__atomic_load_n(&g_fetch.cancel, __ATOMIC_SEQ_CST)) {
+            rc = kFetchStopped;
+            break;
+        }
+        uint8_t* const to = fd >= 0 ? g_fetchBuf : g_fetchBuf + *got;
+        const uint32_t want = fd >= 0 ? sizeof(g_fetchBuf) : sizeof(g_fetchBuf) - 1 - *got;
+        if (want == 0) break;
+        const int n = httpFn<FnRead>(kHttpRead)(req, to, want);
+        if (n <= 0) {
+            rc = n;
+            break;
+        }
+        for (uint32_t i = 0; first && i < (uint32_t)n && *got + i < 8; i++) first[*got + i] = to[i];
+        if (fd >= 0) {
+            const int w = sceIoWrite(fd, to, (SceSize)n);
+            if (w != n) {
+                rc = w < 0 ? w : -1;
+                break;
+            }
+        }
+        *got += (uint32_t)n;
+        const SceUInt64 now = sceKernelGetSystemTimeWide();
+        if (label && (uint32_t)(now - logged) >= 10000000u) {
+            logged = now;
+            logLine("carry on: %s: %s MB so far", label, mbOf(*got).s);
+        }
+    }
+    if (fd < 0) g_fetchBuf[*got] = 0;
+    return rc;
+}
+
+// The song's cover for the row, from the server's photo transcoder as
+// player.c's fetchCover asks for it, but as a PNG, which the row can show:
+// nothing here could make one of another format. Left out when anything is
+// amiss, the row showing its own icon then.
+void fetchCover(int tmpl, const char* server, const char* token, const char* label) {
+    const Track* const t = &g_fetch.t;
+    static char path[160], thumb[400];
+    char* const part = g_fetchPart;
+    sceClibSnprintf(path, sizeof(path), QM_SONG_COVER_FMT, t->key);
+    if (!t->thumb[0] || exists(path)) return;
+    urlEncode(t->thumb, thumb, sizeof(thumb));
+    sceClibSnprintf(g_fetchUrl, sizeof(g_fetchUrl),
+                    "%s/photo/:/transcode?width=%d&height=%d&minSize=1&upscale=1&format=png&url=%s",
+                    server, QM_ART_SIZE, QM_ART_SIZE, thumb);
+    sceClibSnprintf(part, sizeof(g_fetchPart), "%s.part", path);
+    const SceUID fd = sceIoOpen(part, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+    if (fd < 0) {
+        logLine("carry on: %s: no cover: %s not written (0x%08X)", label, part, (unsigned)fd);
+        return;
+    }
+    int conn, req, status = 0;
+    uint8_t first[8];
+    sceClibMemset(first, 0, sizeof(first));
+    uint32_t got = 0;
+    int rc = httpOpen(tmpl, "carry on", "its cover", g_fetchUrl, token, NULL, &conn, &req);
+    if (rc >= 0) {
+        httpFn<FnStatus>(kHttpStatus)(req, &status);
+        if (status == 200) rc = fetchBody(req, fd, NULL, first, &got);
+        httpClose(conn, req);
+    }
+    const int rcClose = sceIoClose(fd);
+    static const uint8_t kPng[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+    bool png = got >= 8;
+    for (int i = 0; i < 8; i++) png = png && first[i] == kPng[i];
+    if (rc == 0 && status == 200 && png && rcClose >= 0) {
+        sceIoRemove(path);
+        rc = sceIoRename(part, path);
+        if (rc >= 0) {
+            logLine("carry on: %s: its cover fetched, %u bytes", label, (unsigned)got);
+            return;
+        }
+    }
+    sceIoRemove(part);
+    if (rc == kFetchStopped) {
+        logLine("carry on: %s: no cover: stopped", label);
+    } else if (rc < 0 || rcClose < 0) {
+        logLine("carry on: %s: no cover: 0x%08X", label, (unsigned)(rc < 0 ? rc : rcClose));
+    } else if (status != 200) {
+        logLine("carry on: %s: no cover: HTTP %d", label, status);
+    } else {
+        logLine("carry on: %s: no cover: not a PNG, its first bytes %02X %02X %02X %02X", label,
+                first[0], first[1], first[2], first[3]);
+    }
+}
+
+// The song's file whole from the server's partKey into t's path, through a
+// file beside it, moved in once all of it has come. kFetchDone, or
+// kFetchFailed with why, and *forGood when another try would fail the same
+// way.
+int fetchFile(int tmpl, const char* server, const char* token, const char* label,
+              const char* partKey, char* why, int cap, int* forGood) {
+    Track* const t = &g_fetch.t;
+    char* const part = g_fetchPart;
+    sceClibSnprintf(g_fetchUrl, sizeof(g_fetchUrl), "%s%s?download=1", server, partKey);
+    sceClibSnprintf(part, sizeof(g_fetchPart), "%s.part", t->path);
+    const SceUID fd = sceIoOpen(part, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+    if (fd < 0) {
+        sceClibSnprintf(why, cap, "%s not written (0x%08X)", part, (unsigned)fd);
+        return kFetchFailed;
+    }
+    const SceUInt64 t0 = sceKernelGetSystemTimeWide();
+    int conn, req, status = 0, rcLength = -1;
+    unsigned long long length = 0;
+    uint32_t got = 0;
+    int rc = httpOpen(tmpl, "carry on", label, g_fetchUrl, token, NULL, &conn, &req);
+    if (rc >= 0) {
+        httpFn<FnStatus>(kHttpStatus)(req, &status);
+        rcLength = httpFn<FnLength>(kHttpLength)(req, &length);
+        if (status == 200) rc = fetchBody(req, fd, label, NULL, &got);
+        httpClose(conn, req);
+    }
+    const int rcClose = sceIoClose(fd);
+    // In 32 bits, as the test's: a song comes in well under 71 minutes.
+    const uint32_t ms = (uint32_t)(sceKernelGetSystemTimeWide() - t0) / 1000u;
+    // The length the server gave, unless it gave none or 4 GB or more.
+    const bool sized = rcLength >= 0 && (length >> 32) == 0;
+    if (rc == 0 && status == 200 && got > 0 && rcClose >= 0 && (!sized || (uint32_t)length == got)) {
+        logLine("carry on: %s: fetched, %s MB in %s s (%u KB/s)", label, mbOf(got).s, secsOf(ms).s,
+                (unsigned)((got >> 10) * 1000u / (ms ? ms : 1)));
+        sceIoRemove(t->path);
+        rc = sceIoRename(part, t->path);
+        if (rc >= 0) return kFetchDone;
+        sceClibSnprintf(why, cap, "%s not moved in (0x%08X)", part, (unsigned)rc);
+    } else if (rc == kFetchStopped) {
+        sceClibSnprintf(why, cap, "stopped after %s MB", mbOf(got).s);
+    } else if (rc < 0) {
+        sceClibSnprintf(why, cap, "its file: 0x%08X after %s MB", (unsigned)rc, mbOf(got).s);
+    } else if (status != 200) {
+        sceClibSnprintf(why, cap, "its file: HTTP %d", status);
+        *forGood = status == 404;
+    } else if (rcClose < 0) {
+        sceClibSnprintf(why, cap, "%s not written (0x%08X)", part, (unsigned)rcClose);
+    } else {
+        sceClibSnprintf(why, cap, "%u bytes of its %u came", (unsigned)got,
+                        (unsigned)(sized ? length : 0));
+    }
+    sceIoRemove(part);
+    return kFetchFailed;
+}
+
+// The fetch thread's work on g_fetch.t, under label: its file found on the
+// server as player.c's fetchDetails finds it, the first Part of the Track
+// under its key, fetched if the shell plays its format, and then its cover.
+// kFetchDone with the file at t.path; else kFetchFailed, as fetchFile.
+int fetchSongNow(int tmpl, const char* server, const char* token, const char* label, char* why,
+                 int cap, int* forGood) {
+    Track* const t = &g_fetch.t;
+    static char partKey[256];
+    sceClibSnprintf(g_fetchUrl, sizeof(g_fetchUrl), "%s/library/metadata/%s", server, t->key);
+    int conn, req, status = 0;
+    uint32_t got = 0;
+    int rc = httpOpen(tmpl, "carry on", label, g_fetchUrl, token, NULL, &conn, &req);
+    if (rc < 0) {
+        sceClibSnprintf(why, cap, "the server did not answer (0x%08X)", (unsigned)rc);
+        return kFetchFailed;
+    }
+    httpFn<FnStatus>(kHttpStatus)(req, &status);
+    if (status == 200) rc = fetchBody(req, -1, NULL, NULL, &got);
+    httpClose(conn, req);
+    if (rc == kFetchStopped) {
+        sceClibSnprintf(why, cap, "stopped");
+        return kFetchFailed;
+    }
+    if (status != 200 || rc < 0) {
+        if (status != 200)
+            sceClibSnprintf(why, cap, "its details: HTTP %d", status);
+        else
+            sceClibSnprintf(why, cap, "its details: 0x%08X", (unsigned)rc);
+        *forGood = status == 404;
+        return kFetchFailed;
+    }
+    const char* const track = findText((const char*)g_fetchBuf, "<Track ");
+    const char* const next = track ? findText(track + 1, "<Track ") : NULL;
+    const char* const p = track ? findText(track, "<Part ") : NULL;
+    if (!p || (next && p > next) || !xmlAttr(p, "key", partKey, sizeof(partKey)) || !partKey[0]) {
+        sceClibSnprintf(why, cap, "the server has no file of it in its details (%u bytes)",
+                        (unsigned)got);
+        *forGood = 1;
+        return kFetchFailed;
+    }
+    char num[24], ext[8];
+    xmlAttr(p, "size", num, sizeof(num));
+    extOf(partKey, ext, sizeof(ext));
+    if (!shellExt(ext)) {
+        sceClibSnprintf(why, cap, "its file is %s, which the shell does not play",
+                        ext[0] ? ext : "of no known format");
+        *forGood = 1;
+        return kFetchFailed;
+    }
+    sceClibSnprintf(t->path, sizeof(t->path), "%s/%s.%s", BGPLAYER_SONGS, t->key, ext);
+    if (exists(t->path)) {
+        logLine("carry on: %s: already on the memory card, at %s", label, t->path);
+    } else {
+        logLine("carry on: %s: a %s file of %s MB on the server; fetching it to %s", label, ext,
+                mbOf(toUint(num)).s, t->path);
+        if (fetchFile(tmpl, server, token, label, partKey, why, cap, forGood) != kFetchDone) {
+            t->path[0] = 0;
+            return kFetchFailed;
+        }
+    }
+    fetchCover(tmpl, server, token, label);
+    return kFetchDone;
+}
+
+// The fetch thread: g_fetch.t fetched, the outcome left in g_fetch for the
+// music thread (fetchPoll).
+int fetchThread(SceSize, void*) {
+    static char server[256], token[160], label[32], why[96];
+    sceClibSnprintf(label, sizeof(label), "song %d of %d", g_fetch.t.index + 1, g_fetch.count);
+    why[0] = 0;
+    int forGood = 0, result = kFetchFailed;
+    if (!readServer((char*)g_fetchBuf, sizeof(g_fetchBuf), server, sizeof(server), token,
+                    sizeof(token))) {
+        sceClibSnprintf(why, sizeof(why), "no server in VitaPlex's settings");
+    } else {
+        if (!g_netFound) g_netFound = findLibraries("carry on");
+        int rcSsl = -1, rcHttp = -1;
+        if (!g_netFound) {
+            sceClibSnprintf(why, sizeof(why),
+                            "Sony's SSL and HTTP libraries are not all there in SceShell");
+        } else if (!httpStart("carry on", "fetch", false, &rcSsl, &rcHttp)) {
+            sceClibSnprintf(why, sizeof(why), "the HTTP library would not start");
+        } else {
+            const int tmpl = httpTemplate("carry on");
+            if (tmpl < 0) {
+                sceClibSnprintf(why, sizeof(why), "no template (0x%08X)", (unsigned)tmpl);
+            } else {
+                result = fetchSongNow(tmpl, server, token, label, why, sizeof(why), &forGood);
+                httpFn<FnId>(kHttpDeleteTemplate)(tmpl);
+            }
+        }
+        httpEnd("carry on", rcSsl, rcHttp);
+    }
+    sceClibMemset(token, 0, sizeof(token));
+    if (result != kFetchDone) logLine("carry on: %s: not fetched: %s", label, why);
+    lock();
+    g_fetch.state = result;
+    g_fetch.forGood = forGood;
+    g_fetch.stopped = result != kFetchDone && startsWith(why, "stopped");
+    g_fetch.ends++;
+    unlock();
+    return sceKernelExitDeleteThread(0);
+}
+
+// Whether the server has been found to have no file of song i for the shell.
+bool lostSong(int i) {
+    const int n = g_c.lostCount < 8 ? g_c.lostCount : 8;
+    for (int k = 0; k < n; k++)
+        if (g_c.lost[k] == i) return true;
+    return false;
+}
+
+// Whether g_fetch is for t. Under g_lock.
+bool fetchIsFor(const Track* t) {
+    return g_fetch.state != kFetchIdle && g_fetch.t.index == t->index && same(g_fetch.t.key, t->key);
+}
+
+// t's file as fetched here, into t->path: true when it is on the card.
+bool fetchedFor(Track* t) {
+    char path[128];
+    lock();
+    const bool done = g_fetch.state == kFetchDone && fetchIsFor(t);
+    if (done) sceClibSnprintf(path, sizeof(path), "%s", g_fetch.t.path);
+    unlock();
+    if (!done || !exists(path)) return false;
+    sceClibSnprintf(t->path, sizeof(t->path), "%s", path);
+    t->own = 1;
+    return true;
+}
+
+// A song fetched and not played, removed, with its cover: not the one with
+// the shell, whose file goes once another has it. Under nothing.
+void dropFetched() {
+    Track t;
+    lock();
+    const bool drop = g_fetch.state == kFetchDone && !same(g_fetch.t.path, g_c.cur.path);
+    if (drop) {
+        t = g_fetch.t;
+        g_fetch.state = kFetchIdle;
+    }
+    unlock();
+    if (!drop) return;
+    const int rc = sceIoRemove(t.path);
+    char cover[160];
+    sceClibSnprintf(cover, sizeof(cover), QM_SONG_COVER_FMT, t.key);
+    sceIoRemove(cover);
+    logLine("carry on: song %d, fetched and not played, removed: 0x%08X", t.index + 1,
+            (unsigned)rc);
+}
+
+// t fetched: now, or once the fetch running has stopped, which is stopped if
+// it is another song's. A song fetched before and not played is removed.
+void fetchStart(const Track* t) {
+    lock();
+    const bool running = g_fetch.state == kFetchRunning;
+    const bool forIt = fetchIsFor(t);
+    int stopping = -1;
+    if (running && !forIt && !g_fetch.cancel) {
+        __atomic_store_n(&g_fetch.cancel, 1, __ATOMIC_SEQ_CST);
+        stopping = g_fetch.t.index;
+    }
+    const bool later = running || g_httpBusy;
+    if (later && !(running && forIt && !g_fetch.cancel)) g_c.fetchWant = t->index;
+    unlock();
+    if (stopping >= 0)
+        logLine("carry on: song %d's fetch stopped: song %d of %d is wanted first", stopping + 1,
+                t->index + 1, g_c.count);
+    if (later) return;
+    dropFetched();
+    lock();
+    g_fetch.state = kFetchRunning;
+    g_fetch.cancel = 0;
+    g_fetch.forGood = 0;
+    g_fetch.stopped = 0;
+    g_fetch.count = g_c.count;
+    g_fetch.t = *t;
+    g_fetch.t.path[0] = 0;
+    unlock();
+    g_c.fetchWant = -1;
+    logLine("carry on: song %d of %d, \"%s\", is not on the memory card: fetching it",
+            t->index + 1, g_c.count, t->title);
+    const SceUID thread = sceKernelCreateThread("VitaPlexQM::Fetch", fetchThread, kThreadPriority,
+                                                kFetchStack, 0, 0, NULL);
+    const int rc = thread < 0 ? thread : sceKernelStartThread(thread, 0, NULL);
+    if (rc < 0) {
+        if (thread >= 0) sceKernelDeleteThread(thread);
+        logLine("carry on: song %d of %d: no thread to fetch it (0x%08X)", t->index + 1, g_c.count,
+                (unsigned)rc);
+        lock();
+        g_fetch.state = kFetchFailed;
+        g_fetch.ends++;
+        unlock();
+    }
+}
+
+// The song after the one with the shell, fetched while that one plays if it
+// is not on the card: the next the queue goes on to, songs the server has no
+// file of for the shell passed over. None for repeat one, or while waiting.
+void fetchAhead() {
+    g_c.aheadDue = 0;
+    if (!g_server[0] || g_c.waitIndex >= 0 || g_c.repeat == BGPLAYER_REPEAT_ONE) return;
+    for (int d = 1; d <= kLookAhead; d++) {
+        const int i = stepFrom(g_c.cur.index, d);
+        if (i < 0 || i == g_c.cur.index || !trackAt(i, &g_ahead)) return;
+        if (lostSong(i)) continue;
+        if (onCard(&g_ahead)) return;
+        // Not again ahead after it failed but as it was stopped: it is tried
+        // again, waited for, when it is next.
+        lock();
+        const bool tried = fetchIsFor(&g_ahead) && !(g_fetch.state == kFetchFailed && g_fetch.stopped);
+        unlock();
+        if (!tried) fetchStart(&g_ahead);
+        return;
+    }
+}
+
+// Each look: a fetch that has ended seen to, the fetch wanted next begun, and
+// the next song fetched ahead when it is due.
+void fetchPoll() {
+    lock();
+    const int state = g_fetch.state, ends = g_fetch.ends, index = g_fetch.t.index;
+    const int forGood = g_fetch.forGood;
+    unlock();
+    if (ends != g_c.fetchEnds) {
+        g_c.fetchEnds = ends;
+        if (state == kFetchFailed && forGood && !lostSong(index)) {
+            g_c.lost[g_c.lostCount++ & 7] = index;
+            g_c.aheadDue = 1;  // on to the song after it
+        }
+    }
+    if (state != kFetchRunning && g_c.fetchWant >= 0) {
+        const int want = g_c.fetchWant;
+        g_c.fetchWant = -1;
+        if (trackAt(want, &g_ahead)) fetchStart(&g_ahead);
+    }
+    if (g_c.aheadDue) fetchAhead();
+}
+
+// t, not on the card, fetched and then played (carryWait), the shell stopped
+// meanwhile; why is why it is next. The row shows it, and the status names it
+// with "fetching=1", so that VitaPlex BG takes the music back from its start.
+void waitFor(const Track* t, const char* why) {
+    const int rcStop = musicEvent(kEventStop);
+    g_c.wait = *t;
+    g_c.waitIndex = t->index;
+    g_c.waitUs = sceKernelGetSystemTimeWide();
+    g_c.waitTries = 0;
+    g_c.waitWhy = why;
+    g_c.waitPlays = 0;
+    g_c.menuPaused = 0;
+    g_c.resuming = 0;
+    logLine("carry on: song %d of %d (%s), \"%s\", is not on the memory card: the shell stopped "
+            "(0x%08X) until it is fetched",
+            t->index + 1, g_c.count, why, t->title, (unsigned)rcStop);
+    showTrack(t);
+    carryStatusOf(t, BGPLAYER_STATE_PLAYING, 0, true);
+    lock();
+    const bool under = g_fetch.state == kFetchRunning && fetchIsFor(t) && !g_fetch.cancel;
+    unlock();
+    if (!under) {
+        g_c.waitTries = 1;
+        fetchStart(t);
+    }
+}
+
 // Stops carrying the queue on (kEnd*). The row goes back to SceShell unless a
-// process has taken it.
+// process has taken it. A fetch under way is stopped, and a song fetched and
+// not played removed.
 void carryEnd(const char* why, int how) {
     int state = 0;
     uint32_t time = 0;
     musicStatus(&state, &time);
+    // The queue has gone on to a song being fetched: the music plays, as far
+    // as VitaPlex BG is to know, from that song's start.
+    const bool waiting = g_c.waitIndex >= 0;
     const char* written = "nothing";
     if (how == kEndTakeBack) {
-        written = state == 1 ? BGPLAYER_STATE_PLAYING : BGPLAYER_STATE_STOPPED;
+        written = state == 1 || waiting ? BGPLAYER_STATE_PLAYING : BGPLAYER_STATE_STOPPED;
     } else if (how == kEndOther || how == kEndStopped) {
         written = BGPLAYER_STATE_STOPPED;
     } else if (how == kEndOver) {
         written = BGPLAYER_STATE_OVER;
     }
-    if (how != kEndYield) carryStatus(written, time);
+    if (how != kEndYield) {
+        if (waiting)
+            carryStatusOf(&g_c.wait, written, 0, true);
+        else
+            carryStatus(written, time);
+    }
+    lock();
+    const bool fetching = g_fetch.state == kFetchRunning;
+    if (fetching) __atomic_store_n(&g_fetch.cancel, 1, __ATOMIC_SEQ_CST);
+    unlock();
+    dropFetched();
     int rcStop = 0, rcEnd = 0;
     if (how == kEndOver || how == kEndStopped) {
         rcStop = musicEvent(kEventStop);
         rcEnd = musicTracked(0x30001);
         removeOwn(&g_c.cur);
     }
-    logLine("carry on: stopped at song %d of %d, %s, state %d (%s): status %s; stop 0x%08X, "
-            "end 0x%08X",
-            g_c.cur.index + 1, g_c.count, mmss(time).s, state, why, written, (unsigned)rcStop,
-            (unsigned)rcEnd);
+    char also[64] = "";
+    if (waiting)
+        sceClibSnprintf(also, sizeof(also), ", song %d to come once fetched", g_c.waitIndex + 1);
+    logLine("carry on: stopped at song %d of %d, %s, state %d%s (%s): status %s; stop 0x%08X, "
+            "end 0x%08X%s",
+            g_c.cur.index + 1, g_c.count, mmss(time).s, state, also, why, written,
+            (unsigned)rcStop, (unsigned)rcEnd, fetching ? "; its fetch stopped" : "");
+    g_c.waitIndex = -1;
     lock();
     g_carry = 0;
     g_carryStop = NULL;
@@ -2471,6 +3136,13 @@ bool carryStart() {
         return false;
     }
     sceClibMemset(&g_c, 0, sizeof(g_c));
+    g_c.waitIndex = -1;
+    g_c.fetchWant = -1;
+    lock();
+    // A fetch from a queue carried on before is forgotten, or left to stop.
+    if (g_fetch.state != kFetchRunning) g_fetch.state = kFetchIdle;
+    g_c.fetchEnds = g_fetch.ends;
+    unlock();
     const char* fields;
     bool have = false;
     while (scanNext(&s, &fields)) {
@@ -2540,6 +3212,20 @@ bool carryStart() {
     g_c.menuPaused = g_playing == 0;
     unlock();
     carryStatus(BGPLAYER_STATE_PLAYING, time);
+    // Songs not on the card are fetched from VitaPlex's server, if it has
+    // one; the token is only looked for here.
+    static char settings[2048];
+    char token[160];
+    readServer(settings, sizeof(settings), g_server, sizeof(g_server), token, sizeof(token));
+    const bool signedIn = token[0] != 0;
+    sceClibMemset(token, 0, sizeof(token));
+    if (g_server[0])
+        logLine("carry on: songs not on the memory card are fetched from %s, %s", g_server,
+                signedIn ? "signed in" : "with no token");
+    else
+        logLine("carry on: no server in VitaPlex's settings: songs not on the memory card are "
+                "passed over");
+    g_c.aheadDue = 1;
     return true;
 }
 
@@ -2568,28 +3254,62 @@ bool carryPlay(const Track* t, const char* why) {
     g_c.waitTicks = 0;
     g_c.stoppedUs = 0;
     g_c.songUs = sceKernelGetSystemTimeWide();
+    g_c.waitIndex = -1;
+    g_c.aheadDue = 1;  // the song after it fetched, if it is not on the card
+    lock();
+    // A fetched song, played: its file is the shell's now, removed as the
+    // player's own are.
+    if (g_fetch.state == kFetchDone && same(g_fetch.t.path, t->path)) g_fetch.state = kFetchIdle;
+    unlock();
     showTrack(t);
     carryStatus(BGPLAYER_STATE_PLAYING, 0);
     return true;
 }
 
-// The song after the one with the shell, as the queue goes on (direction 1),
-// or the one before (-1): the nearest on the card, the same one again for
-// repeat one as a song ends. Up to three that will not play are passed over.
-void carryNext(int direction, bool ended, const char* why) {
-    int from = g_c.cur.index;
+// What carryNext goes on to (nextFrom).
+enum { kGoNone, kGoPlay, kGoFetch };
+
+// The song the queue goes on to after `from`, into g_found, within
+// kLookAhead songs: the nearest on the card or fetched here (kGoPlay), else
+// the nearest to fetch and wait for (kGoFetch). Passed over: songs not on the
+// card with no server to fetch them from, and songs the server has no file
+// of for the shell.
+int nextFrom(int from) {
+    for (int d = 1; d <= kLookAhead; d++) {
+        const int i = stepFrom(from, d);
+        if (i < 0 || i == from || !trackAt(i, &g_found)) return kGoNone;
+        if (onCard(&g_found) || fetchedFor(&g_found)) return kGoPlay;
+        if (g_server[0] && !lostSong(i)) return kGoFetch;
+        logLine("carry on: song %d of %d, \"%s\", is not on the memory card%s: passed over", i + 1,
+                g_c.count, g_found.title,
+                g_server[0] ? ", and the server has no file of it the shell plays" : "");
+    }
+    return kGoNone;
+}
+
+// The song after `from` as the queue goes on: the nearest on the card or
+// fetched, or one to fetch, which is waited for; the same one again for
+// repeat one as a song ends. Up to three that will not open are passed over.
+void carryNext(int from, bool ended, const char* why) {
+    g_c.waitIndex = -1;
     for (int tries = 0; tries < 3; tries++) {
-        bool found;
+        int go;
         if (ended && g_c.repeat == BGPLAYER_REPEAT_ONE && g_c.cur.path[0] && tries == 0) {
             g_found = g_c.cur;
-            found = true;
+            go = kGoPlay;
         } else {
-            found = nearestOnCard(from, direction);
+            go = nextFrom(from);
         }
-        if (!found) {
-            const bool over = direction > 0 && stepFrom(from, 1) < 0;
-            carryEnd(over ? "the queue is over" : "no further song is on the memory card",
+        if (go == kGoNone) {
+            const bool over = stepFrom(from, 1) < 0;
+            carryEnd(over        ? "the queue is over"
+                     : g_server[0] ? "no further song is on the memory card or on the server"
+                                   : "no further song is on the memory card",
                      over ? kEndOver : kEndStopped);
+            return;
+        }
+        if (go == kGoFetch) {
+            waitFor(&g_found, why);
             return;
         }
         if (carryPlay(&g_found, why)) return;
@@ -2611,12 +3331,12 @@ void seekStart(const char* why) {
 
 // A press on the row, as player.c's watchSong takes them: play/pause stops
 // the shell and plays it again, which keeps its place; previous goes back to
-// the start past a song's first 3 s, and to the song before within them;
-// next goes on past repeat one.
+// the start past a song's first 3 s, and to the song before within them,
+// fetched first if it is not on the card; next goes on past repeat one.
 void carryPress(int press, int state, uint32_t time) {
     if (press == QM_PRESS_NEXT) {
         logLine("carry on: next, from the row, at %s", mmss(time).s);
-        carryNext(1, false, "next, from the row");
+        carryNext(g_c.cur.index, false, "next, from the row");
         return;
     }
     if (press == QM_PRESS_PREVIOUS) {
@@ -2626,9 +3346,14 @@ void carryPress(int press, int state, uint32_t time) {
         } else {
             logLine("carry on: previous, from the row, at %s", mmss(time).s);
             const int before = stepFrom(g_c.cur.index, -1);
-            if (before >= 0 && trackAt(before, &g_found) && onCard(&g_found) &&
-                carryPlay(&g_found, "previous, from the row"))
-                return;
+            if (before >= 0 && trackAt(before, &g_found)) {
+                if (onCard(&g_found) || fetchedFor(&g_found)) {
+                    if (carryPlay(&g_found, "previous, from the row")) return;
+                } else if (g_server[0] && !lostSong(before)) {
+                    waitFor(&g_found, "previous, from the row");
+                    return;
+                }
+            }
             seekStart("previous, from the row, with the song before not on the card");
         }
         return;
@@ -2652,6 +3377,79 @@ void carryPress(int press, int state, uint32_t time) {
             mmss(time).s, (unsigned)rc);
 }
 
+// Each look while a song is fetched to play next: it is played once fetched,
+// tried again once if its fetch fails, and else passed over. The row's
+// buttons act on it: play/pause holds it back once fetched, previous goes
+// back to the song before from its start, next passes it over.
+void carryWait() {
+    const int press = __atomic_exchange_n(&g_carryPress, 0, __ATOMIC_SEQ_CST);
+    if (press == QM_PRESS_NEXT) {
+        logLine("carry on: next, from the row, as song %d is fetched", g_c.waitIndex + 1);
+        lock();
+        if (g_fetch.state == kFetchRunning && fetchIsFor(&g_c.wait)) __atomic_store_n(&g_fetch.cancel, 1, __ATOMIC_SEQ_CST);
+        unlock();
+        carryNext(g_c.waitIndex, false, "next, from the row");
+        return;
+    }
+    if (press == QM_PRESS_PREVIOUS) {
+        logLine("carry on: previous, from the row, as song %d is fetched", g_c.waitIndex + 1);
+        if (g_c.cur.path[0] && exists(g_c.cur.path)) {
+            g_found = g_c.cur;
+            if (carryPlay(&g_found, "previous, from the row")) return;
+        }
+    } else if (press == QM_PRESS_PLAY_PAUSE) {
+        g_c.menuPaused = !g_c.menuPaused;
+        lock();
+        g_playing = g_c.menuPaused ? 0 : 1;
+        unlock();
+        logLine("carry on: %s as song %d is fetched, from the row",
+                g_c.menuPaused ? "paused" : "play", g_c.waitIndex + 1);
+    }
+    // Something else played in the shell meanwhile, as the system's Music
+    // app would play it: not for this to stop.
+    int state = 0;
+    uint32_t time = 0;
+    if (musicStatus(&state, &time) >= 0 && state == 1) {
+        if (++g_c.waitPlays >= 2) {
+            carryEnd("something else plays in the shell", kEndOther);
+            return;
+        }
+    } else {
+        g_c.waitPlays = 0;
+    }
+    lock();
+    const int fetchState = g_fetch.state;
+    const bool forIt = fetchIsFor(&g_c.wait), forGood = g_fetch.forGood;
+    unlock();
+    // Its fetch under way, or to begin once another has stopped.
+    if (!forIt || fetchState == kFetchRunning) return;
+    if (fetchState == kFetchDone) {
+        if (g_c.menuPaused) return;
+        g_found = g_c.wait;
+        if (fetchedFor(&g_found)) {
+            logLine("carry on: song %d of %d fetched, after %s s of waiting", g_found.index + 1,
+                    g_c.count,
+                    secsOf((uint32_t)(sceKernelGetSystemTimeWide() - g_c.waitUs) / 1000u).s);
+            if (!carryPlay(&g_found, g_c.waitWhy))
+                carryNext(g_found.index, false, "the one before would not open");
+            return;
+        }
+    }
+    if (!forGood && g_c.waitTries < 2) {
+        g_c.waitTries++;
+        logLine("carry on: song %d of %d: fetched again", g_c.waitIndex + 1, g_c.count);
+        fetchStart(&g_c.wait);
+        return;
+    }
+    logLine("carry on: song %d of %d, \"%s\", could not be fetched: passed over",
+            g_c.waitIndex + 1, g_c.count, g_c.wait.title);
+    if (!forGood && ++g_c.failures >= 3) {
+        carryEnd("three songs in a row could not be fetched", kEndStopped);
+        return;
+    }
+    carryNext(g_c.waitIndex, false, g_c.waitWhy);
+}
+
 // Each half second while it carries on, as player.c's watchSong does each.
 void carryTick() {
     lock();
@@ -2660,6 +3458,11 @@ void carryTick() {
     unlock();
     if (stop) {
         carryEnd(stop, how);
+        return;
+    }
+    fetchPoll();
+    if (g_c.waitIndex >= 0) {
+        carryWait();
         return;
     }
     const SceUInt64 now = sceKernelGetSystemTimeWide();
@@ -2712,7 +3515,7 @@ void carryTick() {
             if (++g_c.failures >= 3)
                 carryEnd("three songs in a row would not play", kEndStopped);
             else
-                carryNext(1, false, "the one before would not play");
+                carryNext(g_c.cur.index, false, "the one before would not play");
             return;
         }
     }
@@ -2729,7 +3532,7 @@ void carryTick() {
             (time + 5000 < g_c.maxTime || state != 1) && !g_c.menuPaused) {
             logLine("carry on: song %d of %d ended (it got to %s of %s)", g_c.cur.index + 1,
                     g_c.count, mmss(g_c.maxTime).s, mmss(lenMs).s);
-            carryNext(1, true, "the one before ended");
+            carryNext(g_c.cur.index, true, "the one before ended");
             return;
         }
         // Stopped before its end, not from the row: as the power button
@@ -3040,8 +3843,9 @@ private:
             stopCarry("VitaPlex BG takes the music back", kEndTakeBack);
             break;
         case QM_CMD_HTTP_TEST: {
-            if (g_httpBusy) {
-                logLine("http test: done: one runs already");
+            if (g_httpBusy || g_fetch.state == kFetchRunning) {
+                logLine("http test: done: %s",
+                        g_httpBusy ? "one runs already" : "SceShell is fetching a song of the queue");
                 break;
             }
             // VitaPlex's addresses, paths and tokens are ASCII. The token is
@@ -3056,6 +3860,7 @@ private:
                                                         kThreadPriority, kHttpStack, 0, 0, NULL);
             const int rc = thread < 0 ? thread : sceKernelStartThread(thread, 0, NULL);
             if (rc < 0) {
+                if (thread >= 0) sceKernelDeleteThread(thread);
                 logLine("http test: done: no thread for it (0x%08X)", (unsigned)rc);
                 sceClibMemset(g_httpToken, 0, sizeof(g_httpToken));
                 g_httpBusy = 0;

@@ -117,6 +117,9 @@ enum {
 //   by=<SceShell when VitaPlex's quick menu plugin wrote it, carrying the
 //       queue on after the system ended the player (qm_protocol.h); missing
 //       when the player did>
+//   fetching=<1 when SceShell has stopped the shell's music to fetch the song
+//             it names, which plays from positionMs once fetched; missing
+//             otherwise>
 //   end
 #define BGPLAYER_STATE_PLAYING "playing"   // handed to the shell
 #define BGPLAYER_STATE_PAUSED  "paused"    // stopped for its app, and staying

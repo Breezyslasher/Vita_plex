@@ -2044,8 +2044,19 @@ void takeBack() {
                                       problem);
                 return;
             }
-            at = takeFromShell((int)fieldNum(status, "durationMs"));
-            if (at >= 0) index = (int)fieldNum(status, "index");
+            if (fieldText(status, "by") == "SceShell" && fieldNum(status, "fetching") == 1) {
+                // SceShell had stopped the shell to fetch the song it names
+                // (qm_protocol.h): nothing plays there, and the song goes on
+                // here from its start.
+                index = (int)fieldNum(status, "index");
+                at = (long long)std::max(0.0, fieldNum(status, "positionMs"));
+                brls::Logger::info("[bgaudio] background player: SceShell was fetching song {}; "
+                                   "it plays here from {}",
+                                   index + 1, mmss((unsigned)at));
+            } else {
+                at = takeFromShell((int)fieldNum(status, "durationMs"));
+                if (at >= 0) index = (int)fieldNum(status, "index");
+            }
         }
         // Not while the shell may still play one of them: a file written over
         // as the shell played it preceded a crash (logs 8fe35d97, 7ba90482).

@@ -64,7 +64,8 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   checking in without giving the row back, the system has ended it. The
   same thread then plays the rest of its queue from inside SceShell, from
   the songs on the memory card: downloads the queue names, and the player's
-  own files (`QM_CMD_SONG_FILE`). It reads the player's status and the
+  own files (`QM_CMD_SONG_FILE`); from build 2042, the rest are fetched
+  (below). It reads the player's status and the
   queue (`src/bgplayer_psv/bgplayer.h`), and writes the status as the
   player does, with `by=SceShell`, so that VitaPlex BG takes the music back
   where SceShell got to (`QM_CMD_TAKE_BACK`). The row stays, its buttons
@@ -84,6 +85,19 @@ VitaPlexBG.vpk puts the licence and `NOTICE.txt` beside the plugin.
   on a thread of its own with a 64 KB stack, deleted when done, and logs how
   much of that the test used. Its log lines begin "http test:"; the token is
   never logged.
+- **Fetching the queue's songs (build 2042):** as it carries the queue on,
+  songs not on the memory card are fetched from VitaPlex's server, the way the
+  background player fetches them. Each song's file comes as the server has
+  it when the shell plays its format, along with its cover as a PNG from the
+  server's photo transcoder. Both go into the player's folder of songs, and
+  both are removed once played. The next song is fetched while the one
+  before plays. A song wanted before it has come is waited for, with the
+  shell stopped, and the status says `fetching=1` so that VitaPlex BG can
+  take the music back. One fetch runs at a time, on a thread of its own,
+  through the libraries the test finds. The server and the token come from
+  VitaPlex's settings; the token is read for each fetch, sent as a header,
+  wiped after it, and never logged. Songs in other formats, such as FLAC,
+  are still passed over.
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system
