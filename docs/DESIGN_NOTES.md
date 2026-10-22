@@ -3439,8 +3439,12 @@ setting on by default.
   on. A server that answers with an error is not taken for one that does not
   answer: such songs are passed over, and three in a row stop the queue, as
   before and as with the setting off.
-- On a host the harness passes 227 checks, with a server whose every request
-  fails as with Wi-Fi off. The plugin builds at 47238 bytes, with build
+- Telling the server where the music is: its failure was logged once, but
+  the HTTP call's own line came with every report, one every 10 s with
+  Wi-Fi off in log `0790f7dc`, and the plugin's log stops at 512 KB. Once a
+  report has failed, the next go unlogged until one is taken.
+- On a host the harness passes 229 checks, with a server whose every request
+  fails as with Wi-Fi off. The plugin builds at 47346 bytes, with build
   2053's imports.
 
 ### PS4: the popup, and nothing to hang progress on

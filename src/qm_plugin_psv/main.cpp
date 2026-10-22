@@ -1382,21 +1382,22 @@ void httpClose(int conn, int req) {
 // A GET of url sent with the template tmpl: VitaPlex's names for itself as
 // headers, as the player sends them, with client as its id, the token too
 // when given, and a range when given. `who` and `what` name it in the log,
-// which has the call that failed, and why TLS refused it. 0, with *conn and
-// *req to read from and then close (httpClose); else the code of the call
-// that failed, with nothing left to close.
+// which has the call that failed, and why TLS refused it; with no `who`,
+// nothing is logged. 0, with *conn and *req to read from and then close
+// (httpClose); else the code of the call that failed, with nothing left to
+// close.
 int httpOpen(int tmpl, const char* who, const char* what, const char* url, const char* token,
              const char* range, int* conn, int* req, const char* client = "vitaplex-sceshell") {
     *req = -1;
     *conn = httpFn<FnConnection>(kHttpCreateConnection)(tmpl, url, 1);
     if (*conn < 0) {
-        logLine("%s: %s: connection 0x%08X", who, what, (unsigned)*conn);
+        if (who) logLine("%s: %s: connection 0x%08X", who, what, (unsigned)*conn);
         return *conn;
     }
     *req = httpFn<FnRequest>(kHttpCreateRequest)(*conn, kHttpGet, url, 0);
     if (*req < 0) {
         const int rc = *req;
-        logLine("%s: %s: request 0x%08X", who, what, (unsigned)rc);
+        if (who) logLine("%s: %s: request 0x%08X", who, what, (unsigned)rc);
         httpClose(*conn, -1);
         return rc;
     }
@@ -1409,13 +1410,15 @@ int httpOpen(int tmpl, const char* who, const char* what, const char* url, const
     if (rc >= 0 && range) rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "Range", range, kHeaderOverwrite);
     if (rc >= 0) rc = httpFn<FnSend>(kHttpSend)(*req, NULL, 0);
     if (rc < 0) {
-        int err = 0;
-        unsigned detail = 0;
-        const int rcSsl = httpFn<FnSslError>(kHttpsSslError)(*req, &err, &detail);
-        char why[128];
-        sslDetail(detail, why, sizeof(why));
-        logLine("%s: %s: failed 0x%08X; TLS error 0x%08X, detail 0x%X%s (0x%08X)", who, what,
-                (unsigned)rc, (unsigned)err, detail, why, (unsigned)rcSsl);
+        if (who) {
+            int err = 0;
+            unsigned detail = 0;
+            const int rcSsl = httpFn<FnSslError>(kHttpsSslError)(*req, &err, &detail);
+            char why[128];
+            sslDetail(detail, why, sizeof(why));
+            logLine("%s: %s: failed 0x%08X; TLS error 0x%08X, detail 0x%X%s (0x%08X)", who, what,
+                    (unsigned)rc, (unsigned)err, detail, why, (unsigned)rcSsl);
+        }
         httpClose(*conn, *req);
         return rc;
     }
@@ -2964,11 +2967,11 @@ char g_serverSettings[2048];
 int g_reportFailed;
 
 // A GET of url for what; the server's status, or 0 when it never answered,
-// the call's code then in *rc.
+// the call's code then in *rc. Its failure to be sent is logged unless quiet.
 int serverGet(int tmpl, const char* what, const char* url, const char* token, const char* client,
-              int* rc) {
+              int* rc, bool quiet = false) {
     int conn, req, status = 0;
-    *rc = httpOpen(tmpl, "carry on", what, url, token, NULL, &conn, &req, client);
+    *rc = httpOpen(tmpl, quiet ? NULL : "carry on", what, url, token, NULL, &conn, &req, client);
     if (*rc >= 0) {
         httpFn<FnStatus>(kHttpStatus)(req, &status);
         httpClose(conn, req);
@@ -3028,8 +3031,11 @@ void serverWaiting() {
                                 "&time=%u&duration=%u",
                                 server, now.key, now.key, now.state, (unsigned)now.timeMs,
                                 (unsigned)now.durationMs);
+                // Quiet once failed: with Wi-Fi off each report failed, one
+                // every 10 s as the songs on the card played (log 0790f7dc),
+                // and the log stops at kLogMax.
                 status = serverGet(tmpl, "telling the server where the music is", url, token,
-                                   kVitaPlexClient, &rc);
+                                   kVitaPlexClient, &rc, g_reportFailed != 0);
             }
             if (status == 200 && g_reportFailed) {
                 g_reportFailed = 0;
