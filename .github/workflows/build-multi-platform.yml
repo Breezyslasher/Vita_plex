@@ -679,13 +679,18 @@ jobs:
         with:
           name: VitaPlex-vita-${{ github.run_number }}
           path: build/VitaPlex.vpk
+      # The linked ELFs, with their symbols, for reading the Vita's crash
+      # dumps: VitaPlex's, and its quick menu plugin's, which runs in
+      # SceShell. Not the .velf: the conversion to it drops every section,
+      # the symbol table among them.
       - name: Upload ELF
         uses: actions/upload-artifact@v4
         with:
           name: VitaPlex-elf-${{ github.run_number }}
-          path: build/VitaSuwayomi.velf
+          path: |
+            build/VitaPlex
+            build/vitaplex_qm
 
-             
   # ───────────────────────────────────────────────
   # Android — switchfin-style APK build
   # ───────────────────────────────────────────────
