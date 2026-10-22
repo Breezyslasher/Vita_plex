@@ -2563,6 +2563,8 @@ struct Fetch {
     int state;    // kFetch*
     int kind;     // kJob*
     int cancel;   // set to stop it
+    int urgent;   // the song is waited for: its cover is left for later
+    int coverDone;  // a song's job fetched its cover, or found it would not come
     int ends;     // fetches ended so far
     int forGood;  // failed in a way another try would not mend
     int stopped;  // failed as it was stopped
@@ -2908,7 +2910,11 @@ int fetchSongNow(int tmpl, const char* server, const char* token, const char* la
             return kFetchFailed;
         }
     }
+    // A song waited for plays as soon as its file is in: its cover, which
+    // held one up 0.4 s (log c6d126f7), is a job of its own after it.
+    if (__atomic_load_n(&g_fetch.urgent, __ATOMIC_SEQ_CST)) return kFetchDone;
     fetchCover(tmpl, server, token, label);
+    g_fetch.coverDone = 1;
     return kFetchDone;
 }
 
@@ -3044,6 +3050,8 @@ void fetchStart(const Track* t, int kind) {
     g_fetch.state = kFetchRunning;
     g_fetch.kind = kind;
     g_fetch.cancel = 0;
+    g_fetch.urgent = 0;
+    g_fetch.coverDone = 0;
     g_fetch.forGood = 0;
     g_fetch.stopped = 0;
     g_fetch.count = g_c.count;
@@ -3135,6 +3143,7 @@ void fetchPoll() {
     lock();
     const int state = g_fetch.state, ends = g_fetch.ends, index = g_fetch.t.index;
     const int kind = g_fetch.kind, forGood = g_fetch.forGood, stopped = g_fetch.stopped;
+    const int coverDone = g_fetch.coverDone;
     unlock();
     if (ends != g_c.fetchEnds) {
         g_c.fetchEnds = ends;
@@ -3145,9 +3154,9 @@ void fetchPoll() {
                 ringAdd(&g_c.failedAhead, index);
         }
         // A song's file fetched comes with its cover, or with its cover's
-        // failure: not asked for again.
+        // failure, unless it was waited for: not asked for again.
         if (kind == kJobSong && state == kFetchDone) {
-            ringAdd(&g_c.coverTried, index);
+            if (coverDone) ringAdd(&g_c.coverTried, index);
             takeFetched();
         }
         if (kind == kJobCover && !stopped) {
@@ -3794,6 +3803,11 @@ void carryWait() {
     } else {
         g_c.waitPlays = 0;
     }
+    lock();
+    // Waited for: its cover is left for after it plays.
+    if (g_fetch.state == kFetchRunning && fetchIsFor(&g_c.wait, kJobSong))
+        __atomic_store_n(&g_fetch.urgent, 1, __ATOMIC_SEQ_CST);
+    unlock();
     g_found = g_c.wait;
     if (fetchedFor(&g_found)) {
         if (g_c.menuPaused) return;
@@ -4194,9 +4208,12 @@ private:
         case QM_CMD_ACTIVATE:
             if (!g_active || g_owner != m.arg)
                 logLine("row wanted by %s", ownerName(m.arg));
-            // A process with the row has the music: SceShell leaves it be,
-            // and does not begin a queue handed over before.
-            stopCarry("a process takes the row", kEndYield);
+            // A process with the row has the music: SceShell leaves it to
+            // it, and does not begin a queue handed over before. The
+            // background player goes on with SceShell's song itself; VitaPlex
+            // BG plays its own, which SceShell's would play over, so that
+            // one stops.
+            stopCarry("a process takes the row", m.arg == QM_OWNER_APP ? kEndStopped : kEndYield);
             g_playQueueDue = 0;
             if (m.arg == QM_OWNER_PLAYER) g_carryAllowed = 1;
             if (g_owner != m.arg) g_artSerial = 0;  // the last owner's cover

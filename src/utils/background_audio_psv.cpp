@@ -2041,6 +2041,17 @@ std::string queueProblem(bool haveQueue, const std::map<std::string, std::string
 // on here from that song and place. Off the UI thread: it waits on the
 // player and on the shell.
 void takeBack() {
+    // SceShell, if it plays a queue, stops there now that this app is ready
+    // to go on with it, and writes where it got to (qm_link.h's qmTakeBack).
+    // Not as the app starts: one closed before it got this far left
+    // SceShell's song to play out with nothing to go on after it (log
+    // dcb5cc5d, build 2043). Never loads the plugin.
+    const double askedShell = systemSecs();
+    const int rcShell = qmTakeBack();
+    g_takeBackSent = rcShell >= 0;
+    if (g_takeBackSent)
+        brls::Logger::info("[bgaudio] quick menu plugin told VitaPlex BG takes the music back ({})",
+                           hex(rcShell));
     std::map<std::string, std::string> status, queue;
     std::vector<std::vector<std::string>> tracks;
     const bool haveStatus = readNote(BGPLAYER_STATUS, status, nullptr);
@@ -2089,11 +2100,11 @@ void takeBack() {
             removePlayerSongs();
             return;
         }
-        // SceShell carrying the queue on (qm_protocol.h) was told at init to
-        // stop, and says where it stopped: its status is read again until it
-        // is one written after that.
+        // SceShell playing the queue (qm_protocol.h) was told above to stop,
+        // and says where it stopped: its status is read again until it is one
+        // written after that.
         if (fieldText(status, "by") == "SceShell") {
-            for (int i = 0; i < 20 && g_takeBackSent && fieldNum(status, "written") < g_initSecs &&
+            for (int i = 0; i < 20 && g_takeBackSent && fieldNum(status, "written") < askedShell &&
                             fieldText(status, "state") == BGPLAYER_STATE_PLAYING;
                  i++) {
                 sceKernelDelayThread(100 * 1000);
@@ -2199,17 +2210,8 @@ void init(int outsideMusic) {
     g_keepPlaying = outsideMusic != kOutsideStops;
     g_initSecs = systemSecs();
     qmInit();
-    // SceShell may be carrying the background player's queue on (qm_link.h):
-    // it stops before anything here plays, and writes where it got to for
-    // takeBack. A plugin not in SceShell is not loaded for this.
-    if (available()) {
-        const int rc = qmTakeBack();
-        g_takeBackSent = rc >= 0;
-        if (g_takeBackSent)
-            brls::Logger::info("[bgaudio] quick menu plugin told VitaPlex BG takes the music "
-                               "back ({})",
-                               hex(rc));
-    }
+    // SceShell may be playing a queue handed over before (qm_link.h): it
+    // plays on until takeBack, once the first frame is up, tells it to stop.
     brls::Logger::info("[bgaudio] running as {}; music after leaving: {}",
                        available() ? "VitaPlex BG" : "VitaPlex",
                        outsideMusic == kOutsidePlaysOn     ? "plays on, then the background player"

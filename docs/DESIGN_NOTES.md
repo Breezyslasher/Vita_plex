@@ -2873,6 +2873,55 @@ show games starting sooner.
 - On a host, the plugin's harness passes 162 checks, 26 of them new, and the
   pipe test 37, 2 of them new. The plugin builds for the Vita at 50039 bytes,
   with the same imports as build 2042.
+**Build 2043 on the console** (log `c6d126f7`, the plugin's; `dba74856` and
+`981fe042`, VitaPlex BG's two sessions after it. The log of the session
+that handed over was written over).
+
+- SceShell took the queue at 21:55:40, 0.6 s after VitaPlex BG gave the row
+  back, and played it with no background player.
+- Songs 2, 3, 4 and 7 of 1000 played from files fetched as they came, at
+  519 to 792 KB/s. Each was removed once the next one played.
+- Song 2 played to its end and was marked played on the server. Song 3 was
+  fetched while song 2 played and followed it with no wait, and so did
+  song 4.
+- Next, pressed while a song was being fetched, stopped that fetch and went
+  on. A song fetched and then skipped was removed.
+- Waits: 13.1 s for song 2 (next was pressed during song 1's fetch) and
+  10.2 s for song 7.
+- Covers came from the server as PNGs, one of them 65x64, and the row
+  showed each.
+- Song 1 was never heard: next came 2.7 s into its fetch, so the seek to
+  VitaPlex BG's place was not tried.
+- The take-back failed, in three parts:
+  - VitaPlex BG opened at 22:03:43 and told SceShell at once to stop. So
+    SceShell stopped going on, and left song 7 playing for VitaPlex BG to
+    take.
+  - VitaPlex BG's sync of its 147 downloads, one request each, ran on the
+    UI thread before the main screen: 20.1 s in the next session. The
+    take-back waits for the first frame, so it never came. PS was pressed
+    at 22:03:48 and another app started at 22:03:51, and VitaPlex BG was
+    ended 2 s later with the sync still going. Song 7 played out in the
+    shell with nothing after it.
+  - Opened again at 22:04:14, VitaPlex BG reached its take-back 26.6 s
+    later, the sync again in the way. It found SceShell's status 30.6 s
+    old, past the 20 s it allows, and took nothing back.
+
+**Build 2044: from that run.**
+
+- The downloads' sync runs on a thread of its own, so the main screen, and
+  the take-back after it, no longer wait for it.
+- VitaPlex BG tells SceShell to stop only in its take-back, once it is
+  ready to go on with the music. Until then SceShell plays the queue on, so
+  an app closed before getting that far loses nothing.
+- The downloads' list is saved beside the old one and moved in once whole.
+  Saved in place, as before, a process ended part-way through would have
+  cut it short; VitaPlex BG is ended 2 s after the system asks it to quit.
+- When VitaPlex BG takes the row for music of its own while SceShell plays,
+  SceShell stops its own (status "stopped") rather than play on under it.
+- A song waited for plays as soon as its file is in. Its cover follows as a
+  job of its own, where it held the song up 0.4 s before.
+- On a host, the plugin's harness passes 163 checks. The plugin builds for
+  the Vita at 50164 bytes, with the same imports as build 2042.
 
 ### PS4: the popup, and nothing to hang progress on
 

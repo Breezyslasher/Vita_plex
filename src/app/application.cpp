@@ -21,6 +21,7 @@
 #include <atomic>
 #include "platform/paths.hpp"
 #include "platform/platform.hpp"
+#include "utils/async.hpp"
 #include "utils/image_loader.hpp"
 #include "view/home_user_picker.hpp"
 
@@ -98,9 +99,13 @@ void Application::run() {
         // Use connectToServer to properly initialize (including Live TV check)
         if (PlexClient::getInstance().connectToServer(m_serverUrl)) {
             brls::Logger::info("Restored session and connected to server");
-            // Bidirectional sync: push local offline progress, pull server progress
+            // Bidirectional sync: push local offline progress, pull server
+            // progress. Off the UI thread: one request a download held the
+            // main screen back 20 s for 147 downloads on a Vita (log
+            // 981fe042), and with it everything that waits for the first
+            // frame. The manager locks its list around each change.
             DownloadsManager::getInstance().init();
-            DownloadsManager::getInstance().syncProgressBidirectional();
+            asyncRun([]() { DownloadsManager::getInstance().syncProgressBidirectional(); });
             // Push Main first regardless — if the user backs out of the
             // picker (or never has one, because no Plex Home), they land
             // on the app as the last-used user. Then overlay the picker

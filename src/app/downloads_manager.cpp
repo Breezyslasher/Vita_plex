@@ -2269,11 +2269,25 @@ void DownloadsManager::saveStateUnlocked() {
     ss << "]\n}";
 
 #ifdef __vita__
-    SceUID fd = sceIoOpen(STATE_FILE, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+    // Written beside it and moved in once whole: a process ended part-way
+    // through a write in place, as VitaPlex BG is 2 s after the system asks
+    // it to quit, would leave the list cut short. The old one goes only once
+    // the new one is whole, and loadState takes the new one if the move was
+    // cut short in turn.
+    const std::string part = std::string(STATE_FILE) + ".part";
+    SceUID fd = sceIoOpen(part.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
     if (fd >= 0) {
         std::string data = ss.str();
-        sceIoWrite(fd, data.c_str(), data.size());
+        const int written = sceIoWrite(fd, data.c_str(), data.size());
         sceIoClose(fd);
+        if (written == (int)data.size()) {
+            sceIoRemove(STATE_FILE);
+            sceIoRename(part.c_str(), STATE_FILE);
+        } else {
+            sceIoRemove(part.c_str());
+            brls::Logger::error("DownloadsManager: state not saved ({} of {} bytes written)",
+                                written, data.size());
+        }
     }
 #else
     const std::string statePath = m_downloadsPath + "/state.json";
@@ -2292,6 +2306,8 @@ void DownloadsManager::loadState() {
 
 #ifdef __vita__
     SceUID fd = sceIoOpen(STATE_FILE, SCE_O_RDONLY, 0);
+    // Saved whole beside it, but not yet moved in (saveStateUnlocked).
+    if (fd < 0) fd = sceIoOpen((std::string(STATE_FILE) + ".part").c_str(), SCE_O_RDONLY, 0);
     if (fd >= 0) {
         char buffer[4096];
         int read;
