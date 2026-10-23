@@ -145,6 +145,27 @@ the plugin.
   taken for running. The outcome goes to `ux0:data/VitaPlex/update-result.txt`
   and VitaPlex is launched again either way; on its next start VitaPlex shows
   a failure, and keeps the downloaded VPK for VitaShell.
+- **VitaPlex's downloads (protocol 16):** as the system closes VitaPlex,
+  as starting a game does, the downloads under way are listed in
+  `ux0:data/VitaPlex/handover-downloads.txt` and handed over
+  (`QM_CMD_DOWNLOADS`). A thread of its own waits for VitaPlex to be gone
+  (30 s at most), then carries them on one at a time, songs and videos alike,
+  each into the file VitaPlex had begun, from where that file ends, by HTTP
+  Range. A download the server prepares in its download queue is waited for
+  there as VitaPlex waits for it (its item's status every 5 s, every 30 s
+  after 5 minutes, an hour at most), and one not yet in the queue is added
+  to it under VitaPlex's own client id, with the query and profile VitaPlex
+  would have sent. A try that fails is made again after 5, 15 and 60 s; one
+  that gets some of the file starts the count again. It gives way to the
+  music's fetches, and it shows its progress in SceShell's own progress
+  notification, the one VitaPlex shows while it downloads, found as the HTTP
+  library is. How far it has got goes to
+  `ux0:data/VitaPlex/handover-downloads-status.txt` every 2 s; VitaPlex asks
+  for them back as it opens (`QM_CMD_TAKE_DOWNLOADS`), and the thread stops
+  after the piece it is reading, writing nothing more, with `running=0` in
+  the status. The fetch, server and download threads share Sony's HTTP
+  library: the first to start it starts it and the last to end it ends it.
+  Its log lines begin "download:".
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system

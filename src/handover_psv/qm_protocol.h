@@ -18,9 +18,10 @@
 // that were tried gone. Version 13 has the files handover.h names, and keeps
 // the song before and the songs fetched ahead for VitaPlex to play on.
 // Version 14 stops the shell's song itself as VitaPlex takes the music back.
-// Version 15 installs VitaPlex's updates (QM_CMD_INSTALL_UPDATE).
-#define QM_PIPE_TO_PLUGIN   "VitaPlexQM15::ToPlugin"
-#define QM_PIPE_FROM_PLUGIN "VitaPlexQM15::FromPlugin"
+// Version 15 installs VitaPlex's updates (QM_CMD_INSTALL_UPDATE). Version 16
+// carries VitaPlex's downloads on once it has gone (QM_CMD_DOWNLOADS).
+#define QM_PIPE_TO_PLUGIN   "VitaPlexQM16::ToPlugin"
+#define QM_PIPE_FROM_PLUGIN "VitaPlexQM16::FromPlugin"
 
 // SceShell carries the queue on. The system closes VitaPlex to start a game,
 // and SceShell is never ended. So VitaPlex hands its queue to SceShell as it
@@ -86,7 +87,16 @@ enum {
     // running), and VitaPlex launched again; the outcome in QM_UPDATE_RESULT.
     // Up to version 14 VitaPlex installed an app of its own for it, the
     // updater stub (VPLXUPD01).
-    QM_CMD_INSTALL_UPDATE
+    QM_CMD_INSTALL_UPDATE,
+    // From VitaPlex as it goes: SceShell carries on the downloads listed at
+    // QM_DOWNLOADS_LIST once VitaPlex has gone, each into the file VitaPlex
+    // had begun, from where that file ends, and writes how far it has got to
+    // QM_DOWNLOADS_STATUS. A run under way takes the new list up.
+    QM_CMD_DOWNLOADS,
+    // From VitaPlex as it opens: SceShell stops after the piece it is writing,
+    // and writes the status one last time with "running=0", which VitaPlex
+    // waits for before it writes to any of those files again.
+    QM_CMD_TAKE_DOWNLOADS
 };
 enum { QM_OWNER_APP = 1 };
 
@@ -95,6 +105,46 @@ enum { QM_OWNER_APP = 1 };
 // "why=<what failed>" on another when it did, and "end".
 #define QM_UPDATE_DIR    "ux0:data/VitaPlex/update-stage"
 #define QM_UPDATE_RESULT "ux0:data/VitaPlex/update-result.txt"
+
+// VitaPlex's downloads for SceShell to carry on (QM_CMD_DOWNLOADS), and how
+// far it has got with them. Both "key=value" a line, as handover.h's, written
+// whole beside their names and moved in, and ended with "end".
+//
+// The list, VitaPlex's:
+//   written=<the system clock in seconds, %.6f>
+//   notify=<1: SceShell shows the downloads' progress notification>
+//   client=, platform=, device=   what VitaPlex names itself to the server as
+//                                 (X-Plex-Client-Identifier and so on): the
+//                                 download queue is the client's
+//   item=<fields, tab-separated, below>   one a download, in the order to go
+//   end
+// An item's fields: its ratingKey; its file; the size VitaPlex knows the
+// file is to be, 0 when it knows none; the media's title, for the
+// notification; the token, "" for none; and how it is fetched, one of
+//   queue  <the server> <the queue's id> <the queue item's id>: the server's
+//          download queue prepares it, and its file is fetched once the
+//          item's status is "available"
+//   add    <the server> <the add's query, from "?"> <its profile extra>:
+//          added to the server's download queue first, under the ids the
+//          server answers with, then as for queue
+// A file begun is gone on with by HTTP Range from its size; a server that
+// answers with the whole file has it written anew.
+//
+// The status, SceShell's:
+//   written=<as above>
+//   running=<1 while SceShell carries them on, 0 once it has stopped>
+//   item=<ratingKey> <state> <bytes in its file> <its full size, 0 if not
+//        known> <the queue's id> <the queue item's id>   tab-separated
+//   end
+// state: going, waiting (not yet begun), done, gone (the server no longer has
+// the queue item, or ended it in an error), or failed (after its tries).
+// The queue's ids are the ones it was fetched under, "" for none, so that
+// VitaPlex goes on with the file the server prepared.
+#define QM_DOWNLOADS_LIST   "ux0:data/VitaPlex/handover-downloads.txt"
+#define QM_DOWNLOADS_STATUS "ux0:data/VitaPlex/handover-downloads-status.txt"
+// The most downloads a list holds; VitaPlex writes no more than these, in the
+// order it would fetch them.
+#define QM_DOWNLOADS_MAX 200
 
 // A song's cover for SceShell to show as it carries the queue on: a PNG as
 // QM_ART_PATH_FMT's, in the folder of songs (handover.h's HANDOVER_SONGS)

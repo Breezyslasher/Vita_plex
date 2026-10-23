@@ -1507,6 +1507,28 @@ brls::Box* SettingsTab::createDownloadsSection() {
     });
     box->addView(dlSubtitlesToggle);
 
+    // Vita: downloads going on once VitaPlex has closed, from inside SceShell,
+    // through the same quick menu plugin as the music after leaving
+    // (DownloadsManager::handOverToShell).
+    if (bgaudio::available()) {
+        auto* dlAfterLeaving = new brls::BooleanCell();
+        dlAfterLeaving->init("Downloads After Leaving VitaPlex",
+            settings.vitaDownloadsAfterLeaving, [&settings](bool value) {
+                settings.vitaDownloadsAfterLeaving = value;
+                Application::getInstance().saveSettings();
+            });
+        box->addView(dlAfterLeaving);
+
+        auto* dlAfterInfo = new brls::Label();
+        dlAfterInfo->setText("When VitaPlex closes, as starting a game closes it, downloads under "
+                             "way go on in the background, songs and videos alike, with their "
+                             "progress in the notification. Opening VitaPlex takes them back.");
+        dlAfterInfo->setFontSize(14);
+        dlAfterInfo->setMarginLeft(16);
+        dlAfterInfo->setMarginTop(8);
+        box->addView(dlAfterInfo);
+    }
+
     // Clear all downloads
     m_clearDownloadsCell = new brls::DetailCell();
     m_clearDownloadsCell->setText("Clear All Downloads");

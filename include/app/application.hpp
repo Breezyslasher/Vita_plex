@@ -230,6 +230,11 @@ struct AppSettings {
     // package's quick menu plugin, when the system closes the app for a game;
     // 2 hands it to SceShell at once. See utils/background_audio.hpp.
     int vitaOutsideMusic = 1;
+    // Vita only: downloads under way as VitaPlex closes, as starting a game
+    // closes it, go on from inside SceShell through the package's quick menu
+    // plugin, with their notification, until VitaPlex opens again
+    // (DownloadsManager::handOverToShell). Off: they wait for VitaPlex.
+    bool vitaDownloadsAfterLeaving = true;
     // Vita only: as SceShell plays the queue on, a song it cannot fetch, the
     // server not answering, is passed over for the next song on the memory
     // card, and with none it waits paused for the quick menu's play or for

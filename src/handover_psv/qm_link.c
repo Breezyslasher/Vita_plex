@@ -241,25 +241,27 @@ int qmPlayQueue(void) {
     return rc;
 }
 
+// Under g_lock: g_message, as filled in, to the plugin, whether or not this
+// process has opened it. Only to a plugin that is there: one this would load
+// has carried nothing on.
+static int sendToPresentLocked(void) {
+    if (g_to >= 0) return sendLocked();
+    const SceUID to = vitaplexOpenMsgPipe(QM_PIPE_TO_PLUGIN);
+    int rc = to;
+    if (to >= 0) {
+        unsigned int timeout = SEND_TIMEOUT_US;
+        rc = sceKernelSendMsgPipe(to, &g_message, sizeof(g_message), MSG_PIPE_MODE_FULL, NULL,
+                                  &timeout);
+        vitaplexCloseMsgPipe(to);
+    }
+    return rc;
+}
+
 int qmTakeBack(void) {
     lock();
-    int rc;
     memset(&g_message, 0, sizeof(g_message));
     g_message.cmd = QM_CMD_TAKE_BACK;
-    if (g_to >= 0) {
-        rc = sendLocked();
-    } else {
-        // Only to a plugin that is there: one this would load has carried
-        // nothing on.
-        const SceUID to = vitaplexOpenMsgPipe(QM_PIPE_TO_PLUGIN);
-        rc = to;
-        if (to >= 0) {
-            unsigned int timeout = SEND_TIMEOUT_US;
-            rc = sceKernelSendMsgPipe(to, &g_message, sizeof(g_message), MSG_PIPE_MODE_FULL, NULL,
-                                      &timeout);
-            vitaplexCloseMsgPipe(to);
-        }
-    }
+    const int rc = sendToPresentLocked();
     unlock();
     return rc;
 }
@@ -267,6 +269,22 @@ int qmTakeBack(void) {
 int qmInstallUpdate(void) {
     lock();
     const int rc = sendCommandLocked(QM_CMD_INSTALL_UPDATE, 0);
+    unlock();
+    return rc;
+}
+
+int qmCarryDownloads(void) {
+    lock();
+    const int rc = sendCommandLocked(QM_CMD_DOWNLOADS, 0);
+    unlock();
+    return rc;
+}
+
+int qmTakeDownloads(void) {
+    lock();
+    memset(&g_message, 0, sizeof(g_message));
+    g_message.cmd = QM_CMD_TAKE_DOWNLOADS;
+    const int rc = sendToPresentLocked();
     unlock();
     return rc;
 }

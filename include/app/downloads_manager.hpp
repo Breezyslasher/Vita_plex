@@ -88,6 +88,10 @@ struct DownloadItem {
     // download over. Empty when there is none.
     std::string queueId;
     std::string queueItemId;
+    // Vita: handed to VitaPlex's quick menu plugin as VitaPlex closed, which
+    // carries it on from inside SceShell (handOverToShell); taken back, with
+    // what SceShell made of it, before VitaPlex downloads anything again.
+    bool withShell = false;
 };
 
 // A downloaded track's artist and album, as the download keeps them. An
@@ -190,7 +194,9 @@ public:
 
     // As VitaPlex closes, on the UI thread: a download running is left to go
     // on when it opens again (resumeInterrupted), and its notification says
-    // so instead of showing a bar that no longer moves.
+    // so instead of showing a bar that no longer moves. On the Vita, with the
+    // setting on, the downloads go to VitaPlex's quick menu plugin instead,
+    // which carries them on from inside SceShell (handOverToShell).
     void noteAppClosing();
 
     // Check if downloads are currently running
@@ -238,6 +244,20 @@ private:
 
     // Report timeline to server
     bool reportTimeline(const DownloadItem& item, const std::string& state);
+
+#ifdef __vita__
+    // The downloads under way listed for VitaPlex's quick menu plugin
+    // (qm_protocol.h, QM_CMD_DOWNLOADS), which carries them on from inside
+    // SceShell once VitaPlex has gone. On the UI thread as VitaPlex closes;
+    // true when the plugin has them.
+    bool handOverToShell();
+    // What SceShell made of the downloads handed to it, once it has stopped:
+    // on the download thread, before it downloads anything.
+    void takeBackFromShell();
+    // What asking the plugin for them back gave as VitaPlex opened: 0 when it
+    // was asked, the pipe's absence when no plugin was there to ask.
+    int m_shellTakeRc = -1;
+#endif
 
     // Validate that downloaded files actually exist on disk
     void validateDownloadedFiles();

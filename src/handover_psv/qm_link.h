@@ -75,6 +75,16 @@ int qmTakeBack(void);
 // (QM_CMD_INSTALL_UPDATE). 0 when sent.
 int qmInstallUpdate(void);
 
+// As VitaPlex goes: SceShell carries on the downloads written to
+// QM_DOWNLOADS_LIST first, once VitaPlex has gone (QM_CMD_DOWNLOADS). 0 when
+// sent.
+int qmCarryDownloads(void);
+// As VitaPlex opens: SceShell stops the downloads it carries on
+// (QM_CMD_TAKE_DOWNLOADS). As qmTakeBack, sent only to a plugin that is in
+// SceShell, and never loads it: 0 when sent, else the code (the pipe's
+// absence when the plugin is not there, and nothing carried on).
+int qmTakeDownloads(void);
+
 // A press waiting on the row, or QM_NONE. Never waits.
 int qmPoll(void);
 

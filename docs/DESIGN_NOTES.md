@@ -566,6 +566,11 @@ Matching that would mean a proprietary toolchain, a kernel plugin, and a
 different distribution model for an Apache-2.0 repo. Notifications are the part
 that is reachable with open vitasdk, so notifications are the part we do.
 
+That held for the system's download list. It does not hold for downloads as
+such any more: VitaPlex has had code of its own in SceShell since its quick
+menu plugin, and that code fetches from the server already. It carries
+VitaPlex's downloads on now ("Downloads after leaving", below).
+
 ### Vita: background audio (settled in build 2047)
 
 Where it ended up (build 2047, below): VitaPlex.vpk is a non-game app that
@@ -3572,6 +3577,48 @@ closed, VitaPlex goes on updating it once a second, and its return codes
 were never looked at. Now the first `ProgressUpdate` failure of each
 notification is logged, and any `ProgressFinish` failure, so that one run of
 tapping and closing it shows the events and what becomes of the updates.
+
+**Downloads after leaving (protocol 16).** A download stopped when the
+system closed VitaPlex for a game, and went on only once VitaPlex was opened
+again (build 2058, above). The quick menu plugin already fetched songs from
+the server inside SceShell, which no game closes, so it now carries the
+downloads on too, songs and videos alike, with the setting "Downloads After
+Leaving VitaPlex" (on by default):
+
+- As VitaPlex closes with downloads running (`noteAppClosing`), it lists
+  them for SceShell (`handOverToShell`, `QM_DOWNLOADS_LIST`), each with its
+  file and how the server is to be asked for it: the download queue's item
+  when the server has prepared one (`queue`), else the add's query and
+  profile, built by the same code as VitaPlex's own add (`queueAddOf`), so
+  that the plugin adds it as VitaPlex would have (`add`). The download queue
+  is the client's, so the list carries VitaPlex's client id, platform and
+  device, which the plugin sends instead of its own. An HLS transcode,
+  VitaPlex's last resort when the queue fails, is not something the plugin
+  can do; such a download fails there and goes on in VitaPlex.
+- Only once the plugin has the list does VitaPlex stop its own download.
+  The plugin touches no file before VitaPlex has gone, and a download of
+  VitaPlex's stopped as its answer comes no longer opens its file (which a
+  200 answer would have truncated). The items are kept with `withShell`, as
+  begun, and VitaPlex's progress notification ends with "Going on in the
+  background".
+- The plugin carries them on one at a time from where each file ends
+  (`dlFetch`), writes its status every 2 s, and shows its progress in a
+  progress notification of SceShell's own: SceNotificationUtil, found in
+  SceShell or loaded there through SceSysmodule, with the handler at 0x4E8
+  as above. Whether that module behaves in SceShell as in an app is the
+  first thing to see on the console; the downloads go on without it if it
+  refuses.
+- As VitaPlex opens it asks for them back (`QM_CMD_TAKE_DOWNLOADS`), and its
+  download thread, before it downloads anything, waits until the status says
+  `running=0`, or has not changed in 40 s (one request of SceShell's takes
+  at most 30 s, so that is a status left from before a restart), then takes
+  what SceShell made of each: done, the queue item it added, or gone from
+  the server (`takeBackFromShell`).
+- The fetch, server and download threads may now use Sony's HTTP library at
+  once for long, so they share its start and end (`g_netLock`): before, one
+  thread's end could have ended the library under another's request.
+
+None of this has run on the console yet.
 
 ### PS4: the popup, and nothing to hang progress on
 
