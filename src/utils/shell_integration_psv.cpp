@@ -42,7 +42,6 @@
 #include "qm_link.h"
 
 #if defined(VITAPLEX_HAVE_PSV_NOTIFY)
-#include <psp2/io/stat.h>
 #include <psp2/notificationutil.h>
 #include <psp2/sysmodule.h>
 #endif
@@ -239,12 +238,7 @@ void setProgress(double fraction, const std::string& title,
         SceNotificationUtilProgressInitParam& p = begin.p;
         toUtf16(title, p.notificationText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
         toUtf16(detail, p.notificationSubText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
-        toUtf16("Stop this download?", begin.cancelText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
-        // Its picture, tried as the plugin tries it (QM_NOTIFY_COVER): the
-        // cover's path at 0x100, the start of what the header names unk.
-        SceIoStat st;
-        if (sceIoGetstat(QM_NOTIFY_COVER, &st) >= 0)
-            std::strncpy(reinterpret_cast<char*>(p.unk), QM_NOTIFY_COVER, sizeof(p.unk) - 1);
+        toUtf16("Pause downloads?", begin.cancelText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
         // The handler goes in by offset, since the header's names for this
         // word and the next are what misled (onProgressEvent). The word it
         // calls eventHandler is passed to SceShell with the registration and

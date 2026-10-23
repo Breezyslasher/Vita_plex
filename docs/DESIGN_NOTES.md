@@ -3681,6 +3681,38 @@ at most 128 square (QM_NOTIFY_COVER), in the plugin's notification and in
 VitaPlex's own. A picture is given only as a notification begins, so it is
 the first download's for the run.
 
+**What SceShell does with Begin's parameters (build 2072).** Neither the
+poster nor any icon showed. The plugin wrote SceShell's main module
+(vs0:vsh/shell/shell.self, 0x541B74 bytes of code at 0x8107DB00 on firmware
+3.60) to the card once, and the server side reads plainly:
+
+- Method 0x7000B lands in a switch on `method - 0x70000` (0x81241F1A),
+  whose case 0xB takes the first parameter's byte (the client's BgApp flag)
+  and the second's buffer, and calls 0x812416FA. That copies 0x570 bytes of
+  the buffer into a job of 0x598 bytes, at +0x28, and queues it.
+- The job's run (0x8123F908) reads exactly four things of them: the two
+  lines at +0 and +0x80, the question at +0x4F0, and, when its first byte
+  is not 0, a byte string at +0x100, which it puts after
+  "type=USER_DEFINED&arg=" in the notification's record: an argument for
+  the notification's owner when it is opened, not a picture.
+- The owner, and with it the icon, is looked up from the calling process
+  (0x8123ED38, from the IPC connection and the BgApp flag). Nothing in the
+  parameters names one.
+
+So a notification shows its calling app's icon: VitaPlex's when VitaPlex
+begins it, none when the plugin begins it from SceShell, and no poster
+either way. The pictures in a PS Store download's notification come from
+its BGDL task (ux0:bgdl/t/...), a different system. The cover, the path at
+0x100 and the dump are gone again.
+
+The question's answers, from three Yes and three No (builds 2070 to 2072):
+Yes sends the handler event 0, No sends nothing. Yes now pauses the
+downloads ("Pause downloads?"): the plugin stops those it carries on and
+says "paused=1" in its status, which VitaPlex keeps as it takes them back,
+paused rather than gone on with; while VitaPlex downloads, the plugin leaves
+QM_DOWNLOADS_PAUSE, which VitaPlex's download thread looks for once a second
+and pauses on.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

@@ -110,13 +110,14 @@ enum {
     QM_CMD_DL_PROGRESS_END
 };
 #define QM_PROGRESS_UNKNOWN 0xFFFFFFFFu
-// The picture for the download notification: the run's first download's
-// cover, a PNG of at most QM_NOTIFY_COVER_SIZE square, written by VitaPlex
-// before its first QM_CMD_DL_PROGRESS of a run. Its path goes in Begin's
-// parameters at 0x100, where Finish has a path of its own; whether the
-// notification shows it is what build 2071 tries.
-#define QM_NOTIFY_COVER      "ux0:data/VitaPlex/notify-cover.png"
-#define QM_NOTIFY_COVER_SIZE 128
+// The notification's question (the third line of Begin's parameters, at
+// 0x4F0) answered Yes: the downloads pause. SceShell sends the plugin event 0
+// for Yes, and nothing for No (build 2072). The plugin pauses those it
+// carries on itself ("paused=1" in QM_DOWNLOADS_STATUS); while VitaPlex
+// downloads, it leaves this file, which VitaPlex's download thread looks for
+// once a second and pauses on.
+#define QM_DOWNLOADS_PAUSE "ux0:data/VitaPlex/handover-downloads-pause"
+
 enum { QM_OWNER_APP = 1 };
 
 // VitaPlex's update for the plugin to install (QM_CMD_INSTALL_UPDATE): the
@@ -152,6 +153,7 @@ enum { QM_OWNER_APP = 1 };
 // The status, SceShell's:
 //   written=<as above>
 //   running=<1 while SceShell carries them on, 0 once it has stopped>
+//   paused=<1 when the notification's question was answered Yes>
 //   item=<ratingKey> <state> <bytes in its file> <its full size, 0 if not
 //        known> <the queue's id> <the queue item's id>   tab-separated
 //   end

@@ -344,13 +344,6 @@ void DownloadsManager::startDownloads() {
     // that can overflow the Vita's default 256KB thread stack.
     asyncRunLargeStack([this]() {
         m_downloadThreadActive.store(true);
-#ifdef __vita__
-        // The run's first download's cover, for its notification: a poster or
-        // an album's art, as a PNG the quick menu plugin points the
-        // notification's Begin at (QM_NOTIFY_COVER). Fetched once a run, as a
-        // notification's picture is given only as it begins.
-        bool coverFetched = false;
-#endif
         // Fresh run, fresh tally — the drain path clears these too, but only
         // if it is reached, and a run can end without getting there.
         m_runCompleted = 0;
@@ -358,6 +351,8 @@ void DownloadsManager::startDownloads() {
         m_lastProgressBytes = 0;
         brls::Logger::info("DownloadsManager: Download thread started");
 #ifdef __vita__
+        // A pause asked for before this run began is not one for it.
+        sceIoRemove(QM_DOWNLOADS_PAUSE);
         takeBackFromShell();
         // The quick menu plugin loaded into SceShell now, off the UI thread,
         // so that handing the downloads over as VitaPlex closes does not wait
@@ -400,15 +395,6 @@ void DownloadsManager::startDownloads() {
                 // pointer to the deque element, which would be invalidated if
                 // the deque is modified (e.g. by clearCompleted/purge).
                 DownloadItem* nextItem = findItemByKey(nextRatingKey);
-#ifdef __vita__
-                if (nextItem && !coverFetched && !shell::progressInShell()) {
-                    coverFetched = true;
-                    sceIoRemove(QM_NOTIFY_COVER);
-                    const bool got = fetchCoverPng(*nextItem, QM_NOTIFY_COVER_SIZE, QM_NOTIFY_COVER);
-                    brls::Logger::info("DownloadsManager: notification picture for {}: {}",
-                                       nextItem->title, got ? "fetched" : "none");
-                }
-#endif
                 if (nextItem && nextItem->state != DownloadState::CANCELLED) {
                     brls::Logger::info("DownloadsManager: Starting download of {}", nextItem->title);
                     downloadItem(*nextItem);
@@ -972,6 +958,17 @@ static std::string buildDirectDownloadUrl(const std::string& serverUrl, const st
     return url;
 }
 
+#ifdef __vita__
+// The download notification's question answered Yes, while VitaPlex
+// downloads: the quick menu plugin, which shows the notification, leaves
+// QM_DOWNLOADS_PAUSE (qm_protocol.h). Taken, so that it pauses once.
+static bool pauseAskedFromShell() {
+    if (sceIoRemove(QM_DOWNLOADS_PAUSE) < 0) return false;
+    brls::Logger::info("DownloadsManager: paused from the download notification");
+    return true;
+}
+#endif
+
 // How waiting for an item of the download queue to be ready ended
 // (waitForQueueItem).
 enum class QueueWait {
@@ -1454,6 +1451,12 @@ static QueueWait waitForQueueItem(const std::string& baseUrl, const std::string&
             return QueueWait::Gone;
         }
         // deciding / waiting / processing — keep polling.
+#ifdef __vita__
+        if (pauseAskedFromShell()) {
+            DownloadsManager::getInstance().pauseDownloads();
+            return QueueWait::Stopped;
+        }
+#endif
 
         int wait = pollInterval(elapsedSec);
 #ifdef __vita__
@@ -1472,6 +1475,12 @@ void DownloadsManager::reportShellProgress(const DownloadItem& item) {
     if (nowMs - m_lastLauncherMs < 1000) return;
     const int64_t elapsedMs = nowMs - m_lastLauncherMs;
     m_lastLauncherMs = nowMs;
+#ifdef __vita__
+    if (pauseAskedFromShell()) {
+        pauseDownloads();
+        return;
+    }
+#endif
 
     // Negative means "working, size unknown" — an HLS download before its
     // segment count settles. Better an indeterminate bar than a 0% that looks
@@ -2748,6 +2757,9 @@ void DownloadsManager::takeBackFromShell() {
         at = end + 1;
     }
 
+    // Paused from the notification as SceShell carried them on: left paused,
+    // not gone on with as VitaPlex opens.
+    const bool paused = noteValue(status, "paused") == "1";
     int done = 0, going = 0;
     std::vector<std::string> covers;
     {
@@ -2779,7 +2791,7 @@ void DownloadsManager::takeBackFromShell() {
                 }
                 if (it->second.total > 0) item.totalBytes = it->second.total;
             }
-            item.state = DownloadState::QUEUED;
+            item.state = paused ? DownloadState::PAUSED : DownloadState::QUEUED;
             item.downloadedBytes = onDisk;
             going++;
         }
@@ -2788,8 +2800,8 @@ void DownloadsManager::takeBackFromShell() {
     sceIoRemove(QM_DOWNLOADS_LIST);
     sceIoRemove(QM_DOWNLOADS_STATUS);
     brls::Logger::info("DownloadsManager: taken back from SceShell: {} done there, {} to go on "
-                       "with here",
-                       done, going);
+                       "with here{}",
+                       done, going, paused ? ", paused from the notification" : "");
     for (const auto& key : covers) {
         DownloadItem* item = findItemByKey(key);
         if (item) downloadCoverArt(*item);
