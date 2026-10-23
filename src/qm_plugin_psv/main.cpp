@@ -4612,6 +4612,9 @@ struct NotifyFinishParam {
     char path[0x3E8];
 };
 const uint32_t kNotifyHandlerOffset = 0x4E8;
+// Where the picture's path is tried (QM_NOTIFY_COVER): 0x100, the start of the
+// 0x3E6 bytes vitasdk leaves unnamed, where Finish has its path.
+const uint32_t kNotifyPictureOffset = 0x100;
 // Begin sends SceShell 0x570 bytes of its parameters, not the 0x4F0 vitasdk's
 // struct has (the method 0x7000B call in Begin's code, read from the build
 // 2058 dump): the 0x80 after it are a third line, the question SceShell asks
@@ -4695,11 +4698,16 @@ void notifyShow16(const uint16_t* text, const uint16_t* sub, float progress) {
         lineOf(g_notifyParam.begin.t.text, text);
         lineOf(g_notifyParam.begin.t.sub, sub);
         fromUtf8("Stop this download?", g_notifyParam.begin.cancelText, 63);
+        // Its picture, tried: the cover's path at 0x100, a byte string as
+        // Finish's path there is (QM_NOTIFY_COVER).
+        const bool cover = exists(QM_NOTIFY_COVER);
+        if (cover) copyText((char*)&g_notifyParam.begin + kNotifyPictureOffset, QM_NOTIFY_COVER, 0x3E6);
         void (*handler)(int) = &notifyEvent;
         sceClibMemcpy((uint8_t*)&g_notifyParam.begin + kNotifyHandlerOffset, &handler,
                       sizeof(handler));
         const int rc = ((FnNotify)g_notify[kNotifyBegin].fn)(&g_notifyParam.begin);
-        logLine("notification: begun: 0x%08X", (unsigned)rc);
+        logLine("notification: begun: 0x%08X, %s", (unsigned)rc,
+                cover ? "with the cover's path at 0x100" : "with no cover");
         if (rc < 0) {
             g_notifyFound = -1;  // not tried again this boot
         } else {

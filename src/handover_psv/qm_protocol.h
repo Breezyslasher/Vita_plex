@@ -110,6 +110,13 @@ enum {
     QM_CMD_DL_PROGRESS_END
 };
 #define QM_PROGRESS_UNKNOWN 0xFFFFFFFFu
+// The picture for the download notification: the run's first download's
+// cover, a PNG of at most QM_NOTIFY_COVER_SIZE square, written by VitaPlex
+// before its first QM_CMD_DL_PROGRESS of a run. Its path goes in Begin's
+// parameters at 0x100, where Finish has a path of its own; whether the
+// notification shows it is what build 2071 tries.
+#define QM_NOTIFY_COVER      "ux0:data/VitaPlex/notify-cover.png"
+#define QM_NOTIFY_COVER_SIZE 128
 enum { QM_OWNER_APP = 1 };
 
 // VitaPlex's update for the plugin to install (QM_CMD_INSTALL_UPDATE): the

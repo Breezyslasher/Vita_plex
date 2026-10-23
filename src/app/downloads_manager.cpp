@@ -344,6 +344,13 @@ void DownloadsManager::startDownloads() {
     // that can overflow the Vita's default 256KB thread stack.
     asyncRunLargeStack([this]() {
         m_downloadThreadActive.store(true);
+#ifdef __vita__
+        // The run's first download's cover, for its notification: a poster or
+        // an album's art, as a PNG the quick menu plugin points the
+        // notification's Begin at (QM_NOTIFY_COVER). Fetched once a run, as a
+        // notification's picture is given only as it begins.
+        bool coverFetched = false;
+#endif
         // Fresh run, fresh tally — the drain path clears these too, but only
         // if it is reached, and a run can end without getting there.
         m_runCompleted = 0;
@@ -393,6 +400,15 @@ void DownloadsManager::startDownloads() {
                 // pointer to the deque element, which would be invalidated if
                 // the deque is modified (e.g. by clearCompleted/purge).
                 DownloadItem* nextItem = findItemByKey(nextRatingKey);
+#ifdef __vita__
+                if (nextItem && !coverFetched && !shell::progressInShell()) {
+                    coverFetched = true;
+                    sceIoRemove(QM_NOTIFY_COVER);
+                    const bool got = fetchCoverPng(*nextItem, QM_NOTIFY_COVER_SIZE, QM_NOTIFY_COVER);
+                    brls::Logger::info("DownloadsManager: notification picture for {}: {}",
+                                       nextItem->title, got ? "fetched" : "none");
+                }
+#endif
                 if (nextItem && nextItem->state != DownloadState::CANCELLED) {
                     brls::Logger::info("DownloadsManager: Starting download of {}", nextItem->title);
                     downloadItem(*nextItem);
@@ -2354,7 +2370,12 @@ std::string DownloadsManager::smallCoverPath(const std::string& thumbPath) {
 
 bool DownloadsManager::downloadSmallCover(const DownloadItem& item) {
     const std::string path = smallCoverPath(item.thumbPath);
-    if (path.empty() || item.thumbUrl.empty()) return false;
+    if (path.empty()) return false;
+    return fetchCoverPng(item, QM_ART_SIZE, path);
+}
+
+bool DownloadsManager::fetchCoverPng(const DownloadItem& item, int size, const std::string& path) {
+    if (item.thumbUrl.empty()) return false;
     PlexClient& client = PlexClient::getInstance();
     const std::string serverUrl = client.getServerUrl();
     const std::string token = client.getAuthToken();
@@ -2362,7 +2383,7 @@ bool DownloadsManager::downloadSmallCover(const DownloadItem& item) {
     // As the plugin asks for the covers it fetches itself (its fetchCover).
     const std::string url = convertToHttpForDownload(
         serverUrl + "/photo/:/transcode?url=" + HttpClient::urlEncode(item.thumbUrl) +
-        "&width=" + std::to_string(QM_ART_SIZE) + "&height=" + std::to_string(QM_ART_SIZE) +
+        "&width=" + std::to_string(size) + "&height=" + std::to_string(size) +
         "&minSize=1&upscale=1&format=png&X-Plex-Token=" + token);
     std::string png;
     HttpClient http;

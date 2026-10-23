@@ -3667,6 +3667,20 @@ for VitaPlex to go on with (ended after 30 s if it does not). VitaPlex
 falls back to its own notification only when the plugin is not there, and
 keeps whichever it began with until it ends.
 
+Build 2070 on the console: one notification throughout, begun by the
+plugin as VitaPlex began the download and gone on with as SceShell
+carried it on; the hand-over took 3 s with the plugin loaded beforehand.
+
+**The notification's picture: tried at 0x100 (build 2071).** A poster or
+album art in place of the icon. Begin's client sends its parameters
+untouched, so the dump cannot say which of them is a picture. Finish has a
+byte-string path at 0x100 of the same size as the 0x3E6 bytes Begin leaves
+unnamed there, so the first try is the cover's path at 0x100 of Begin: the
+run's first download's cover from the server's photo transcoder, a PNG of
+at most 128 square (QM_NOTIFY_COVER), in the plugin's notification and in
+VitaPlex's own. A picture is given only as a notification begins, so it is
+the first download's for the run.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

@@ -239,6 +239,9 @@ private:
     // when it is on the card. And those of the tracks downloaded before it
     // was made, once.
     bool downloadSmallCover(const DownloadItem& item);
+    // The item's cover from the server's photo transcoder as a PNG of at most
+    // size square, written whole to path. true when it is there.
+    bool fetchCoverPng(const DownloadItem& item, int size, const std::string& path);
     void fillSmallCovers();
 #endif
 
