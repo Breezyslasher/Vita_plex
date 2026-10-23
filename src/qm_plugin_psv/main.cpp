@@ -4642,6 +4642,11 @@ union {
     NotifyUpdateParam update;
     NotifyFinishParam finish;
 } g_notifyParam;
+// Its owner, VitaPlex, for its icon (statusAsVitaPlex, by the BGM hook):
+// the hook, and the window after a Begin in which it answers.
+TaiHookRef g_statusHookRef;
+SceUInt64 g_ownerUntilUs;  // atomic: the window open, until then
+const SceUInt64 kOwnerWindowUs = 5ull * 1000 * 1000;
 // How long a notification left showing as VitaPlex takes the downloads back
 // waits for VitaPlex to go on with it before it is ended.
 const SceUInt64 kNotifyHeldUs = 30ull * 1000 * 1000;
@@ -4707,6 +4712,10 @@ void notifyShow16(const uint16_t* text, const uint16_t* sub, float progress) {
         void (*handler)(int) = &notifyEvent;
         sceClibMemcpy((uint8_t*)&g_notifyParam.begin + kNotifyHandlerOffset, &handler,
                       sizeof(handler));
+        // Its owner VitaPlex, for its icon (statusAsVitaPlex).
+        if (g_statusHookRef)
+            __atomic_store_n(&g_ownerUntilUs, sceKernelGetSystemTimeWide() + kOwnerWindowUs,
+                             __ATOMIC_SEQ_CST);
         const int rc = ((FnNotify)g_notify[kNotifyBegin].fn)(&g_notifyParam.begin);
         logLine("notification: begun: 0x%08X", (unsigned)rc);
         if (rc < 0) {
@@ -5619,6 +5628,36 @@ int bgmStateCapped(BgmState* state) {
     return ret;
 }
 
+// ── The download notification's owner ──────────────────────────────────────
+// A notification shows its owner's icon, and SceShell finds the owner of one
+// begun through SceNotificationUtil by asking sceAppMgrGetStatusByAppId
+// (SceAppMgrUser 0x47958DE5) about the app that called (0x8123ED38 on 3.60,
+// read from SceShell's code, build 2072): the title id at 0xC of the status,
+// used when the byte at 0x70 is 0, else NPXS10998 or NPXS10999 for 1 and 2.
+// The plugin's caller is SceShell, no app, and its notification had no icon.
+// So for the one lookup after the plugin begins its notification
+// (notifyOwnerFor), the answer is VitaPlex: its title, and its icon. Only an
+// answer that names no app is changed, so that a game's own is never taken,
+// and only once, within kOwnerWindowUs of the Begin.
+const uint32_t kStatusTitleId = 0xC, kStatusKind = 0x70, kStatusSize = 0x74;
+
+int statusAsVitaPlex(int appId, uint8_t* status) {
+    const TaiHookUser* cur = (const TaiHookUser*)g_statusHookRef;
+    const TaiHookUser* next = (const TaiHookUser*)cur->next;
+    typedef int (*Fn)(int, uint8_t*);
+    const int ret = next ? ((Fn)next->func)(appId, status) : ((Fn)cur->old)(appId, status);
+    const SceUInt64 until = __atomic_load_n(&g_ownerUntilUs, __ATOMIC_SEQ_CST);
+    if (!until || !status || sceKernelGetSystemTimeWide() > until) return ret;
+    if (ret >= 0 && status[kStatusKind] == 0) return ret;  // an app: its own
+    __atomic_store_n(&g_ownerUntilUs, 0, __ATOMIC_SEQ_CST);
+    logLine("notification: owner lookup for app 0x%X gave 0x%08X, kind %d; answered VitaPlex",
+            (unsigned)appId, (unsigned)ret, ret >= 0 ? (int)status[kStatusKind] : -1);
+    if (ret < 0) sceClibMemset(status, 0, kStatusSize);
+    status[kStatusKind] = 0;
+    copyText((char*)status + kStatusTitleId, VITAPLEX_TITLEID, 10);
+    return 0;
+}
+
 }  // namespace
 
 extern "C" int module_start(SceSize args, const void* argp) {
@@ -5666,6 +5705,11 @@ extern "C" int module_start(SceSize args, const void* argp) {
     hook.hook_func = (const void*)bgmStateCapped;
     const SceUID hooked = vitaplexQmHookFunctionImport(&g_bgmHookRef, &hook);
     if (hooked < 0) logLine("BGM priority SceShell reads not capped: 0x%08X", (unsigned)hooked);
+    hook.func_nid = 0x47958DE5;  // sceAppMgrGetStatusByAppId, in the same library
+    hook.hook_func = (const void*)statusAsVitaPlex;
+    const SceUID hookedStatus = vitaplexQmHookFunctionImport(&g_statusHookRef, &hook);
+    if (hookedStatus < 0)
+        logLine("the download notification's owner not hooked: 0x%08X", (unsigned)hookedStatus);
 
     // PAF's list of what its main (UI) thread calls each time round its loop;
     // ElevenMPV-A's app imports Register, so its NID is the console's.

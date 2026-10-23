@@ -3713,6 +3713,16 @@ paused rather than gone on with; while VitaPlex downloads, the plugin leaves
 QM_DOWNLOADS_PAUSE, which VitaPlex's download thread looks for once a second
 and pauses on.
 
+**VitaPlex's icon on the plugin's notification (a try).** The owner lookup
+(0x8123ED38) calls sceAppMgrGetStatusByAppId (SceAppMgrUser 0x47958DE5,
+which SceShell imports) about the calling app, and takes the title id at
+0xC of the status when the byte at 0x70 is 0; 1 and 2 stand for the system
+titles NPXS10998 and NPXS10999. The plugin hooks that import, as it hooks
+sceAppMgrGetCurrentBgmState2 in the same library, and for the one lookup
+within 5 s of its Begin that names no app (failed, or a system kind) it
+answers VitaPlex's title id with kind 0. A lookup answering an app, a game
+running, is left alone. The log says what the lookup first gave.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

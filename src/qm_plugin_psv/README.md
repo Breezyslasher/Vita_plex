@@ -177,8 +177,11 @@ the plugin.
   not there. Its question, "Pause downloads?", sends event 0 for Yes and
   nothing for No: Yes pauses the downloads, here or in VitaPlex
   (`QM_DOWNLOADS_PAUSE`). A notification shows its calling app's icon, so
-  this one, begun from SceShell, shows none; SceShell takes no picture from
-  the parameters (docs/DESIGN_NOTES.md).
+  this one, begun from SceShell, would show none; SceShell takes no picture
+  from the parameters (docs/DESIGN_NOTES.md). So the plugin hooks
+  SceShell's import of `sceAppMgrGetStatusByAppId`, which it asks the owner
+  with, and answers VitaPlex for the one lookup after its Begin that names
+  no app: VitaPlex's icon.
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system
