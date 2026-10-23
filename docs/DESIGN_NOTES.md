@@ -3641,6 +3641,20 @@ offsets, "0100|010A|...", so that whatever the question shows says where
 it reads; a question still showing two such characters reads somewhere
 else, the handler's word at 0x4E8 the likeliest.
 
+**The question is at 0x4F0: Begin's parameters are 0x570 bytes.** Read
+from build 2058's dump, which holds SceNotificationUtil's code (0xB58
+bytes at 0x81DEA000, exports Begin 0x81DEA1E3, Update 0x81DEA299, Finish
+0x81DEA2CD): Begin sends SceShell its parameters through method 0x7000B
+as one buffer of 0x570 bytes, Update 0x104 and Finish 0x4E8. vitasdk's
+struct for Begin stops at 0x4F0, and the 0x80 after it are a third
+line of 63 UTF-16 units and a 0: the question. SceShell read whatever
+followed the struct, which was zeros after the plugin's and two words of
+the stack after the app's, 鍝胳. Both now give the struct its third line
+("Stop downloading in the background?" from SceShell, "Stop this
+download?" from VitaPlex), and the probe of build 2065 is gone without
+having run. What 0x100 to 0x4E6 holds is still not known: the client
+sends it as it is.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

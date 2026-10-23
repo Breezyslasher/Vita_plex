@@ -72,24 +72,18 @@ bool g_updateFailLogged = false;
 // the handler must not call back into SceNotificationUtil. What the events
 // mean is not known yet, so they are logged.
 constexpr std::size_t kProgressHandlerOffset = 0x4E8;
-// The question SceShell asks when the notification's cancel is pressed, with
-// No and Yes under it: blank with the parameters zeroed (build 2063), and two
-// characters of something else with a line of text at 0x100 (build 2064).
-// Where it is read from is found as the quick menu plugin finds it for its
-// own (notifyProbe there): the part of the parameters the header leaves
-// unnamed, up to 0x4E0, filled with labels of where each is, "0100|010A|...",
-// in UTF-16 (build 2065). A probe, taken out once it has said.
-constexpr std::size_t kProgressProbeFrom = 0x100, kProgressProbeTo = 0x4E0;
-static_assert(kProgressProbeTo <= kProgressHandlerOffset, "the labels stop before the handler");
-void progressProbe(unsigned char* param) {
-    static const char kHex[] = "0123456789ABCDEF";
-    for (std::size_t at = kProgressProbeFrom; at + 10 <= kProgressProbeTo; at += 10) {
-        const SceWChar16 l[5] = {(SceWChar16)kHex[(at >> 12) & 15], (SceWChar16)kHex[(at >> 8) & 15],
-                                 (SceWChar16)kHex[(at >> 4) & 15], (SceWChar16)kHex[at & 15],
-                                 (SceWChar16)'|'};
-        std::memcpy(param + at, l, sizeof(l));
-    }
-}
+// Begin sends SceShell 0x570 bytes of its parameters, not the 0x4F0 of
+// vitasdk's struct (the method 0x7000B call in Begin's code, read from the
+// build 2058 dump): the 0x80 after the struct are a third line, the question
+// SceShell asks when the notification's cancel is pressed, with No and Yes
+// under it. With only the struct, the question was the two characters of
+// stack that followed it (builds 2063 to 2065).
+struct ProgressBeginParam {
+    SceNotificationUtilProgressInitParam p;
+    SceWChar16 cancelText[SCE_NOTIFICATIONUTIL_TEXT_MAX];
+    SceInt16 separator2;  // must be 0, as the others
+};
+static_assert(sizeof(ProgressBeginParam) == 0x570, "Begin sends 0x570 bytes");
 static_assert(sizeof(void (*)(int)) == sizeof(SceInt32),
               "the handler is one word, before the one at 0x4EC");
 static_assert(kProgressHandlerOffset + sizeof(SceInt32)
@@ -199,10 +193,11 @@ void setProgress(double fraction, const std::string& title,
     }
 
     if (!g_progressLive) {
-        SceNotificationUtilProgressInitParam p = {};
+        ProgressBeginParam begin = {};
+        SceNotificationUtilProgressInitParam& p = begin.p;
         toUtf16(title, p.notificationText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
         toUtf16(detail, p.notificationSubText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
-        progressProbe(reinterpret_cast<unsigned char*>(&p));
+        toUtf16("Stop this download?", begin.cancelText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
         // The handler goes in by offset, since the header's names for this
         // word and the next are what misled (onProgressEvent). The word it
         // calls eventHandler is passed to SceShell with the registration and

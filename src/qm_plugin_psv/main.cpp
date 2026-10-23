@@ -4598,7 +4598,10 @@ struct NotifyText {
 struct NotifyBeginParam {
     NotifyText t;
     uint8_t rest[0x4F0 - sizeof(NotifyText)];
+    uint16_t cancelText[63];  // the question, at 0x4F0
+    int16_t sep2;
 };
+static_assert(sizeof(NotifyBeginParam) == 0x570, "Begin sends 0x570 bytes");
 struct NotifyUpdateParam {
     NotifyText t;
     float progress;
@@ -4609,27 +4612,12 @@ struct NotifyFinishParam {
     char path[0x3E8];
 };
 const uint32_t kNotifyHandlerOffset = 0x4E8;
-// The question SceShell asks when the notification's cancel is pressed, with
-// No and Yes under it: blank with the parameters zeroed (build 2063), and
-// with a line of text at 0x100 too (build 2064), where VitaPlex's own showed
-// two characters of something else. Where it is read from is found by
-// filling the part of the parameters the header leaves unnamed, up to 0x4E0,
-// with labels of where each is, "0100|010A|...", in UTF-16 (build 2065):
-// whatever the question shows says where it begins. A probe, taken out once
-// it has said.
-const uint32_t kNotifyProbeFrom = 0x100, kNotifyProbeTo = 0x4E0;
-void notifyProbe(uint8_t* param) {
-    static const char kHex[] = "0123456789ABCDEF";
-    uint16_t* const u = (uint16_t*)param;
-    for (uint32_t at = kNotifyProbeFrom; at + 10 <= kNotifyProbeTo; at += 10) {
-        uint16_t* const l = u + at / 2;
-        l[0] = (uint16_t)kHex[(at >> 12) & 15];
-        l[1] = (uint16_t)kHex[(at >> 8) & 15];
-        l[2] = (uint16_t)kHex[(at >> 4) & 15];
-        l[3] = (uint16_t)kHex[at & 15];
-        l[4] = '|';
-    }
-}
+// Begin sends SceShell 0x570 bytes of its parameters, not the 0x4F0 vitasdk's
+// struct has (the method 0x7000B call in Begin's code, read from the build
+// 2058 dump): the 0x80 after it are a third line, the question SceShell asks
+// when the notification's cancel is pressed, with No and Yes under it. With
+// the struct at 0x4F0 the question was whatever came after it in memory:
+// blank here, two characters of the stack in VitaPlex (builds 2063 to 2065).
 // The download thread's.
 int g_notifyFound;  // 0 not looked for, 1 there, -1 not there
 int g_notifyLive;   // Begin has shown it
@@ -4686,7 +4674,7 @@ void notifyShow(const char* text, const char* sub, float progress) {
     sceClibMemset(&g_notifyParam, 0, sizeof(g_notifyParam));
     if (!g_notifyLive) {
         notifyText(&g_notifyParam.begin.t, text, sub);
-        notifyProbe((uint8_t*)&g_notifyParam.begin);
+        fromUtf8("Stop downloading in the background?", g_notifyParam.begin.cancelText, 63);
         void (*handler)(int) = &notifyEvent;
         sceClibMemcpy((uint8_t*)&g_notifyParam.begin + kNotifyHandlerOffset, &handler,
                       sizeof(handler));
