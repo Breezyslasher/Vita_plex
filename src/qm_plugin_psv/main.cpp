@@ -4609,6 +4609,12 @@ struct NotifyFinishParam {
     char path[0x3E8];
 };
 const uint32_t kNotifyHandlerOffset = 0x4E8;
+// The question SceShell asks when the notification's cancel is pressed, with
+// No and Yes under it: blank with the parameters zeroed (build 2063). Taken
+// to be a third line of 63 UTF-16 units and a 0 at 0x100, right after the
+// two the header names, in the part it leaves unnamed; a guess, which the
+// dialog shows right or blank.
+const uint32_t kNotifyCancelTextOffset = 0x100;
 // The download thread's.
 int g_notifyFound;  // 0 not looked for, 1 there, -1 not there
 int g_notifyLive;   // Begin has shown it
@@ -4665,6 +4671,8 @@ void notifyShow(const char* text, const char* sub, float progress) {
     sceClibMemset(&g_notifyParam, 0, sizeof(g_notifyParam));
     if (!g_notifyLive) {
         notifyText(&g_notifyParam.begin.t, text, sub);
+        fromUtf8("Stop downloading in the background?",
+                 (uint16_t*)((uint8_t*)&g_notifyParam.begin + kNotifyCancelTextOffset), 63);
         void (*handler)(int) = &notifyEvent;
         sceClibMemcpy((uint8_t*)&g_notifyParam.begin + kNotifyHandlerOffset, &handler,
                       sizeof(handler));

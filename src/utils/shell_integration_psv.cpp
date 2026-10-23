@@ -72,6 +72,15 @@ bool g_updateFailLogged = false;
 // the handler must not call back into SceNotificationUtil. What the events
 // mean is not known yet, so they are logged.
 constexpr std::size_t kProgressHandlerOffset = 0x4E8;
+// The question SceShell asks when the notification's cancel is pressed, with
+// No and Yes under it, which was blank with the parameters zeroed (build
+// 2063): taken to be a third line of SCE_NOTIFICATIONUTIL_TEXT_MAX units and
+// a 0 right after the two the header names, at 0x100, in the part it leaves
+// unnamed. A guess, which the dialog shows right or blank.
+constexpr std::size_t kProgressCancelTextOffset = 0x100;
+static_assert(kProgressCancelTextOffset + (SCE_NOTIFICATIONUTIL_TEXT_MAX + 1) * sizeof(SceWChar16)
+                  <= kProgressHandlerOffset,
+              "the question is before the handler's word");
 static_assert(sizeof(void (*)(int)) == sizeof(SceInt32),
               "the handler is one word, before the one at 0x4EC");
 static_assert(kProgressHandlerOffset + sizeof(SceInt32)
@@ -184,6 +193,10 @@ void setProgress(double fraction, const std::string& title,
         SceNotificationUtilProgressInitParam p = {};
         toUtf16(title, p.notificationText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
         toUtf16(detail, p.notificationSubText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
+        toUtf16("Stop this download?",
+                reinterpret_cast<SceWChar16*>(reinterpret_cast<unsigned char*>(&p) +
+                                              kProgressCancelTextOffset),
+                SCE_NOTIFICATIONUTIL_TEXT_MAX);
         // The handler goes in by offset, since the header's names for this
         // word and the next are what misled (onProgressEvent). The word it
         // calls eventHandler is passed to SceShell with the registration and

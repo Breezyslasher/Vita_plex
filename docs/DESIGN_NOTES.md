@@ -3620,6 +3620,18 @@ Leaving VitaPlex" (on by default):
 
 None of this has run on the console yet.
 
+**Build 2063 on the console: it works.** A 374 MB movie handed over at
+106 MB went on in SceShell at about 0.85 MB/s while a game ran (log of
+13:18), its progress notification begun from SceShell without trouble
+(SceNotificationUtil loaded there through SceSysmodule, Begin 0). Pressing
+the notification's cancel brought up SceShell's question with No and Yes
+under it, and nothing in it, then event 0 reached the plugin's handler; the
+download went on. The question's text is taken to be a third line at 0x100 of
+Begin's parameters, in the part vitasdk leaves unnamed, after the two it
+names; both the app's notification and the plugin's now give one there. A
+guess: the next run shows it right or blank. Which event a Yes sends, and
+which a No, is not known yet, so neither stops anything.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which
