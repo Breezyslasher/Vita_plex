@@ -4647,53 +4647,110 @@ union {
 TaiHookRef g_statusHookRef;
 SceUInt64 g_ownerUntilUs;  // atomic: the window open, until then
 const SceUInt64 kOwnerWindowUs = 5ull * 1000 * 1000;
-// The title answered: VitaPlex's, or one of the plugin's own carrying the
-// download's cover as its icon (notifyCoverTitle). Under g_notifyLock, read
-// by the hook within the window.
-char g_ownerTitle[12];
-int g_coverSlot;  // the last of VPLXN0001..9 given a cover
-uint8_t g_coverBuf[8192];  // under g_notifyLock
+// The download's cover, QM_NOTIFY_COVER, as the notification's icon. A title
+// of the plugin's own carrying it (ur0:appmeta/VPLXN000n/icon0.png, build
+// 2076) showed none: SceShell knows a title's icon from more than that file.
+// So the owner stays VitaPlex, and while the icon is loaded (kIconWindowUs
+// after the Begin) SceShell's opens of VitaPlex's icon are given the cover
+// (ioOpenAsCover). Every appmeta or icon path it opens then is logged, as
+// what SceShell reads for a notification's icon is not known yet.
+TaiHookRef g_ioOpenHookRef;
+TaiHookRef g_ioStatHookRef;
+SceUInt64 g_iconUntilUs;  // atomic: the window open, until then
+int g_iconCover;          // atomic: a cover to give in the window
+int g_iconLogged;         // atomic: lines logged in this window
+const SceUInt64 kIconWindowUs = 15ull * 1000 * 1000;
+const int kIconLogMax = 24;
 
-// The download's cover (QM_NOTIFY_COVER) as the icon of a title of the
-// plugin's own, ur0:appmeta/VPLXN000n/icon0.png, the next n each time, so
-// that a notification shown earlier keeps its own; that title into
-// g_ownerTitle. VitaPlex's when there is no cover or it cannot be copied.
-// Under g_notifyLock.
+// Under g_notifyLock, before a Begin: the window opened, with the cover if
+// VitaPlex left one. The titles build 2076 made are removed once.
+bool g_coverTitlesGone;
 void notifyCoverTitle() {
-    copyText(g_ownerTitle, VITAPLEX_TITLEID, sizeof(g_ownerTitle));
-    const SceUID in = sceIoOpen(QM_NOTIFY_COVER, SCE_O_RDONLY, 0);
-    if (in < 0) return;
-    const int slot = g_coverSlot % 9 + 1;
-    char title[12], dir[48], path[64];
-    sceClibSnprintf(title, sizeof(title), "VPLXN000%d", slot);
-    sceClibSnprintf(dir, sizeof(dir), "ur0:appmeta/%s", title);
-    sceClibSnprintf(path, sizeof(path), "%s/icon0.png", dir);
-    sceIoMkdir(dir, 0777);
-    const SceUID out = sceIoOpen(path, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
-    int rc = out;
-    uint32_t size = 0;
-    if (out >= 0) {
-        for (;;) {
-            const int got = sceIoRead(in, g_coverBuf, sizeof(g_coverBuf));
-            if (got <= 0) {
-                rc = got;
-                break;
-            }
-            if (sceIoWrite(out, g_coverBuf, (SceSize)got) != got) {
-                rc = -1;
-                break;
-            }
-            size += (uint32_t)got;
+    if (!g_coverTitlesGone) {
+        g_coverTitlesGone = true;
+        char path[64];
+        for (int n = 1; n <= 9; n++) {
+            sceClibSnprintf(path, sizeof(path), "ur0:appmeta/VPLXN000%d/icon0.png", n);
+            if (sceIoRemove(path) < 0) continue;
+            sceClibSnprintf(path, sizeof(path), "ur0:appmeta/VPLXN000%d", n);
+            sceIoRmdir(path);
         }
-        sceIoClose(out);
     }
-    sceIoClose(in);
-    logLine("notification: the cover, %u bytes, as %s's icon: 0x%08X", (unsigned)size, title,
-            (unsigned)rc);
-    if (rc < 0 || size == 0) return;
-    g_coverSlot = slot;
-    copyText(g_ownerTitle, title, sizeof(g_ownerTitle));
+    SceIoStat st;
+    const bool cover = sceIoGetstat(QM_NOTIFY_COVER, &st) >= 0 && st.st_size > 0;
+    __atomic_store_n(&g_iconCover, cover ? 1 : 0, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&g_iconLogged, 0, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&g_iconUntilUs, sceKernelGetSystemTimeWide() + kIconWindowUs,
+                     __ATOMIC_SEQ_CST);
+    logLine("notification: the cover %s", cover ? "ready for its icon" : "not left by VitaPlex");
 }
+
+// Case-insensitive: whether `s` holds `part`.
+bool holdsNoCase(const char* s, const char* part) {
+    for (; *s; s++) {
+        int i = 0;
+        for (;; i++) {
+            char a = s[i], b = part[i];
+            if (!b) return true;
+            if (a >= 'a' && a <= 'z') a = (char)(a - 32);
+            if (b >= 'a' && b <= 'z') b = (char)(b - 32);
+            if (a != b) break;
+        }
+    }
+    return false;
+}
+
+bool iconWindowOpen() {
+    const SceUInt64 until = __atomic_load_n(&g_iconUntilUs, __ATOMIC_SEQ_CST);
+    return until && sceKernelGetSystemTimeWide() <= until;
+}
+
+bool iconPathOf(const char* path) {
+    return path && (holdsNoCase(path, "appmeta") || holdsNoCase(path, "icon0") ||
+                    holdsNoCase(path, VITAPLEX_TITLEID));
+}
+
+void iconLog(const char* what, const char* path, int ret) {
+    if (__atomic_add_fetch(&g_iconLogged, 1, __ATOMIC_SEQ_CST) > kIconLogMax) return;
+    logLine("notification: SceShell %s \"%s\": 0x%08X", what, path, (unsigned)ret);
+}
+
+SceUID ioOpenAsCover(const char* path, int flags, SceMode mode) {
+    const TaiHookUser* cur = (const TaiHookUser*)g_ioOpenHookRef;
+    const TaiHookUser* next = (const TaiHookUser*)cur->next;
+    typedef SceUID (*Fn)(const char*, int, SceMode);
+    const Fn call = next ? (Fn)next->func : (Fn)cur->old;
+    if (!iconWindowOpen() || !iconPathOf(path)) return call(path, flags, mode);
+    if (__atomic_load_n(&g_iconCover, __ATOMIC_SEQ_CST) && holdsNoCase(path, VITAPLEX_TITLEID) &&
+        holdsNoCase(path, "icon0.png")) {
+        const SceUID fd = call(QM_NOTIFY_COVER, flags, mode);
+        iconLog("opened, as the cover,", path, fd);
+        if (fd >= 0) return fd;
+    }
+    const SceUID fd = call(path, flags, mode);
+    iconLog("opened", path, fd);
+    return fd;
+}
+
+int ioStatAsCover(const char* path, SceIoStat* st) {
+    const TaiHookUser* cur = (const TaiHookUser*)g_ioStatHookRef;
+    const TaiHookUser* next = (const TaiHookUser*)cur->next;
+    typedef int (*Fn)(const char*, SceIoStat*);
+    const Fn call = next ? (Fn)next->func : (Fn)cur->old;
+    if (!iconWindowOpen() || !iconPathOf(path)) return call(path, st);
+    // The cover's size and times for VitaPlex's icon, so that what is read
+    // matches what was stat'd and a cache keyed by them sees a new picture.
+    if (__atomic_load_n(&g_iconCover, __ATOMIC_SEQ_CST) && holdsNoCase(path, VITAPLEX_TITLEID) &&
+        holdsNoCase(path, "icon0.png")) {
+        const int ret = call(QM_NOTIFY_COVER, st);
+        iconLog("stat'd, as the cover,", path, ret);
+        if (ret >= 0) return ret;
+    }
+    const int ret = call(path, st);
+    iconLog("stat'd", path, ret);
+    return ret;
+}
+
 // How long a notification left showing as VitaPlex takes the downloads back
 // waits for VitaPlex to go on with it before it is ended.
 const SceUInt64 kNotifyHeldUs = 30ull * 1000 * 1000;
@@ -4759,8 +4816,8 @@ void notifyShow16(const uint16_t* text, const uint16_t* sub, float progress) {
         void (*handler)(int) = &notifyEvent;
         sceClibMemcpy((uint8_t*)&g_notifyParam.begin + kNotifyHandlerOffset, &handler,
                       sizeof(handler));
-        // Its owner VitaPlex, or a title carrying the cover, for its icon
-        // (statusAsVitaPlex).
+        // Its owner VitaPlex, for its icon (statusAsVitaPlex), the cover
+        // given for VitaPlex's icon while it is loaded (ioOpenAsCover).
         if (g_statusHookRef) {
             notifyCoverTitle();
             __atomic_store_n(&g_ownerUntilUs, sceKernelGetSystemTimeWide() + kOwnerWindowUs,
@@ -5715,9 +5772,8 @@ int statusAsVitaPlex(int appId, uint8_t* status) {
     __atomic_store_n(&g_ownerUntilUs, 0, __ATOMIC_SEQ_CST);
     if (ret < 0) sceClibMemset(status, 0, kStatusSize);
     status[kStatusKind] = 0;
-    copyText((char*)status + kStatusTitleId, g_ownerTitle[0] ? g_ownerTitle : VITAPLEX_TITLEID,
-             10);
-    logLine("notification: owner answered as %s", g_ownerTitle[0] ? g_ownerTitle : VITAPLEX_TITLEID);
+    copyText((char*)status + kStatusTitleId, VITAPLEX_TITLEID, 10);
+    logLine("notification: owner answered as %s", VITAPLEX_TITLEID);
     return 0;
 }
 
@@ -5773,6 +5829,17 @@ extern "C" int module_start(SceSize args, const void* argp) {
     const SceUID hookedStatus = vitaplexQmHookFunctionImport(&g_statusHookRef, &hook);
     if (hookedStatus < 0)
         logLine("the download notification's owner not hooked: 0x%08X", (unsigned)hookedStatus);
+    // SceShell's file opens, for the notification's icon (ioOpenAsCover).
+    hook.library_nid = 0xFFFFFFFFu;  // TAI_ANY_LIBRARY
+    hook.func_nid = 0x6C60AC61;  // sceIoOpen
+    hook.hook_func = (const void*)ioOpenAsCover;
+    const SceUID hookedOpen = vitaplexQmHookFunctionImport(&g_ioOpenHookRef, &hook);
+    hook.func_nid = 0xBCA5B623;  // sceIoGetstat
+    hook.hook_func = (const void*)ioStatAsCover;
+    const SceUID hookedStat = vitaplexQmHookFunctionImport(&g_ioStatHookRef, &hook);
+    if (hookedOpen < 0 || hookedStat < 0)
+        logLine("SceShell's opens not hooked: 0x%08X, 0x%08X", (unsigned)hookedOpen,
+                (unsigned)hookedStat);
 
     // PAF's list of what its main (UI) thread calls each time round its loop;
     // ElevenMPV-A's app imports Register, so its NID is the console's.
