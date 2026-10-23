@@ -4610,11 +4610,26 @@ struct NotifyFinishParam {
 };
 const uint32_t kNotifyHandlerOffset = 0x4E8;
 // The question SceShell asks when the notification's cancel is pressed, with
-// No and Yes under it: blank with the parameters zeroed (build 2063). Taken
-// to be a third line of 63 UTF-16 units and a 0 at 0x100, right after the
-// two the header names, in the part it leaves unnamed; a guess, which the
-// dialog shows right or blank.
-const uint32_t kNotifyCancelTextOffset = 0x100;
+// No and Yes under it: blank with the parameters zeroed (build 2063), and
+// with a line of text at 0x100 too (build 2064), where VitaPlex's own showed
+// two characters of something else. Where it is read from is found by
+// filling the part of the parameters the header leaves unnamed, up to 0x4E0,
+// with labels of where each is, "0100|010A|...", in UTF-16 (build 2065):
+// whatever the question shows says where it begins. A probe, taken out once
+// it has said.
+const uint32_t kNotifyProbeFrom = 0x100, kNotifyProbeTo = 0x4E0;
+void notifyProbe(uint8_t* param) {
+    static const char kHex[] = "0123456789ABCDEF";
+    uint16_t* const u = (uint16_t*)param;
+    for (uint32_t at = kNotifyProbeFrom; at + 10 <= kNotifyProbeTo; at += 10) {
+        uint16_t* const l = u + at / 2;
+        l[0] = (uint16_t)kHex[(at >> 12) & 15];
+        l[1] = (uint16_t)kHex[(at >> 8) & 15];
+        l[2] = (uint16_t)kHex[(at >> 4) & 15];
+        l[3] = (uint16_t)kHex[at & 15];
+        l[4] = '|';
+    }
+}
 // The download thread's.
 int g_notifyFound;  // 0 not looked for, 1 there, -1 not there
 int g_notifyLive;   // Begin has shown it
@@ -4671,8 +4686,7 @@ void notifyShow(const char* text, const char* sub, float progress) {
     sceClibMemset(&g_notifyParam, 0, sizeof(g_notifyParam));
     if (!g_notifyLive) {
         notifyText(&g_notifyParam.begin.t, text, sub);
-        fromUtf8("Stop downloading in the background?",
-                 (uint16_t*)((uint8_t*)&g_notifyParam.begin + kNotifyCancelTextOffset), 63);
+        notifyProbe((uint8_t*)&g_notifyParam.begin);
         void (*handler)(int) = &notifyEvent;
         sceClibMemcpy((uint8_t*)&g_notifyParam.begin + kNotifyHandlerOffset, &handler,
                       sizeof(handler));

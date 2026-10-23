@@ -3632,6 +3632,15 @@ names; both the app's notification and the plugin's now give one there. A
 guess: the next run shows it right or blank. Which event a Yes sends, and
 which a No, is not known yet, so neither stops anything.
 
+**Build 2064: not at 0x100.** The plugin's question stayed blank, and the
+app's showed two CJK characters, 鍝胳 (U+935D U+80F3): one 32-bit word as
+UTF-16, 0x80F3935D, odd as a Thumb function's address is, and nothing of
+the text at 0x100. Neither log had an event. Build 2065 fills 0x100 to
+0x4E0 of Begin's parameters, in both, with UTF-16 labels of their own
+offsets, "0100|010A|...", so that whatever the question shows says where
+it reads; a question still showing two such characters reads somewhere
+else, the handler's word at 0x4E8 the likeliest.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

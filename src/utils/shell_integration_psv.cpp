@@ -73,14 +73,23 @@ bool g_updateFailLogged = false;
 // mean is not known yet, so they are logged.
 constexpr std::size_t kProgressHandlerOffset = 0x4E8;
 // The question SceShell asks when the notification's cancel is pressed, with
-// No and Yes under it, which was blank with the parameters zeroed (build
-// 2063): taken to be a third line of SCE_NOTIFICATIONUTIL_TEXT_MAX units and
-// a 0 right after the two the header names, at 0x100, in the part it leaves
-// unnamed. A guess, which the dialog shows right or blank.
-constexpr std::size_t kProgressCancelTextOffset = 0x100;
-static_assert(kProgressCancelTextOffset + (SCE_NOTIFICATIONUTIL_TEXT_MAX + 1) * sizeof(SceWChar16)
-                  <= kProgressHandlerOffset,
-              "the question is before the handler's word");
+// No and Yes under it: blank with the parameters zeroed (build 2063), and two
+// characters of something else with a line of text at 0x100 (build 2064).
+// Where it is read from is found as the quick menu plugin finds it for its
+// own (notifyProbe there): the part of the parameters the header leaves
+// unnamed, up to 0x4E0, filled with labels of where each is, "0100|010A|...",
+// in UTF-16 (build 2065). A probe, taken out once it has said.
+constexpr std::size_t kProgressProbeFrom = 0x100, kProgressProbeTo = 0x4E0;
+static_assert(kProgressProbeTo <= kProgressHandlerOffset, "the labels stop before the handler");
+void progressProbe(unsigned char* param) {
+    static const char kHex[] = "0123456789ABCDEF";
+    for (std::size_t at = kProgressProbeFrom; at + 10 <= kProgressProbeTo; at += 10) {
+        const SceWChar16 l[5] = {(SceWChar16)kHex[(at >> 12) & 15], (SceWChar16)kHex[(at >> 8) & 15],
+                                 (SceWChar16)kHex[(at >> 4) & 15], (SceWChar16)kHex[at & 15],
+                                 (SceWChar16)'|'};
+        std::memcpy(param + at, l, sizeof(l));
+    }
+}
 static_assert(sizeof(void (*)(int)) == sizeof(SceInt32),
               "the handler is one word, before the one at 0x4EC");
 static_assert(kProgressHandlerOffset + sizeof(SceInt32)
@@ -193,10 +202,7 @@ void setProgress(double fraction, const std::string& title,
         SceNotificationUtilProgressInitParam p = {};
         toUtf16(title, p.notificationText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
         toUtf16(detail, p.notificationSubText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
-        toUtf16("Stop this download?",
-                reinterpret_cast<SceWChar16*>(reinterpret_cast<unsigned char*>(&p) +
-                                              kProgressCancelTextOffset),
-                SCE_NOTIFICATIONUTIL_TEXT_MAX);
+        progressProbe(reinterpret_cast<unsigned char*>(&p));
         // The handler goes in by offset, since the header's names for this
         // word and the next are what misled (onProgressEvent). The word it
         // calls eventHandler is passed to SceShell with the registration and
