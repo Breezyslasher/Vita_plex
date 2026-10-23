@@ -525,13 +525,35 @@ one question that would otherwise need a device: `sceNotificationUtilBgAppInitia
 "does not need to be called for normal applications", so a plain VPK can drive
 the progress form without being a registered background app.
 
-Two shapes in that API are load-bearing and easy to get wrong.
+Three shapes in that API are load-bearing and easy to get wrong.
 `sceNotificationUtilSendNotification` wants a **0x410-byte buffer**, not a
 pointer to a short string. The progress structs cap text at
 `SCE_NOTIFICATIONUTIL_TEXT_MAX` (63) UTF-16 units, each array followed by a
 separator that must be zero — so zero-initialise and truncate, and the
 separator doubles as the terminator. Track titles exceed 63 units routinely, so
 truncation is the normal path, not the error path.
+
+The third is the progress notification's **event handler**, and there the
+header misleads. vitasdk's `SceNotificationUtilProgressInitParam` ends with
+`unk_4EC` ("can be set to 0"), which alignment puts at 0x4E8, then
+`eventHandler` at 0x4EC. The module's own code, read from the crash dump of
+log 677cc50f (firmware 3.60), says:
+
+- `ProgressBegin` keeps the word at **0x4E8** in a module global, and
+  registers a trampoline of its own with SceShellSvc for event 0x34,
+  passing the word at 0x4EC with it.
+- The trampoline calls that global, as `void(int)`, with the event id.
+- `ProgressUpdate` takes the module's lightweight mutex, sends the update,
+  then has SceShellSvc deliver event 0x34's waiting events. So the handler
+  runs inside `ProgressUpdate`, on the caller's thread, with the lock held,
+  and must not call back into the module.
+- `ProgressFinish` unregisters and zeroes the global.
+
+So the handler is the word at 0x4E8, and it cannot be 0. VitaPlex zeroed the
+whole struct until build 2059, and the first event was a call to address 0
+(build 2059 below). It now puts `onProgressEvent` there, by offset rather than
+by the header's names, and leaves the word at 0x4EC at 0, as it was when the
+event reached the handler.
 
 What this does **not** do is keep downloading once VitaPlex is suspended, and
 that gap is not closeable from here. Better Homebrew Browser manages it, and
@@ -3522,6 +3544,27 @@ back worse than it needed to be:
   from `Application::shutdown`).
 
 None of this has run on the console yet.
+
+**Build 2059: the download notification's event handler.** Build 2058
+crashed on the console (log 677cc50f and its core dump). The user downloaded
+a run of songs, then a movie, and pressed PS at 21:25:34. Thirteen seconds
+later, with the server preparing the movie (queue item `processing`), the
+main thread stopped with a prefetch abort at PC 0. LR was in
+SceNotificationUtil's event trampoline, the frames above it were in
+SceShellSvc's event delivery and then `ProgressUpdate`, and that was called
+from VitaPlex: the UI thread running the poll's "Preparing on server"
+`setProgress`. R0 and R1 were 0, so the event id was 0. The dump does not
+say what the event stood for, nor what in SceShell sent it.
+
+The handler was 0 because the progress notification has been begun with a
+zeroed struct since it was added (a636779). The header's names hid that the
+word at 0x4E8 is the handler ("Vita: notifications yes, background downloads
+no"). VitaPlex now gives `onProgressEvent`, which logs the event's id, so
+the next run says what the events are.
+
+The CI artifact with build 2058's ELF could not be fetched here (its storage
+host is not reachable), so the dump was read without symbols: the module's
+pages it holds, disassembled, and the stack's return addresses.
 
 ### PS4: the popup, and nothing to hang progress on
 

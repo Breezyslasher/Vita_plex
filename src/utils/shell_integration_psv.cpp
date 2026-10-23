@@ -19,11 +19,14 @@
  * That needs a proprietary toolchain and a kernel plugin; this needs neither,
  * and the cost is that downloads still stop when VitaPlex is suspended.
  *
- * Two shapes in the API are easy to get wrong and are load-bearing here:
+ * Three shapes in the API are easy to get wrong and are load-bearing here:
  * sceNotificationUtilSendNotification wants a 0x410-BYTE buffer, not a
  * pointer to a short string, and the progress structs cap text at
  * SCE_NOTIFICATIONUTIL_TEXT_MAX (63) UTF-16 units followed by a separator
  * that must be zero. Both are handled by zero-initialising and truncating.
+ * And the progress notification's event handler is the word at 0x4E8 of
+ * ProgressBegin's parameters, which the header names unk_4EC and says can
+ * be 0. It cannot (onProgressEvent).
  */
 
 #include "utils/shell_integration.hpp"
@@ -50,6 +53,29 @@ namespace {
 
 bool g_ready        = false;
 bool g_progressLive = false;
+
+// SceShell's events for the progress notification. ProgressBegin keeps the
+// word at kProgressHandlerOffset of its parameters and calls it, as
+// void(int), with each event SceShell sends for the notification;
+// ProgressFinish forgets it. vitasdk names that word unk_4EC ("can be set
+// to 0") and the next one, at 0x4EC, eventHandler, but the module's code
+// calls the one at 0x4E8 (DESIGN_NOTES, "Vita: notifications yes,
+// background downloads no"). Left 0, up to build 2058, an event was a call
+// to address 0: VitaPlex crashed in the background while the server
+// prepared a download (log 677cc50f). That event came from inside
+// ProgressUpdate, so on the UI thread, and with the module's lock held, so
+// the handler must not call back into SceNotificationUtil. What the events
+// mean is not known yet, so they are logged.
+constexpr std::size_t kProgressHandlerOffset = 0x4E8;
+static_assert(sizeof(void (*)(int)) == sizeof(SceInt32),
+              "the handler is one word, before the one at 0x4EC");
+static_assert(kProgressHandlerOffset + sizeof(SceInt32)
+                  <= sizeof(SceNotificationUtilProgressInitParam),
+              "the handler's word is inside ProgressBegin's parameters");
+
+void onProgressEvent(int eventId) {
+    brls::Logger::info("shell: progress notification event {}", eventId);
+}
 
 // UTF-8 to UTF-16, writing at most `max` code units and never splitting a
 // surrogate pair. Nothing is terminated: every caller passes a zeroed struct
@@ -152,9 +178,13 @@ void setProgress(double fraction, const std::string& title,
         SceNotificationUtilProgressInitParam p = {};
         toUtf16(title, p.notificationText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
         toUtf16(detail, p.notificationSubText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
-        // eventHandler is left null — it reports the user acting on the
-        // notification, and there is nothing here to act on. unk_4EC is
-        // documented as "can be set to 0", which zero-initialising did.
+        // The handler goes in by offset, since the header's names for this
+        // word and the next are what misled (onProgressEvent). The word it
+        // calls eventHandler is passed to SceShell with the registration and
+        // stays 0, as it was when events reached the handler.
+        void (*handler)(int) = &onProgressEvent;
+        std::memcpy(reinterpret_cast<unsigned char*>(&p) + kProgressHandlerOffset,
+                    &handler, sizeof(handler));
         const int rc = sceNotificationUtilProgressBegin(&p);
         if (rc < 0) {
             brls::Logger::debug("shell: ProgressBegin ({:#x}) — no progress notification",
