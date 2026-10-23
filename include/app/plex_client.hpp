@@ -9,7 +9,9 @@
 #include <string_view>
 #include <vector>
 #include <functional>
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <cstdint>
 
 namespace vitaplex {
@@ -754,6 +756,14 @@ private:
     std::string m_lineupUri;  // Lineup URI from DVR (e.g., "lineup://tv.plex.providers.epg.onconnect/...")
     std::vector<ChannelMapping> m_channelMappings;  // Channel mappings from DVR response
     std::string m_epgProviderKey;  // EPG provider key for grid queries (extracted from lineup URI)
+    // checkLiveTVAvailability one thread at a time, and the mappings it fills
+    // read under the same lock. The home screen's loads call it from more
+    // than one thread at once, and two of them clearing and refilling
+    // m_channelMappings freed the same strings twice (build 2066's crash, in
+    // _free_r under ~ChannelMapping). A thread that waited behind another's
+    // check takes its answer instead of asking again (m_liveTvChecks).
+    std::mutex m_liveTvMutex;
+    std::atomic<unsigned> m_liveTvChecks{0};
 };
 
 } // namespace vitaplex

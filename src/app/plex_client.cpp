@@ -4088,6 +4088,10 @@ bool PlexClient::probeLiveTV() {
 }
 
 void PlexClient::checkLiveTVAvailability() {
+    const unsigned seen = m_liveTvChecks.load();
+    std::lock_guard<std::mutex> liveTvLock(m_liveTvMutex);
+    if (m_liveTvChecks.load() != seen) return;  // checked meanwhile, by the thread waited for
+
     // Official Plex API: GET /livetv/dvrs Returns DVR list with key, lineup, uuid, Device array, and ChannelMapping
     HttpClient client;
     std::string url = buildApiUrl("/livetv/dvrs");
@@ -4209,6 +4213,7 @@ void PlexClient::checkLiveTVAvailability() {
                         m_lineupUri.empty() ? "(none)" : "set",
                         m_channelMappings.size(),
                         m_epgProviderKey.empty() ? "(none)" : m_epgProviderKey);
+    m_liveTvChecks++;
 }
 
 bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
@@ -4255,9 +4260,16 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
     // identifiers (lineup key vs lineupIdentifier), so channel.key alone left
     // duplicates of 4.1 / 4.2 / 4.3, 22.3 / 22.4, etc.
     std::set<std::string> seenChannelKeys;
+    // A copy, as another thread may check Live TV again meanwhile and refill
+    // the mappings (m_liveTvMutex).
+    std::vector<ChannelMapping> mappings;
+    {
+        std::lock_guard<std::mutex> liveTvLock(m_liveTvMutex);
+        mappings = m_channelMappings;
+    }
     auto commitChannel = [&](LiveTVChannel& channel, const std::string& identifier) {
         const ChannelMapping* matchedMapping = nullptr;
-        for (const auto& mapping : m_channelMappings) {
+        for (const auto& mapping : mappings) {
             if (!channel.key.empty() && channel.key == mapping.channelKey) {
                 matchedMapping = &mapping;
                 break;
@@ -4274,7 +4286,7 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
 
         // If we have no ChannelMapping data at all (some EPG providers don't),
         // fall back to the old behaviour so the EPG isn't empty.
-        if (!matchedMapping && !m_channelMappings.empty()) return;
+        if (!matchedMapping && !mappings.empty()) return;
         if (channel.callSign.empty() && channel.title.empty()) return;
 
         std::string dedupeKey = matchedMapping
