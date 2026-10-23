@@ -3553,8 +3553,9 @@ main thread stopped with a prefetch abort at PC 0. LR was in
 SceNotificationUtil's event trampoline, the frames above it were in
 SceShellSvc's event delivery and then `ProgressUpdate`, and that was called
 from VitaPlex: the UI thread running the poll's "Preparing on server"
-`setProgress`. R0 and R1 were 0, so the event id was 0. The dump does not
-say what the event stood for, nor what in SceShell sent it.
+`setProgress`. R0 and R1 were 0, so the event id was 0. The user had tapped
+the notification in SceShell and closed it. The dump does not say which of
+the two the 0 stands for.
 
 The handler was 0 because the progress notification has been begun with a
 zeroed struct since it was added (a636779). The header's names hid that the
@@ -3565,6 +3566,12 @@ the next run says what the events are.
 The CI artifact with build 2058's ELF could not be fetched here (its storage
 host is not reachable), so the dump was read without symbols: the module's
 pages it holds, disassembled, and the stack's return addresses.
+
+**Build 2060: what closing the notification does.** With the notification
+closed, VitaPlex goes on updating it once a second, and its return codes
+were never looked at. Now the first `ProgressUpdate` failure of each
+notification is logged, and any `ProgressFinish` failure, so that one run of
+tapping and closing it shows the events and what becomes of the updates.
 
 ### PS4: the popup, and nothing to hang progress on
 

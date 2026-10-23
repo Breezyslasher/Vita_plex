@@ -53,6 +53,10 @@ namespace {
 
 bool g_ready        = false;
 bool g_progressLive = false;
+// The user can close the notification in SceShell while downloads go on, and
+// what the updates do then is not known yet. Logging the first failure of
+// each notification says so without one line a second.
+bool g_updateFailLogged = false;
 
 // SceShell's events for the progress notification. ProgressBegin keeps the
 // word at kProgressHandlerOffset of its parameters and calls it, as
@@ -62,7 +66,8 @@ bool g_progressLive = false;
 // calls the one at 0x4E8 (DESIGN_NOTES, "Vita: notifications yes,
 // background downloads no"). Left 0, up to build 2058, an event was a call
 // to address 0: VitaPlex crashed in the background while the server
-// prepared a download (log 677cc50f). That event came from inside
+// prepared a download, after the user tapped the notification and closed it
+// (log 677cc50f). That event came from inside
 // ProgressUpdate, so on the UI thread, and with the module's lock held, so
 // the handler must not call back into SceNotificationUtil. What the events
 // mean is not known yet, so they are logged.
@@ -170,7 +175,8 @@ void setProgress(double fraction, const std::string& title,
         toUtf16(detail, p.notificationSubText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
         // path stays empty: it is where a finished download would point the
         // user, and there is nothing on the Vita to open a media file with.
-        sceNotificationUtilProgressFinish(&p);
+        const int rc = sceNotificationUtilProgressFinish(&p);
+        if (rc < 0) brls::Logger::info("shell: ProgressFinish ({:#x})", (unsigned)rc);
         return;
     }
 
@@ -192,6 +198,7 @@ void setProgress(double fraction, const std::string& title,
             return;
         }
         g_progressLive = true;
+        g_updateFailLogged = false;
         return;  // Begin already carries the first text; nothing to update yet
     }
 
@@ -203,7 +210,12 @@ void setProgress(double fraction, const std::string& title,
     p.targetProgress = fraction < 0.0  ? 0.0f
                      : fraction > 1.0  ? 1.0f
                                        : (SceFloat)fraction;
-    sceNotificationUtilProgressUpdate(&p);
+    const int rc = sceNotificationUtilProgressUpdate(&p);
+    if (rc < 0 && !g_updateFailLogged) {
+        g_updateFailLogged = true;
+        brls::Logger::info("shell: ProgressUpdate ({:#x}), first failure of this notification",
+                           (unsigned)rc);
+    }
 #else
     (void)fraction;
     (void)title;
