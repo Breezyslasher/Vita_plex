@@ -4647,6 +4647,53 @@ union {
 TaiHookRef g_statusHookRef;
 SceUInt64 g_ownerUntilUs;  // atomic: the window open, until then
 const SceUInt64 kOwnerWindowUs = 5ull * 1000 * 1000;
+// The title answered: VitaPlex's, or one of the plugin's own carrying the
+// download's cover as its icon (notifyCoverTitle). Under g_notifyLock, read
+// by the hook within the window.
+char g_ownerTitle[12];
+int g_coverSlot;  // the last of VPLXN0001..9 given a cover
+uint8_t g_coverBuf[8192];  // under g_notifyLock
+
+// The download's cover (QM_NOTIFY_COVER) as the icon of a title of the
+// plugin's own, ur0:appmeta/VPLXN000n/icon0.png, the next n each time, so
+// that a notification shown earlier keeps its own; that title into
+// g_ownerTitle. VitaPlex's when there is no cover or it cannot be copied.
+// Under g_notifyLock.
+void notifyCoverTitle() {
+    copyText(g_ownerTitle, VITAPLEX_TITLEID, sizeof(g_ownerTitle));
+    const SceUID in = sceIoOpen(QM_NOTIFY_COVER, SCE_O_RDONLY, 0);
+    if (in < 0) return;
+    const int slot = g_coverSlot % 9 + 1;
+    char title[12], dir[48], path[64];
+    sceClibSnprintf(title, sizeof(title), "VPLXN000%d", slot);
+    sceClibSnprintf(dir, sizeof(dir), "ur0:appmeta/%s", title);
+    sceClibSnprintf(path, sizeof(path), "%s/icon0.png", dir);
+    sceIoMkdir(dir, 0777);
+    const SceUID out = sceIoOpen(path, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+    int rc = out;
+    uint32_t size = 0;
+    if (out >= 0) {
+        for (;;) {
+            const int got = sceIoRead(in, g_coverBuf, sizeof(g_coverBuf));
+            if (got <= 0) {
+                rc = got;
+                break;
+            }
+            if (sceIoWrite(out, g_coverBuf, (SceSize)got) != got) {
+                rc = -1;
+                break;
+            }
+            size += (uint32_t)got;
+        }
+        sceIoClose(out);
+    }
+    sceIoClose(in);
+    logLine("notification: the cover, %u bytes, as %s's icon: 0x%08X", (unsigned)size, title,
+            (unsigned)rc);
+    if (rc < 0 || size == 0) return;
+    g_coverSlot = slot;
+    copyText(g_ownerTitle, title, sizeof(g_ownerTitle));
+}
 // How long a notification left showing as VitaPlex takes the downloads back
 // waits for VitaPlex to go on with it before it is ended.
 const SceUInt64 kNotifyHeldUs = 30ull * 1000 * 1000;
@@ -4712,10 +4759,13 @@ void notifyShow16(const uint16_t* text, const uint16_t* sub, float progress) {
         void (*handler)(int) = &notifyEvent;
         sceClibMemcpy((uint8_t*)&g_notifyParam.begin + kNotifyHandlerOffset, &handler,
                       sizeof(handler));
-        // Its owner VitaPlex, for its icon (statusAsVitaPlex).
-        if (g_statusHookRef)
+        // Its owner VitaPlex, or a title carrying the cover, for its icon
+        // (statusAsVitaPlex).
+        if (g_statusHookRef) {
+            notifyCoverTitle();
             __atomic_store_n(&g_ownerUntilUs, sceKernelGetSystemTimeWide() + kOwnerWindowUs,
                              __ATOMIC_SEQ_CST);
+        }
         const int rc = ((FnNotify)g_notify[kNotifyBegin].fn)(&g_notifyParam.begin);
         logLine("notification: begun: 0x%08X", (unsigned)rc);
         if (rc < 0) {
@@ -4729,7 +4779,11 @@ void notifyShow16(const uint16_t* text, const uint16_t* sub, float progress) {
     }
     lineOf(g_notifyParam.update.t.text, text);
     lineOf(g_notifyParam.update.t.sub, sub);
-    g_notifyParam.update.progress = progress < 0.0f ? 0.0f : progress > 1.0f ? 1.0f : progress;
+    // In percent: SceShell keeps the float as it comes (its 0x7000D handler
+    // stores +0x100 straight into the notification) and its bar runs to 100,
+    // so a fraction left the bar at its start (builds up to 2075).
+    g_notifyParam.update.progress =
+        progress < 0.0f ? 0.0f : progress > 1.0f ? 100.0f : progress * 100.0f;
     const int rc = ((FnNotify)g_notify[kNotifyUpdate].fn)(&g_notifyParam.update);
     // As VitaPlex's: closed in SceShell, it may refuse its updates.
     if (rc < 0 && !g_notifyFailed) {
@@ -5656,12 +5710,14 @@ int statusAsVitaPlex(int appId, uint8_t* status) {
     const bool system = startsWith(title, "NPXS");
     logLine("notification: owner lookup for app 0x%X gave 0x%08X, kind %d, title \"%s\"%s",
             (unsigned)appId, (unsigned)ret, ret >= 0 ? (int)status[kStatusKind] : -1, title,
-            ret >= 0 && status[kStatusKind] == 0 && !system ? ", an app's: left" : "; answered VitaPlex");
+            ret >= 0 && status[kStatusKind] == 0 && !system ? ", an app's: left" : "; answered");
     if (ret >= 0 && status[kStatusKind] == 0 && !system) return ret;  // an app: its own
     __atomic_store_n(&g_ownerUntilUs, 0, __ATOMIC_SEQ_CST);
     if (ret < 0) sceClibMemset(status, 0, kStatusSize);
     status[kStatusKind] = 0;
-    copyText((char*)status + kStatusTitleId, VITAPLEX_TITLEID, 10);
+    copyText((char*)status + kStatusTitleId, g_ownerTitle[0] ? g_ownerTitle : VITAPLEX_TITLEID,
+             10);
+    logLine("notification: owner answered as %s", g_ownerTitle[0] ? g_ownerTitle : VITAPLEX_TITLEID);
     return 0;
 }
 

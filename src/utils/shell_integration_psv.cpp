@@ -262,9 +262,10 @@ void setProgress(double fraction, const std::string& title,
     toUtf16(detail, p.notificationSubText, SCE_NOTIFICATIONUTIL_TEXT_MAX);
     // A negative fraction means the size is not known yet. There is no
     // indeterminate state here, so it sits at zero and the text carries it.
+    // In percent, as SceShell's bar runs to 100 (the plugin's notifyShow16).
     p.targetProgress = fraction < 0.0  ? 0.0f
-                     : fraction > 1.0  ? 1.0f
-                                       : (SceFloat)fraction;
+                     : fraction > 1.0  ? 100.0f
+                                       : (SceFloat)(fraction * 100.0);
     const int rc = sceNotificationUtilProgressUpdate(&p);
     if (rc < 0 && !g_updateFailLogged) {
         g_updateFailLogged = true;
