@@ -341,6 +341,10 @@ void DownloadsManager::startDownloads() {
                         item.state = DownloadState::DOWNLOADING;
                         nextRatingKey = item.ratingKey;
                         brls::Logger::info("DownloadsManager: Found queued item: {}", item.title);
+                        // Saved as begun: VitaPlex closed during it, as starting
+                        // a game closes it, then finds it cut off as it opens
+                        // again, and goes on with it (resumeInterrupted).
+                        saveStateUnlocked();
                         break;
                     }
                 }
@@ -379,6 +383,7 @@ void DownloadsManager::startDownloads() {
 
                         nextItem->state = DownloadState::DOWNLOADING;
                         nextItem->downloadedBytes = 0;
+                        saveState();  // as begun, as above
                         downloadItem(*nextItem);
                     }
                 }
@@ -698,6 +703,47 @@ void DownloadsManager::resumeIncompleteDownloads() {
     }
 }
 
+void DownloadsManager::resumeInterrupted() {
+    int interrupted = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        interrupted = m_interrupted;
+        m_interrupted = 0;
+    }
+    if (interrupted <= 0) return;
+    brls::Logger::info("DownloadsManager: {} download(s) cut off as VitaPlex last closed; going "
+                       "on in 5 s",
+                       interrupted);
+    // The manager is a process-lifetime singleton, so `this` is safe.
+    brls::delay(5000, [this]() { startDownloads(); });
+}
+
+void DownloadsManager::noteAppClosing() {
+    if (!m_downloading.load()) return;
+    std::string title;
+    int left = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& d : m_downloads) {
+            if (d.state == DownloadState::DOWNLOADING || d.state == DownloadState::TRANSCODING) {
+                if (title.empty()) title = d.title;
+                left++;
+            } else if (d.state == DownloadState::QUEUED) {
+                left++;
+            }
+        }
+        // As it is: the one running stays begun, for resumeInterrupted.
+        saveStateUnlocked();
+    }
+    brls::Logger::info("DownloadsManager: VitaPlex closes with {} download(s) to go; they go on "
+                       "when it opens again",
+                       left);
+    shell::setProgress(0.0, title.empty() ? "Downloads" : title,
+                       left > 1 ? std::to_string(left) + " paused until VitaPlex opens again"
+                                : "Paused until VitaPlex opens again",
+                       false);
+}
+
 bool DownloadsManager::hasIncompleteDownloads() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     for (const auto& item : m_downloads) {
@@ -870,16 +916,64 @@ static std::string buildDirectDownloadUrl(const std::string& serverUrl, const st
     return url;
 }
 
+// How waiting for an item of the download queue to be ready ended
+// (waitForQueueItem).
+enum class QueueWait {
+    Ready,    // the server has its file ready
+    Gone,     // the server no longer has the item, or gave it up
+    Failed,   // nothing that settled it: errors, or an hour of waiting
+    Stopped,  // downloads were paused meanwhile
+};
+static QueueWait waitForQueueItem(const std::string& baseUrl, const std::string& token,
+                                  const std::string& queueId, const std::string& itemId,
+                                  bool remembered, std::atomic<bool>& downloading,
+                                  DownloadItem& item);
+
 // Try downloading via the Plex Download Queue API (server-side transcode + file download).
 // This transcodes video to platform-compatible resolution before downloading.
 // Polls the queue status until transcoding is complete before returning the media URL.
 // Returns true if the download URL was obtained, with the URL stored in outUrl.
+// keepItemIds: queue items other downloads not yet whole still use, which the
+// clean-up of stale items leaves. remember: saves the item, called as its
+// queue ids change.
 static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string& token,
                                  const std::string& ratingKey, std::string& outUrl,
-                                 std::atomic<bool>& downloading, DownloadItem& item) {
+                                 std::atomic<bool>& downloading, DownloadItem& item,
+                                 const std::vector<std::string>& keepItemIds,
+                                 const std::function<void()>& remember) {
     brls::Logger::info("DownloadsManager: Trying Download Queue API for {}", ratingKey);
 
     std::string baseUrl = convertToHttpForDownload(serverUrl);
+    auto mediaUrlOf = [&baseUrl, &token](const std::string& queueId, const std::string& itemId) {
+        return baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId +
+               "/media?X-Plex-Token=" + token;
+    };
+
+    // Step 0: the file the server prepared for it before, while the server
+    // still has it, so that a download cut off goes on with that same file
+    // (DownloadItem's queueId). Added again, it would be prepared anew, and a
+    // transcode of another size starts the download over. Only an item the
+    // server no longer has is forgotten; errors that settle nothing leave it
+    // for the next try (downloadItem).
+    if (!item.queueId.empty() && !item.queueItemId.empty()) {
+        brls::Logger::info("DownloadsManager: Asking for queue item {} prepared before",
+                           item.queueItemId);
+        const QueueWait wait = waitForQueueItem(baseUrl, token, item.queueId, item.queueItemId,
+                                                true, downloading, item);
+        if (wait == QueueWait::Ready) {
+            outUrl = mediaUrlOf(item.queueId, item.queueItemId);
+            brls::Logger::info("DownloadsManager: Download Queue media URL ready, as prepared "
+                               "before");
+            return true;
+        }
+        if (wait != QueueWait::Gone) return false;
+        brls::Logger::info("DownloadsManager: The server no longer has queue item {}; preparing "
+                           "it again",
+                           item.queueItemId);
+        item.queueId.clear();
+        item.queueItemId.clear();
+        remember();
+    }
 
     // Step 1: Create/get a download queue
     HttpClient http;
@@ -931,9 +1025,13 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
                 size_t idPos = cleanResp.body.find("\"id\":", searchPos);
                 if (idPos == std::string::npos) break;
                 int64_t oldItemId = extractJsonInt(cleanResp.body.substr(idPos), "id");
-                if (oldItemId > 0) {
-                    char oldIdBuf[32];
-                    snprintf(oldIdBuf, sizeof(oldIdBuf), "%lld", (long long)oldItemId);
+                char oldIdBuf[32];
+                snprintf(oldIdBuf, sizeof(oldIdBuf), "%lld", (long long)oldItemId);
+                if (oldItemId > 0 &&
+                    std::find(keepItemIds.begin(), keepItemIds.end(), oldIdBuf) != keepItemIds.end()) {
+                    brls::Logger::debug("DownloadsManager: Kept queue item {}, another download's",
+                                        oldIdBuf);
+                } else if (oldItemId > 0) {
                     HttpClient delHttp;
                     HttpRequest delReq;
                     delReq.url = baseUrl + "/downloadQueue/" + queueId + "/items/" + oldIdBuf
@@ -1123,6 +1221,11 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     }
 
     brls::Logger::info("DownloadsManager: Download queue item ID: {}", itemId);
+    // Kept at once, so that VitaPlex closed while the server prepares it
+    // finds that same item as it opens again (Step 0).
+    item.queueId = queueId;
+    item.queueItemId = itemId;
+    remember();
 
     // /decision intentionally not called. The openapi spec defines
     // GET /downloadQueue/{q}/item/{i}/decision as a read-only "grab
@@ -1137,27 +1240,55 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     // Retry-After per the spec.
 
     // Step 4: Wait for the queue item to finish transcoding.
-    //
-    // Switched from polling /media (HEAD) to polling /items/{itemId}
-    // (GET) — same liveness signal, but /items returns JSON with the
-    // queue item's status enum (deciding/waiting/processing/available
-    // /error/expired) AND a TranscodeSession.progress (0-100) percent,
-    // so we get a real number for the UI and don't repeatedly ask the
-    // server to spin up a media stream just to check whether it's done.
-    //
-    // Polling cadence stretches over time so a long transcode doesn't
-    // turn into thousands of log lines: 5s base, capped at 30s after a
-    // few minutes. Plex's Retry-After is almost always -1 (unknown),
-    // so a fixed schedule is more predictable than honoring it. Status
-    // changes log at INFO; the per-poll details are DEBUG.
+    const QueueWait wait =
+        waitForQueueItem(baseUrl, token, queueId, itemId, false, downloading, item);
+    if (wait == QueueWait::Stopped) {
+        // The item stays remembered: the server goes on preparing it.
+        brls::Logger::info("DownloadsManager: Download cancelled during transcode wait");
+        return false;
+    }
+    if (wait != QueueWait::Ready) {
+        // Nothing of it to keep: the fall-backs fetch it another way.
+        item.queueId.clear();
+        item.queueItemId.clear();
+        remember();
+        brls::Logger::warning("DownloadsManager: Download Queue API failed, will fall back to streaming transcode");
+        return false;
+    }
+
+    // Step 5: The media URL is ready - return it for the caller to download via GET
+    outUrl = mediaUrlOf(queueId, itemId);
+
+    brls::Logger::info("DownloadsManager: Download Queue media URL ready");
+    return true;
+}
+
+// Waits for item itemId of download queue queueId to be ready, its file
+// prepared by the server. remembered: the item was added by an earlier try,
+// so a 404 means the server no longer has it.
+//
+// Switched from polling /media (HEAD) to polling /items/{itemId}
+// (GET) — same liveness signal, but /items returns JSON with the
+// queue item's status enum (deciding/waiting/processing/available
+// /error/expired) AND a TranscodeSession.progress (0-100) percent,
+// so we get a real number for the UI and don't repeatedly ask the
+// server to spin up a media stream just to check whether it's done.
+//
+// Polling cadence stretches over time so a long transcode doesn't
+// turn into thousands of log lines: 5s base, capped at 30s after a
+// few minutes. Plex's Retry-After is almost always -1 (unknown),
+// so a fixed schedule is more predictable than honoring it. Status
+// changes log at INFO; the per-poll details are DEBUG.
+static QueueWait waitForQueueItem(const std::string& baseUrl, const std::string& token,
+                                  const std::string& queueId, const std::string& itemId,
+                                  bool remembered, std::atomic<bool>& downloading,
+                                  DownloadItem& item) {
     item.state = DownloadState::TRANSCODING;
     item.transcodeElapsedSeconds = 0;
     item.transcodePollAttempt = 0;
     item.transcodeProgressPercent = 0;
     std::string itemUrl = baseUrl + "/downloadQueue/" + queueId
         + "/items/" + itemId + "?X-Plex-Token=" + token;
-    std::string mediaUrl = baseUrl + "/downloadQueue/" + queueId
-        + "/item/" + itemId + "/media?X-Plex-Token=" + token;
 
     auto pollInterval = [](int elapsedSec) {
         if (elapsedSec < 30)  return 5;   // First 30s: 5s
@@ -1167,7 +1298,6 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     };
 
     const int maxElapsedSeconds = 60 * 60;  // 1 hour absolute cap
-    bool mediaReady = false;
     std::string lastStatus;
     int consecutiveErrors = 0;
     auto transcodeStart = std::chrono::steady_clock::now();
@@ -1183,7 +1313,7 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
             brls::Logger::error(
                 "DownloadsManager: Transcode timeout after {}s, giving up",
                 elapsedSec);
-            break;
+            return QueueWait::Failed;
         }
 
         HttpClient itemHttp;
@@ -1194,6 +1324,11 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         itemReq.timeout = 15;
         HttpResponse itemResp = itemHttp.request(itemReq);
 
+        if (remembered && itemResp.statusCode == 404) {
+            brls::Logger::info("DownloadsManager: Queue item {} is no longer on the server",
+                               itemId);
+            return QueueWait::Gone;
+        }
         if (itemResp.statusCode != 200) {
             brls::Logger::warning(
                 "DownloadsManager: /items poll HTTP {} (attempt {}, elapsed {}s)",
@@ -1201,7 +1336,7 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
             if (++consecutiveErrors >= 5) {
                 brls::Logger::error(
                     "DownloadsManager: 5 consecutive /items errors, giving up");
-                break;
+                return QueueWait::Failed;
             }
             int wait = pollInterval(elapsedSec);
 #ifdef __vita__
@@ -1243,17 +1378,16 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         }
 
         if (status == "available") {
-            mediaReady = true;
             brls::Logger::info(
                 "DownloadsManager: Media ready after {}s ({} polls)",
                 elapsedSec, attempt + 1);
-            break;
+            return QueueWait::Ready;
         }
         if (status == "error" || status == "expired") {
             brls::Logger::error(
                 "DownloadsManager: Queue item ended in status='{}', giving up",
                 status);
-            break;
+            return QueueWait::Gone;
         }
         // deciding / waiting / processing — keep polling.
 
@@ -1264,22 +1398,7 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         std::this_thread::sleep_for(std::chrono::seconds(wait));
 #endif
     }
-
-    if (!downloading.load()) {
-        brls::Logger::info("DownloadsManager: Download cancelled during transcode wait");
-        return false;
-    }
-
-    if (!mediaReady) {
-        brls::Logger::warning("DownloadsManager: Download Queue API failed, will fall back to streaming transcode");
-        return false;
-    }
-
-    // Step 5: The media URL is ready - return it for the caller to download via GET
-    outUrl = mediaUrl;
-
-    brls::Logger::info("DownloadsManager: Download Queue media URL ready");
-    return true;
+    return QueueWait::Stopped;
 }
 
 void DownloadsManager::reportShellProgress(const DownloadItem& item) {
@@ -1412,10 +1531,34 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         Application::getInstance().getSettings().downloadQuality == VideoQuality::ORIGINAL &&
         !item.partPath.empty();
 
+    // The queue items other downloads not yet whole still use, which the
+    // queue's clean-up of stale ones must leave.
+    std::vector<std::string> keepItemIds;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& d : m_downloads) {
+            if (&d != &item && !d.queueItemId.empty() && d.state != DownloadState::COMPLETED &&
+                d.state != DownloadState::CANCELLED)
+                keepItemIds.push_back(d.queueItemId);
+        }
+    }
     if (!preferDirect &&
-        tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading, item)) {
+        tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading, item,
+                            keepItemIds, [this]() { saveState(); })) {
         urlReady = true;
         brls::Logger::info("DownloadsManager: Download Queue API ready for {}", item.title);
+    } else if (!preferDirect && !item.queueItemId.empty()) {
+        // The file the server prepared is still remembered: this try was
+        // paused, or met errors that settle nothing. Tried again later, as
+        // fetching it another way would start the download over. One the
+        // user cancelled meanwhile stays cancelled.
+        if (item.state != DownloadState::CANCELLED)
+            item.state = m_downloading.load() ? DownloadState::FAILED : DownloadState::PAUSED;
+        brls::Logger::warning("DownloadsManager: {} not reached through queue item {}; tried "
+                              "again later",
+                              item.title, item.queueItemId);
+        saveState();
+        return;
     } else if (!item.partPath.empty()) {
         url = buildDirectDownloadUrl(serverUrl, token, item.partPath);
         if (!url.empty()) {
@@ -1966,7 +2109,12 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                                           fullSize, item.totalBytes, item.title);
                     resume = false;
                 }
-                if (fullSize > 0) item.totalBytes = fullSize;
+                if (fullSize > 0 && fullSize != item.totalBytes) {
+                    item.totalBytes = fullSize;
+                    // Saved now, so that the check above has the file's size
+                    // when the download goes on after VitaPlex has closed.
+                    saveState();
+                }
                 item.downloadedBytes = resume ? resumeOffset : 0;
                 if (!out.open(item.localPath, /*append=*/resume)) {
                     openFailed = true;
@@ -2036,6 +2184,10 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         brls::Logger::info("DownloadsManager: Download of {} was cancelled", item.title);
     } else if (success && m_downloading.load()) {
         item.state = DownloadState::COMPLETED;
+        // Whole: the server's prepared file is not wanted again, and the
+        // queue's next clean-up removes it.
+        item.queueId.clear();
+        item.queueItemId.clear();
         brls::Logger::info("DownloadsManager: Completed download of {}", item.title);
         // Remember it for the summary the worker posts once the queue drains.
         // Notifying here instead would mean one per item, and an album is
@@ -2245,12 +2397,19 @@ void DownloadsManager::validateDownloadedFiles() {
     // run continues via HTTP Range instead of starting over. This stays
     // synchronous: the download worker must see QUEUED, not a stale
     // DOWNLOADING, when it first scans the queue — and it only touches
-    // the rare interrupted item, so it costs nothing at startup.
+    // the rare interrupted item, so it costs nothing at startup. Counted for
+    // resumeInterrupted, which starts them again.
+    int interrupted = 0;
     for (auto& item : m_downloads) {
         if (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING) {
             item.state = DownloadState::QUEUED;
             item.downloadedBytes = partFileSize(item.localPath);
+            interrupted++;
         }
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_interrupted = interrupted;
     }
 
     // The COMPLETED-items existence sweep opens one file per item — with
@@ -2341,6 +2500,8 @@ void DownloadsManager::saveStateUnlocked() {
            << "\"groupThumb\":\"" << escapeJson(item.groupThumb) << "\",\n"
            << "\"albumTitle\":\"" << escapeJson(item.albumTitle) << "\",\n"
            << "\"artist\":\"" << escapeJson(item.artist) << "\",\n"
+           << "\"queueId\":\"" << escapeJson(item.queueId) << "\",\n"
+           << "\"queueItemId\":\"" << escapeJson(item.queueItemId) << "\",\n"
            << "\"groupTotalItems\":" << item.groupTotalItems << "\n"
            << "}";
     }
@@ -2462,6 +2623,8 @@ void DownloadsManager::loadState() {
         item.groupThumb = extractJsonString(objStr, "groupThumb");
         item.albumTitle = extractJsonString(objStr, "albumTitle");
         item.artist = extractJsonString(objStr, "artist");
+        item.queueId = extractJsonString(objStr, "queueId");
+        item.queueItemId = extractJsonString(objStr, "queueItemId");
         item.groupTotalItems = static_cast<int>(extractJsonInt(objStr, "groupTotalItems"));
 
         if (!item.ratingKey.empty()) {

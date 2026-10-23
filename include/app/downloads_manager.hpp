@@ -81,6 +81,13 @@ struct DownloadItem {
     // sync fills it, with albumTitle, from the server.
     std::string artist;
     int groupTotalItems = 0;    // Total items originally in the group (stable Y for X/Y display)
+    // The file the server prepared for it in Plex's download queue, kept so
+    // that a download cut off, as VitaPlex closing for a game cuts one off,
+    // goes on with that same file. Added again, the server would prepare it
+    // anew, minutes for a transcode, and one of another size starts the
+    // download over. Empty when there is none.
+    std::string queueId;
+    std::string queueItemId;
 };
 
 // A downloaded track's artist and album, as the download keeps them. An
@@ -176,6 +183,16 @@ public:
     // Wait for the download thread to fully exit (call after pauseDownloads)
     void waitForDownloadThread(int timeoutMs = 2000);
 
+    // Downloads cut off as VitaPlex last closed, mid-way, started again: once
+    // content is available, a few seconds on, so that the first screen's
+    // requests go first. Downloads the user paused stay paused.
+    void resumeInterrupted();
+
+    // As VitaPlex closes, on the UI thread: a download running is left to go
+    // on when it opens again (resumeInterrupted), and its notification says
+    // so instead of showing a bar that no longer moves.
+    void noteAppClosing();
+
     // Check if downloads are currently running
     bool isDownloading() const { return m_downloading.load(); }
 
@@ -261,6 +278,9 @@ private:
     std::atomic<bool> m_downloading{false};
     std::atomic<bool> m_downloadThreadActive{false};
     bool m_initialized = false;
+    // Downloads loaded as begun, cut off as VitaPlex last closed
+    // (validateDownloadedFiles), for resumeInterrupted. Under m_mutex.
+    int m_interrupted = 0;
     DownloadProgressCallback m_progressCallback;
     std::string m_downloadsPath;
 };

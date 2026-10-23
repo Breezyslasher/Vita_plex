@@ -158,6 +158,9 @@ void MainActivity::onContentAvailable() {
     // What the last update left: on the Vita, its outcome from the plugin that installed it.
     app_update::afterStart();
 
+    // Downloads cut off as VitaPlex last closed, as starting a game closes it, go on.
+    DownloadsManager::getInstance().resumeInterrupted();
+
     // Startup update check — the module delays itself so login and the first content fetches get the pipe first.
     if (Application::getInstance().getSettings().autoCheckUpdates)
         app_update::checkForUpdates(false);

@@ -132,6 +132,7 @@ void Application::run() {
 }
 
 void Application::shutdown() {
+    DownloadsManager::getInstance().noteAppClosing();
     saveSettings();
     m_initialized = false;
     brls::Logger::info("VitaPlex shutting down");

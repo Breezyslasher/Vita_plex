@@ -3493,6 +3493,36 @@ inside VitaPlex for its updates; the plugin should do them.
   taking the title for running, refusing, missing a function or not loading,
   and no thread. The plugin builds at 49891 bytes.
 
+**Build 2058: downloads cut off by VitaPlex closing.** The system closes
+VitaPlex to start a game, and its downloads stop. Two things made coming
+back worse than it needed to be:
+
+- Nothing started them again. The downloads cut off came back queued, but
+  only Start, Resume All or a new download set the queue going. Now
+  `resumeInterrupted` starts them 5 s after content is available, once the
+  first screen's requests are under way. A download is saved as begun when
+  the queue takes it up, so that one cut off is found as begun. Downloads
+  the user paused stay paused.
+- The server prepared each one again. Every try went to Plex's download
+  queue afresh: the clean-up removed all its items, the item was added
+  again, and the server transcoded it again from the start, minutes for a
+  movie. The Range resume then compared the new file's size with the old
+  one's, and a transcode of another size started the download over. Now the
+  queue and item ids are kept with the download (`queueId`, `queueItemId` in
+  its state), saved as soon as the server gives them. A later try asks for
+  that item first and, while the server has it (`available`, or still being
+  prepared), goes on with the same file from the bytes on the card. Only an
+  item the server no longer has (404, `error`, `expired`) is added again.
+  Errors that settle nothing keep the item for the next try, rather than
+  falling back to the source file, which would start the download over. The
+  clean-up leaves the items of other downloads not yet whole. The file's
+  size is saved as its download begins, for the resume's size check.
+- As VitaPlex closes with a download running, the progress notification is
+  finished with "Paused until VitaPlex opens again" (`noteAppClosing`,
+  from `Application::shutdown`).
+
+None of this has run on the console yet.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which
