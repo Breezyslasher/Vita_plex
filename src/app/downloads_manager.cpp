@@ -352,6 +352,20 @@ void DownloadsManager::startDownloads() {
         brls::Logger::info("DownloadsManager: Download thread started");
 #ifdef __vita__
         takeBackFromShell();
+        // The quick menu plugin loaded into SceShell now, off the UI thread,
+        // so that handing the downloads over as VitaPlex closes does not wait
+        // for it: the load took 6 s there once, with a game starting (log of
+        // 13:52:36), of the 10 s the system gives VitaPlex to close.
+        if (Application::getInstance().getSettings().vitaDownloadsAfterLeaving) {
+            qmInit();
+            if (!qmIsOpen()) {
+                char what[320];
+                const int rc = qmOpen(what, sizeof(what));
+                brls::Logger::info("DownloadsManager: SceShell, for downloads after leaving: {} "
+                                   "({:#x})",
+                                   what, (unsigned)rc);
+            }
+        }
 #endif
 
         while (m_downloading.load()) {
