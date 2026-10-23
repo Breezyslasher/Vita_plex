@@ -7,6 +7,8 @@
  *   vitaplexQmGetModuleExportFunc(const char* module, uint32_t libnid,
  *                                 uint32_t funcnid, uintptr_t* func)
  *       taiGetModuleExportFunc, taihen 0x203D1A28, function 0x6231AAD1
+ *   vitaplexQmGetModuleInfo(const char* module, tai_module_info_t* info)
+ *       taiGetModuleInfo, taihen 0x203D1A28, function 0xA5899384
  *
  * The layout of src/handover_psv/qm_link_stub.S.
  */
@@ -32,5 +34,15 @@ vitaplexQmGetModuleExportFunc:
 	.word 0x6231AAD1
 	.inst 0xE320F000
 	.size vitaplexQmGetModuleExportFunc, 16
+
+	.align 4
+	.global vitaplexQmGetModuleInfo
+	.type vitaplexQmGetModuleInfo, %function
+vitaplexQmGetModuleInfo:
+	.word 0x00000000
+	.word 0x203D1A28
+	.word 0xA5899384
+	.inst 0xE320F000
+	.size vitaplexQmGetModuleInfo, 16
 
 	.section .note.GNU-stack,"",%progbits

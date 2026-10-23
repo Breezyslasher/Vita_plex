@@ -87,8 +87,19 @@ typedef struct TaiHookUser {
 extern "C" SceUID vitaplexQmHookFunctionImport(TaiHookRef* hook, TaiHookArgs* args);
 extern "C" int vitaplexQmGetModuleExportFunc(const char* module, uint32_t libnid,
                                              uint32_t funcnid, uintptr_t* func);
+// As taihen.h has it.
+typedef struct TaiModuleInfo {
+    size_t size;
+    SceUID modid;
+    uint32_t module_nid;
+    char name[27];
+    uintptr_t exports_start, exports_end, imports_start, imports_end;
+} TaiModuleInfo;
+extern "C" int vitaplexQmGetModuleInfo(const char* module, TaiModuleInfo* info);
 // Not declared by every SDK's headers (qm_link.c declares it the same way).
 extern "C" int sceAppMgrGetIdByName(SceUID* pid, const char* name);
+// In SceLibKernel, which vitasdk's user header leaves out.
+extern "C" int sceKernelGetModuleInfoByAddr(const void* addr, SceKernelModuleInfo* info);
 
 // No C runtime here: what the compiler may call for it, from the kernel's.
 // new and delete are PAF's (built with -fno-sized-deallocation, so delete is
@@ -5359,6 +5370,90 @@ void takeDownloads() {
     g_dlAgain = 0;
 }
 
+// ── SceShell's code, written to the card once (a probe) ───────────────────
+// A download notification's picture: whether Begin's parameters carry one,
+// and where, SceShell decides, as its client sends them as they are
+// (docs/DESIGN_NOTES.md, "The notification's picture"). So SceShell's own
+// modules, as they are in its memory, are written to kDumpDir, a file a
+// segment and an index of them last, for VitaPlex's makers to read how
+// SceShell takes the parameters of method 0x7000B. Once a memory card: not
+// again while the index is there. On a thread of its own, 20 s after the
+// plugin starts, out of SceShell's way as it starts. Taken out once read.
+const char* const kDumpDir = "ux0:data/VitaPlex/sceshell-dump";
+const char* const kDumpIndex = "ux0:data/VitaPlex/sceshell-dump/index.txt";
+const char* const kDumpModules[] = {"SceShell"};
+
+// A segment's bytes from memory into a file of its own; 0, or the error.
+int dumpSegment(const char* path, const uint8_t* from, uint32_t size) {
+    const SceUID fd = sceIoOpen(path, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+    if (fd < 0) return fd;
+    int rc = 0;
+    for (uint32_t done = 0; done < size && rc == 0;) {
+        const uint32_t n = size - done < 0x10000 ? size - done : 0x10000;
+        const int w = sceIoWrite(fd, from + done, n);
+        if (w != (int)n) rc = w < 0 ? w : -1;
+        done += n;
+    }
+    const int rcClose = sceIoClose(fd);
+    return rc ? rc : rcClose;
+}
+
+int dumpThread(SceSize, void*) {
+    sceKernelDelayThread(20 * 1000 * 1000);
+    if (exists(kDumpIndex)) return sceKernelExitDeleteThread(0);
+    sceIoMkdir(kDumpDir, 0777);
+    static char index[2048];
+    int n = 0;
+    for (unsigned m = 0; m < sizeof(kDumpModules) / sizeof(kDumpModules[0]); m++) {
+        TaiModuleInfo tai;
+        sceClibMemset(&tai, 0, sizeof(tai));
+        tai.size = sizeof(tai);
+        int rc = vitaplexQmGetModuleInfo(kDumpModules[m], &tai);
+        static SceKernelModuleInfo info;
+        sceClibMemset(&info, 0, sizeof(info));
+        info.size = sizeof(info);
+        if (rc >= 0) rc = sceKernelGetModuleInfoByAddr((const void*)tai.exports_start, &info);
+        if (rc < 0) {
+            logLine("dump: %s not found: 0x%08X", kDumpModules[m], (unsigned)rc);
+            continue;
+        }
+        n += sceClibSnprintf(index + n, sizeof(index) - n, "module=%s nid=0x%08X path=%s\n",
+                             info.module_name, (unsigned)tai.module_nid, info.path);
+        for (int s = 0; s < 4; s++) {
+            const SceKernelSegmentInfo* g = &info.segments[s];
+            if (!g->vaddr || !g->memsz) continue;
+            char path[160];
+            sceClibSnprintf(path, sizeof(path), "%s/%s-seg%d-%08X.bin", kDumpDir,
+                            info.module_name, s, (unsigned)(uintptr_t)g->vaddr);
+            const int rcSeg = dumpSegment(path, (const uint8_t*)g->vaddr, g->memsz);
+            logLine("dump: %s segment %d, 0x%X bytes at %p, perms 0x%X: 0x%08X", info.module_name, s,
+                    (unsigned)g->memsz, g->vaddr, (unsigned)g->perms, (unsigned)rcSeg);
+            n += sceClibSnprintf(index + n, sizeof(index) - n,
+                                 "segment=%d vaddr=0x%08X memsz=0x%X filesz=0x%X perms=0x%X rc=0x%08X\n",
+                                 s, (unsigned)(uintptr_t)g->vaddr, (unsigned)g->memsz,
+                                 (unsigned)g->filesz, (unsigned)g->perms, (unsigned)rcSeg);
+        }
+    }
+    n += sceClibSnprintf(index + n, sizeof(index) - n, "end\n");
+    const SceUID fd = sceIoOpen(kDumpIndex, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+    if (fd >= 0) {
+        sceIoWrite(fd, index, (SceSize)n);
+        sceIoClose(fd);
+    }
+    logLine("dump: SceShell's modules written to %s", kDumpDir);
+    return sceKernelExitDeleteThread(0);
+}
+
+void startDump() {
+    const SceUID thread =
+        sceKernelCreateThread("VitaPlexQM::Dump", dumpThread, kThreadPriority, 0x4000, 0, 0, NULL);
+    const int rc = thread < 0 ? thread : sceKernelStartThread(thread, 0, NULL);
+    if (rc < 0) {
+        if (thread >= 0) sceKernelDeleteThread(thread);
+        logLine("dump: no thread for it: 0x%08X", (unsigned)rc);
+    }
+}
+
 // ── Threads ─────────────────────────────────────────────────────────────────
 // The note of an open begun, as the quick menu is seen open. Under g_lock.
 void noteOpened() {
@@ -5644,6 +5739,7 @@ extern "C" int module_start(SceSize args, const void* argp) {
     // Twice the watch thread's: it shows VitaPlex's download notification
     // too (notifyAsked), through SceShell's service, as the download thread does.
     (new ReceiveThread(kThreadPriority, 0x8000, "VitaPlexQM::Receive"))->Start();
+    startDump();
     logLine("ready");
     return SCE_KERNEL_START_SUCCESS;
 }
