@@ -47,6 +47,7 @@ namespace vitaplex {
 #ifdef __vita__
 static const char* DOWNLOADS_DIR = "ux0:data/VitaPlex/downloads";
 static const char* STATE_FILE = "ux0:data/VitaPlex/downloads/state.json";
+static std::string readWhole(const char* path);
 #endif
 
 // On-disk size of a file in bytes, or 0 if it doesn't exist / can't be read.
@@ -189,6 +190,26 @@ bool DownloadsManager::init() {
 
     // Load saved state
     loadState();
+
+#ifdef __vita__
+    // Downloads the quick menu plugin's status names are handed to it, should
+    // VitaPlex have been ended before it saved them so (handOverToShell):
+    // before validateDownloadedFiles, which counts them to go on with.
+    const std::string status = readWhole(QM_DOWNLOADS_STATUS);
+    for (size_t at = 0; at < status.size();) {
+        size_t end = status.find('\n', at);
+        if (end == std::string::npos) end = status.size();
+        if (status.compare(at, 5, "item=") == 0) {
+            const size_t tab = status.find('\t', at + 5);
+            const std::string key = status.substr(at + 5, (tab < end ? tab : end) - at - 5);
+            for (auto& item : m_downloads)
+                if (item.ratingKey == key && item.state != DownloadState::COMPLETED &&
+                    item.state != DownloadState::CANCELLED)
+                    item.withShell = true;
+        }
+        at = end + 1;
+    }
+#endif
 
     // Validate that completed files actually exist
     validateDownloadedFiles();
@@ -2653,6 +2674,25 @@ bool DownloadsManager::handOverToShell() {
         return false;
     }
 
+    // Saved as handed over before the plugin is asked: VitaPlex may be ended
+    // at any moment from here, as the system ends it 10 s after asking it to
+    // quit (log of 16:55:06, where it was ended before this was saved), and
+    // one that opens again must know to take the files back before it writes
+    // to them. Undone if the plugin does not take them.
+    auto markHandedOver = [this, &keys](bool handed) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& item : m_downloads) {
+            if (std::find(keys.begin(), keys.end(), item.ratingKey) == keys.end()) continue;
+            item.withShell = handed;
+            // Begun, paused as it stopped, or not begun: to go on with.
+            if (handed && item.state != DownloadState::COMPLETED &&
+                item.state != DownloadState::CANCELLED)
+                item.state = DownloadState::QUEUED;
+        }
+        saveStateUnlocked();
+    };
+    markHandedOver(true);
+
     qmInit();
     if (!qmIsOpen()) {
         char what[320];
@@ -2665,27 +2705,17 @@ bool DownloadsManager::handOverToShell() {
                               "downloads ({:#x}); they go on when VitaPlex opens again",
                               (unsigned)rc);
         sceIoRemove(QM_DOWNLOADS_LIST);
+        markHandedOver(false);
         return false;
     }
 
     // VitaPlex's own download stops, its file closed after the piece it is
-    // writing. SceShell does not touch the files before VitaPlex has gone in
-    // any case, and a download stopped as its answer comes leaves its file as
-    // it is (downloadItem's onStart). What the download thread saves of them
-    // as it stops is undone as VitaPlex opens (validateDownloadedFiles).
+    // writing, without waiting for it: SceShell touches no file before
+    // VitaPlex has gone, and a download stopped as its answer comes leaves
+    // its file as it is (downloadItem's onStart). Waiting cost 1.5 s of the
+    // 10 s (log of 16:55:10). What the download thread saves of them as it
+    // stops is undone as VitaPlex opens (validateDownloadedFiles).
     m_downloading.store(false);
-    waitForDownloadThread(1500);
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        for (auto& item : m_downloads) {
-            if (std::find(keys.begin(), keys.end(), item.ratingKey) == keys.end()) continue;
-            item.withShell = true;
-            // Begun, paused as it stopped, or not begun: to go on with.
-            if (item.state != DownloadState::COMPLETED && item.state != DownloadState::CANCELLED)
-                item.state = DownloadState::QUEUED;
-        }
-        saveStateUnlocked();
-    }
     brls::Logger::info("DownloadsManager: VitaPlex closes; SceShell carries {} download(s) on",
                        keys.size());
     // The plugin's notification is SceShell's to go on with; VitaPlex's own,

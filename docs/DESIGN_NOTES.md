@@ -3723,6 +3723,19 @@ within 5 s of its Begin that names no app (failed, or a system kind) it
 answers VitaPlex's title id with kind 0. A lookup answering an app, a game
 running, is left alone. The log says what the lookup first gave.
 
+Build 2074 changed no answer: the lookup named an app, which the log did
+not say. Every lookup within the window is logged now, and one naming a
+system title (NPXS...) is answered VitaPlex too.
+
+The same run (log of 16:55:06) had VitaPlex ended by its own 10 s watchdog
+in the hand-over: after the plugin had the list, VitaPlex waited 1.5 s for
+its download thread and then did not get its state saved. The plugin
+carried the downloads on, but a VitaPlex opening after it would not have
+known to take them back first. Now the downloads are saved as handed over
+before the plugin is asked (undone if it does not take them), VitaPlex
+does not wait for its download thread, and as it starts, the downloads the
+plugin's status names count as handed over whatever VitaPlex saved.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

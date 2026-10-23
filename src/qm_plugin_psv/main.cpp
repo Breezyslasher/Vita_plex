@@ -5635,10 +5635,12 @@ int bgmStateCapped(BgmState* state) {
 // read from SceShell's code, build 2072): the title id at 0xC of the status,
 // used when the byte at 0x70 is 0, else NPXS10998 or NPXS10999 for 1 and 2.
 // The plugin's caller is SceShell, no app, and its notification had no icon.
-// So for the one lookup after the plugin begins its notification
-// (notifyOwnerFor), the answer is VitaPlex: its title, and its icon. Only an
-// answer that names no app is changed, so that a game's own is never taken,
-// and only once, within kOwnerWindowUs of the Begin.
+// So for the one lookup after the plugin begins its notification, the answer
+// is VitaPlex: its title, and its icon. Only an answer that names no app or a
+// system title (NPXS...) is changed, so that a game's own is never taken, and
+// only once, within kOwnerWindowUs of the Begin. Build 2074 changed only
+// answers naming no app, and changed none: the lookup named one, which the
+// log did not say; every lookup in the window is logged now.
 const uint32_t kStatusTitleId = 0xC, kStatusKind = 0x70, kStatusSize = 0x74;
 
 int statusAsVitaPlex(int appId, uint8_t* status) {
@@ -5648,10 +5650,15 @@ int statusAsVitaPlex(int appId, uint8_t* status) {
     const int ret = next ? ((Fn)next->func)(appId, status) : ((Fn)cur->old)(appId, status);
     const SceUInt64 until = __atomic_load_n(&g_ownerUntilUs, __ATOMIC_SEQ_CST);
     if (!until || !status || sceKernelGetSystemTimeWide() > until) return ret;
-    if (ret >= 0 && status[kStatusKind] == 0) return ret;  // an app: its own
+    char title[16];
+    title[0] = 0;
+    if (ret >= 0) copyText(title, (const char*)status + kStatusTitleId, 10);
+    const bool system = startsWith(title, "NPXS");
+    logLine("notification: owner lookup for app 0x%X gave 0x%08X, kind %d, title \"%s\"%s",
+            (unsigned)appId, (unsigned)ret, ret >= 0 ? (int)status[kStatusKind] : -1, title,
+            ret >= 0 && status[kStatusKind] == 0 && !system ? ", an app's: left" : "; answered VitaPlex");
+    if (ret >= 0 && status[kStatusKind] == 0 && !system) return ret;  // an app: its own
     __atomic_store_n(&g_ownerUntilUs, 0, __ATOMIC_SEQ_CST);
-    logLine("notification: owner lookup for app 0x%X gave 0x%08X, kind %d; answered VitaPlex",
-            (unsigned)appId, (unsigned)ret, ret >= 0 ? (int)status[kStatusKind] : -1);
     if (ret < 0) sceClibMemset(status, 0, kStatusSize);
     status[kStatusKind] = 0;
     copyText((char*)status + kStatusTitleId, VITAPLEX_TITLEID, 10);
