@@ -4618,21 +4618,34 @@ const uint32_t kNotifyHandlerOffset = 0x4E8;
 // when the notification's cancel is pressed, with No and Yes under it. With
 // the struct at 0x4F0 the question was whatever came after it in memory:
 // blank here, two characters of the stack in VitaPlex (builds 2063 to 2065).
-// The download thread's.
-int g_notifyFound;  // 0 not looked for, 1 there, -1 not there
-int g_notifyLive;   // Begin has shown it
-int g_notifyFailed;  // an Update of it has failed, logged once
+// The notification is the plugin's for all of a download run, VitaPlex's
+// part of it included: VitaPlex shows its progress through here while it
+// downloads (QM_CMD_DL_PROGRESS), so that the one notification goes on as
+// SceShell carries the downloads on once VitaPlex has gone, and as VitaPlex
+// takes them back. A notification is its process's, and no call names one
+// (Update and Finish take only text): VitaPlex's own could be gone on with
+// by nothing once it had quit, and SceShell had to begin a second one
+// (builds 2063 to 2069). Under g_notifyLock: the download thread and the
+// receiving thread both show it, and the watch thread ends one left over.
+SceUID g_notifyLock = -1;
+int g_notifyFound;    // 0 not looked for, 1 there, -1 not there
+int g_notifyLive;     // Begin has shown it
+int g_notifyFailed;   // an Update of it has failed, logged once
+SceUInt64 g_notifyHeldUs;  // taken back with it showing: when, for notifyHeldTick
 union {
     NotifyBeginParam begin;
     NotifyUpdateParam update;
     NotifyFinishParam finish;
 } g_notifyParam;
+// How long a notification left showing as VitaPlex takes the downloads back
+// waits for VitaPlex to go on with it before it is ended.
+const SceUInt64 kNotifyHeldUs = 30ull * 1000 * 1000;
 
 // Its events, as VitaPlex's: what they mean is not known, so they are logged.
-// Called from inside Update, on the download thread, with its module's lock
-// held: nothing here calls back into it.
+// Called from inside Update, on the thread that called it, with its module's
+// lock held: nothing here calls back into it.
 void notifyEvent(int id) {
-    logLine("download: notification event %d", id);
+    logLine("notification: event %d", id);
 }
 
 bool notifyFind() {
@@ -4643,7 +4656,7 @@ bool notifyFind() {
                                            g_notify[0].nid, &fn);
     if (rc < 0) {
         rc = sceSysmoduleLoadModule(SCE_SYSMODULE_NOTIFICATION_UTIL);
-        logLine("download: SceNotificationUtil loaded into SceShell: 0x%08X", (unsigned)rc);
+        logLine("notification: SceNotificationUtil loaded into SceShell: 0x%08X", (unsigned)rc);
         if (rc < 0) return false;
     }
     for (int i = 0; i < kNotifyFns; i++) {
@@ -4652,7 +4665,7 @@ bool notifyFind() {
                                            g_notify[i].nid, &fn);
         g_notify[i].fn = rc >= 0 ? fn : 0;
         if (rc < 0) {
-            logLine("download: %s not in SceNotificationUtil: 0x%08X", g_notify[i].name,
+            logLine("notification: %s not in SceNotificationUtil: 0x%08X", g_notify[i].name,
                     (unsigned)rc);
             return false;
         }
@@ -4661,50 +4674,131 @@ bool notifyFind() {
     return true;
 }
 
-void notifyText(NotifyText* t, const char* text, const char* sub) {
-    fromUtf8(text, t->text, 63);
-    fromUtf8(sub, t->sub, 63);
-    t->sep0 = t->sep1 = 0;
+// UTF-16 into one of the parameters' lines, cut at 63 units, ended with 0.
+void lineOf(uint16_t* to, const uint16_t* from) {
+    int n = 0;
+    for (; from[n] && n < 63; n++) to[n] = from[n];
+    for (; n < 63; n++) to[n] = 0;
 }
 
 // The notification shown, or brought up to date: progress from 0 to 1, or
-// below 0 when not known.
-void notifyShow(const char* text, const char* sub, float progress) {
-    if (!g_dlHead.notify || !notifyFind()) return;
+// below 0 when not known. UTF-16 lines.
+void notifyShow16(const uint16_t* text, const uint16_t* sub, float progress) {
+    sceKernelLockMutex(g_notifyLock, 1, NULL);
+    g_notifyHeldUs = 0;
+    if (!notifyFind()) {
+        sceKernelUnlockMutex(g_notifyLock, 1);
+        return;
+    }
     sceClibMemset(&g_notifyParam, 0, sizeof(g_notifyParam));
     if (!g_notifyLive) {
-        notifyText(&g_notifyParam.begin.t, text, sub);
-        fromUtf8("Stop downloading in the background?", g_notifyParam.begin.cancelText, 63);
+        lineOf(g_notifyParam.begin.t.text, text);
+        lineOf(g_notifyParam.begin.t.sub, sub);
+        fromUtf8("Stop this download?", g_notifyParam.begin.cancelText, 63);
         void (*handler)(int) = &notifyEvent;
         sceClibMemcpy((uint8_t*)&g_notifyParam.begin + kNotifyHandlerOffset, &handler,
                       sizeof(handler));
         const int rc = ((FnNotify)g_notify[kNotifyBegin].fn)(&g_notifyParam.begin);
-        logLine("download: notification begun: 0x%08X", (unsigned)rc);
+        logLine("notification: begun: 0x%08X", (unsigned)rc);
         if (rc < 0) {
             g_notifyFound = -1;  // not tried again this boot
-            return;
+        } else {
+            g_notifyLive = 1;
+            g_notifyFailed = 0;
         }
-        g_notifyLive = 1;
-        g_notifyFailed = 0;
+        sceKernelUnlockMutex(g_notifyLock, 1);
         return;
     }
-    notifyText(&g_notifyParam.update.t, text, sub);
+    lineOf(g_notifyParam.update.t.text, text);
+    lineOf(g_notifyParam.update.t.sub, sub);
     g_notifyParam.update.progress = progress < 0.0f ? 0.0f : progress > 1.0f ? 1.0f : progress;
     const int rc = ((FnNotify)g_notify[kNotifyUpdate].fn)(&g_notifyParam.update);
     // As VitaPlex's: closed in SceShell, it may refuse its updates.
     if (rc < 0 && !g_notifyFailed) {
         g_notifyFailed = 1;
-        logLine("download: notification not brought up to date: 0x%08X", (unsigned)rc);
+        logLine("notification: not brought up to date: 0x%08X", (unsigned)rc);
     }
+    sceKernelUnlockMutex(g_notifyLock, 1);
 }
 
-void notifyEnd(const char* text, const char* sub) {
+// Under g_notifyLock.
+void notifyEndLocked(const uint16_t* text, const uint16_t* sub) {
+    g_notifyHeldUs = 0;
     if (!g_notifyLive) return;
     g_notifyLive = 0;
     sceClibMemset(&g_notifyParam, 0, sizeof(g_notifyParam));
-    notifyText(&g_notifyParam.finish.t, text, sub);
+    lineOf(g_notifyParam.finish.t.text, text);
+    lineOf(g_notifyParam.finish.t.sub, sub);
     const int rc = ((FnNotify)g_notify[kNotifyFinish].fn)(&g_notifyParam.finish);
-    logLine("download: notification finished: 0x%08X", (unsigned)rc);
+    logLine("notification: finished: 0x%08X", (unsigned)rc);
+}
+
+void notifyEnd16(const uint16_t* text, const uint16_t* sub) {
+    sceKernelLockMutex(g_notifyLock, 1, NULL);
+    notifyEndLocked(text, sub);
+    sceKernelUnlockMutex(g_notifyLock, 1);
+}
+
+// The download thread's, in UTF-8, with the list's say.
+void notifyShow(const char* text, const char* sub, float progress) {
+    if (!g_dlHead.notify) return;
+    uint16_t t[64], u[64];
+    fromUtf8(text, t, 64);
+    fromUtf8(sub, u, 64);
+    notifyShow16(t, u, progress);
+}
+
+void notifyEnd(const char* text, const char* sub) {
+    uint16_t t[64], u[64];
+    fromUtf8(text, t, 64);
+    fromUtf8(sub, u, 64);
+    notifyEnd16(t, u);
+}
+
+// Taken back with the notification showing: VitaPlex goes on with it as it
+// downloads again (QM_CMD_DL_PROGRESS). Ended by notifyHeldTick if it does not.
+void notifyHold() {
+    sceKernelLockMutex(g_notifyLock, 1, NULL);
+    if (g_notifyLive) g_notifyHeldUs = sceKernelGetSystemTimeWide();
+    sceKernelUnlockMutex(g_notifyLock, 1);
+}
+
+// The watch thread's: a notification held for VitaPlex longer than
+// kNotifyHeldUs, ended. Never under g_lock.
+void notifyHeldTick(SceUInt64 now) {
+    sceKernelLockMutex(g_notifyLock, 1, NULL);
+    if (g_notifyLive && g_notifyHeldUs && now - g_notifyHeldUs > kNotifyHeldUs) {
+        logLine("notification: VitaPlex did not go on with it in 30 s; ended");
+        uint16_t t[64], u[64];
+        fromUtf8("VitaPlex", t, 64);
+        fromUtf8("Downloads paused", u, 64);
+        notifyEndLocked(t, u);
+    }
+    sceKernelUnlockMutex(g_notifyLock, 1);
+}
+
+// From VitaPlex (QM_CMD_DL_PROGRESS, QM_CMD_DL_PROGRESS_END): what it asked
+// for, taken by the receiving thread under g_lock and shown after it, so that
+// no notification call is made under g_lock.
+struct NotifyAsk {
+    int due;    // 1 show, 2 end
+    uint32_t permille;
+    uint16_t text[64], sub[64];
+};
+NotifyAsk g_notifyAsk;  // the receiving thread's alone
+
+void notifyAsked() {
+    if (!g_notifyAsk.due) return;
+    const int due = g_notifyAsk.due;
+    g_notifyAsk.due = 0;
+    if (due == 1)
+        notifyShow16(g_notifyAsk.text, g_notifyAsk.sub,
+                     g_notifyAsk.permille == QM_PROGRESS_UNKNOWN
+                         ? -1.0f
+                         : (float)(g_notifyAsk.permille > 1000 ? 1000 : g_notifyAsk.permille) /
+                               1000.0f);
+    else
+        notifyEnd16(g_notifyAsk.text, g_notifyAsk.sub);
 }
 
 // ── Asking the server ──
@@ -5194,7 +5288,8 @@ void dlRun() {
     logLine("download: %s: %d done, %d failed, %d gone from the server, %d not begun",
             stopped ? "stopped" : "all carried on", done, failed, gone, count - n);
     if (stopped) {
-        notifyEnd("VitaPlex", "Downloads go on in VitaPlex");
+        // Left showing, for VitaPlex to go on with as it downloads again.
+        notifyHold();
     } else if (failed + gone > 0) {
         sceClibSnprintf(sub, sizeof(sub), "%d downloaded, %d go on when VitaPlex opens", done,
                         failed + gone);
@@ -5348,6 +5443,7 @@ public:
             if (g_fallback) rowTick(now);
             unlock();
             wasOpen = open;
+            notifyHeldTick(now);
             logDrain();
             paf::thread::Sleep(100);
         }
@@ -5373,6 +5469,7 @@ public:
             lock();
             handle(g_message);
             unlock();
+            notifyAsked();
         }
     }
 
@@ -5445,6 +5542,14 @@ private:
         case QM_CMD_TAKE_DOWNLOADS:
             takeDownloads();
             break;
+        case QM_CMD_DL_PROGRESS:
+        case QM_CMD_DL_PROGRESS_END:
+            g_notifyAsk.due = m.cmd == QM_CMD_DL_PROGRESS ? 1 : 2;
+            g_notifyAsk.permille = m.arg;
+            sceClibMemcpy(g_notifyAsk.text, m.title, sizeof(g_notifyAsk.text) - 2);
+            sceClibMemcpy(g_notifyAsk.sub, m.artist, sizeof(g_notifyAsk.sub) - 2);
+            g_notifyAsk.text[63] = g_notifyAsk.sub[63] = 0;
+            break;
         default:
             logLine("unknown command %u", (unsigned)m.cmd);
             break;
@@ -5500,13 +5605,14 @@ extern "C" int module_start(SceSize args, const void* argp) {
 
     g_lock = sceKernelCreateMutex("VitaPlexQM::Lock", 0, 0, NULL);
     g_netLock = sceKernelCreateMutex("VitaPlexQM::Net", 0, 0, NULL);
+    g_notifyLock = sceKernelCreateMutex("VitaPlexQM::Notify", 0, 0, NULL);
     // As ElevenMPV-A's pipes are made: 0x40, user main memory; 0x81, whole
     // messages and openable by name.
     g_toPlugin = sceKernelCreateMsgPipe(QM_PIPE_TO_PLUGIN, 0x40, 0x81,
                                         sizeof(QmMessage) * QM_TO_PLUGIN_SLOTS, NULL);
     g_fromPlugin = sceKernelCreateMsgPipe(QM_PIPE_FROM_PLUGIN, 0x40, 0x81,
                                           sizeof(QmPress) * QM_FROM_PLUGIN_SLOTS, NULL);
-    if (g_lock < 0 || g_netLock < 0 || g_toPlugin < 0 || g_fromPlugin < 0) {
+    if (g_lock < 0 || g_netLock < 0 || g_notifyLock < 0 || g_toPlugin < 0 || g_fromPlugin < 0) {
         logLine("pipes: 0x%08X, 0x%08X, lock 0x%08X: not staying", (unsigned)g_toPlugin,
                 (unsigned)g_fromPlugin, (unsigned)g_lock);
         logDrain();
@@ -5527,7 +5633,9 @@ extern "C" int module_start(SceSize args, const void* argp) {
     paf::common::MainThreadCallList::Register(mainTick, NULL);
 
     (new WatchThread(kThreadPriority, 0x4000, "VitaPlexQM::Watch"))->Start();
-    (new ReceiveThread(kThreadPriority, 0x4000, "VitaPlexQM::Receive"))->Start();
+    // Twice the watch thread's: it shows VitaPlex's download notification
+    // too (notifyAsked), through SceShell's service, as the download thread does.
+    (new ReceiveThread(kThreadPriority, 0x8000, "VitaPlexQM::Receive"))->Start();
     logLine("ready");
     return SCE_KERNEL_START_SUCCESS;
 }

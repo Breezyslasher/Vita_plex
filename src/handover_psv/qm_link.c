@@ -289,6 +289,30 @@ int qmTakeDownloads(void) {
     return rc;
 }
 
+// Under g_lock: a command with two lines of text.
+static int sendLinesLocked(uint32_t cmd, uint32_t arg, const char* first, const char* second) {
+    memset(&g_message, 0, sizeof(g_message));
+    g_message.cmd = cmd;
+    g_message.arg = arg;
+    toUtf16(first, g_message.title, 256);
+    toUtf16(second, g_message.artist, 256);
+    return sendLocked();
+}
+
+int qmDownloadProgress(const char* title, const char* detail, uint32_t permille) {
+    lock();
+    const int rc = sendLinesLocked(QM_CMD_DL_PROGRESS, permille, title, detail);
+    unlock();
+    return rc;
+}
+
+int qmDownloadProgressEnd(const char* title, const char* detail) {
+    lock();
+    const int rc = sendLinesLocked(QM_CMD_DL_PROGRESS_END, 0, title, detail);
+    unlock();
+    return rc;
+}
+
 int qmPoll(void) {
     lock();
     int press = QM_NONE;

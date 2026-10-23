@@ -3655,6 +3655,18 @@ download?" from VitaPlex), and the probe of build 2065 is gone without
 having run. What 0x100 to 0x4E6 holds is still not known: the client
 sends it as it is.
 
+**One notification, the plugin's (protocol 17).** Update and Finish take
+only text, so a progress notification is its process's: once VitaPlex had
+closed, its own could be gone on with by nothing, and the plugin began a
+second as it carried the downloads on (two entries for one download).
+VitaPlex now has the plugin show its notification from the start, sending
+the two lines and how far (`QM_CMD_DL_PROGRESS`), once it has loaded the
+plugin as the downloads begin. SceShell goes on with that same
+notification, and leaves it showing as VitaPlex takes the downloads back,
+for VitaPlex to go on with (ended after 30 s if it does not). VitaPlex
+falls back to its own notification only when the plugin is not there, and
+keeps whichever it began with until it ends.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

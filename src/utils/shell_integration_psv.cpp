@@ -39,6 +39,8 @@
 #include <cstring>
 #include <string>
 
+#include "qm_link.h"
+
 #if defined(VITAPLEX_HAVE_PSV_NOTIFY)
 #include <psp2/notificationutil.h>
 #include <psp2/sysmodule.h>
@@ -174,12 +176,51 @@ void notify(const std::string& summary, const std::string& body) {
 #endif
 }
 
+// Where the progress notification showing is: none, VitaPlex's own, or the
+// one the quick menu plugin shows for it. Chosen as one begins, and kept
+// until it ends, so that a notification never moves half-way.
+enum class Progress { None, Own, Shell };
+Progress g_progressWhere = Progress::None;
+bool g_shellFailLogged = false;
+
+bool progressInShell() {
+    return g_progressWhere == Progress::Shell;
+}
+
 void setProgress(double fraction, const std::string& title,
                  const std::string& detail, bool visible) {
+    // The plugin's when it is in SceShell, VitaPlex having loaded it as the
+    // downloads began (DownloadsManager::startDownloads): a notification is
+    // its process's, so VitaPlex's own could be gone on with by nothing once
+    // VitaPlex had closed, and SceShell had to begin a second one as it
+    // carried the downloads on (builds 2063 to 2069). The plugin's is the one
+    // notification throughout.
+    if (g_progressWhere == Progress::None && visible && qmIsOpen())
+        g_progressWhere = Progress::Shell;
+    if (g_progressWhere == Progress::Shell) {
+        const uint32_t permille = fraction < 0.0 ? QM_PROGRESS_UNKNOWN
+                                : fraction > 1.0 ? 1000u
+                                                 : (uint32_t)(fraction * 1000.0);
+        const int rc = visible ? qmDownloadProgress(title.c_str(), detail.c_str(), permille)
+                               : qmDownloadProgressEnd(title.c_str(), detail.c_str());
+        if (rc < 0 && !g_shellFailLogged) {
+            g_shellFailLogged = true;
+            brls::Logger::info("shell: the plugin's notification not reached ({:#x})",
+                               (unsigned)rc);
+        }
+        if (!visible) {
+            g_progressWhere = Progress::None;
+            g_shellFailLogged = false;
+        }
+        return;
+    }
+
 #if defined(VITAPLEX_HAVE_PSV_NOTIFY)
     if (!g_ready) return;
+    if (visible) g_progressWhere = Progress::Own;
 
     if (!visible) {
+        g_progressWhere = Progress::None;
         if (!g_progressLive) return;
         g_progressLive = false;
         SceNotificationUtilProgressFinishParam p = {};

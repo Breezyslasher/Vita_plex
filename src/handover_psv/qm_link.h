@@ -85,6 +85,13 @@ int qmCarryDownloads(void);
 // absence when the plugin is not there, and nothing carried on).
 int qmTakeDownloads(void);
 
+// VitaPlex's download notification, shown by the plugin (QM_CMD_DL_PROGRESS):
+// two lines, UTF-8, and how far, 0 to 1000, or QM_PROGRESS_UNKNOWN. Only to
+// a plugin this process has opened; 0 when sent.
+int qmDownloadProgress(const char* title, const char* detail, uint32_t permille);
+// The notification ended, with these two lines (QM_CMD_DL_PROGRESS_END).
+int qmDownloadProgressEnd(const char* title, const char* detail);
+
 // A press waiting on the row, or QM_NONE. Never waits.
 int qmPoll(void);
 

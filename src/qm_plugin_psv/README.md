@@ -166,6 +166,15 @@ the plugin.
   the status. The fetch, server and download threads share Sony's HTTP
   library: the first to start it starts it and the last to end it ends it.
   Its log lines begin "download:".
+- **The download notification (protocol 17):** a progress notification is
+  its process's, and no call names one, so VitaPlex's own could be gone on
+  with by nothing once it had closed, and SceShell began a second. Now the
+  plugin shows VitaPlex's too: VitaPlex sends its progress
+  (`QM_CMD_DL_PROGRESS`, `QM_CMD_DL_PROGRESS_END`), so the one notification
+  goes on as SceShell carries the downloads on, and again as VitaPlex takes
+  them back. One taken back is left showing for VitaPlex to go on with, and
+  ended if it has not in 30 s. VitaPlex uses its own only when the plugin is
+  not there.
 - **No waiting in SceShell:** a press is sent without waiting, and dropped if
   nobody reads it. The row is given back by itself when no process has asked
   for it in 5 s (the owner asks again every second). So a process the system

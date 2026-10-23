@@ -20,8 +20,9 @@
 // Version 14 stops the shell's song itself as VitaPlex takes the music back.
 // Version 15 installs VitaPlex's updates (QM_CMD_INSTALL_UPDATE). Version 16
 // carries VitaPlex's downloads on once it has gone (QM_CMD_DOWNLOADS).
-#define QM_PIPE_TO_PLUGIN   "VitaPlexQM16::ToPlugin"
-#define QM_PIPE_FROM_PLUGIN "VitaPlexQM16::FromPlugin"
+// Version 17 shows VitaPlex's download notification too (QM_CMD_DL_PROGRESS).
+#define QM_PIPE_TO_PLUGIN   "VitaPlexQM17::ToPlugin"
+#define QM_PIPE_FROM_PLUGIN "VitaPlexQM17::FromPlugin"
 
 // SceShell carries the queue on. The system closes VitaPlex to start a game,
 // and SceShell is never ended. So VitaPlex hands its queue to SceShell as it
@@ -96,8 +97,19 @@ enum {
     // From VitaPlex as it opens: SceShell stops after the piece it is writing,
     // and writes the status one last time with "running=0", which VitaPlex
     // waits for before it writes to any of those files again.
-    QM_CMD_TAKE_DOWNLOADS
+    QM_CMD_TAKE_DOWNLOADS,
+    // From VitaPlex as it downloads: its progress notification, which the
+    // plugin shows, so that it is the one SceShell goes on with once VitaPlex
+    // has gone, and VitaPlex again as it takes the downloads back. A
+    // notification is its process's, and VitaPlex's own could be gone on
+    // with by nothing (up to version 16 SceShell began a second). title the
+    // first line, artist the second; arg how far, 0 to 1000, or
+    // QM_PROGRESS_UNKNOWN.
+    QM_CMD_DL_PROGRESS,
+    // The notification ended, with title and artist as its last two lines.
+    QM_CMD_DL_PROGRESS_END
 };
+#define QM_PROGRESS_UNKNOWN 0xFFFFFFFFu
 enum { QM_OWNER_APP = 1 };
 
 // VitaPlex's update for the plugin to install (QM_CMD_INSTALL_UPDATE): the

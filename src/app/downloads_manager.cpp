@@ -2658,7 +2658,10 @@ bool DownloadsManager::handOverToShell() {
     }
     brls::Logger::info("DownloadsManager: VitaPlex closes; SceShell carries {} download(s) on",
                        keys.size());
-    shell::setProgress(0.0, firstTitle, "Going on in the background", false);
+    // The plugin's notification is SceShell's to go on with; VitaPlex's own,
+    // when the plugin could not show it, ends here.
+    if (!shell::progressInShell())
+        shell::setProgress(0.0, firstTitle, "Going on in the background", false);
     return true;
 }
 
