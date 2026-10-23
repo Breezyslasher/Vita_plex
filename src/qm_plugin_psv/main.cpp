@@ -39,6 +39,10 @@
  * - It installs VitaPlex's updates once VitaPlex has quit
  *   (QM_CMD_INSTALL_UPDATE), as the system's installer refuses the title
  *   running, and launches VitaPlex again.
+ * - It carries VitaPlex's downloads on once VitaPlex has gone
+ *   (QM_CMD_DOWNLOADS), music and videos alike, into the files VitaPlex had
+ *   begun, with their progress in a notification of SceShell's, until
+ *   VitaPlex takes them back as it opens (QM_CMD_TAKE_DOWNLOADS).
  *
  * Built with vitasdk against the PAF headers scripts/vita/fetch_paf_headers.sh
  * fetches; its PAF imports are in paf_stubs.S. Logs to
@@ -47,6 +51,7 @@
 
 #include <psp2/appmgr.h>
 #include <psp2/io/fcntl.h>
+#include <psp2/io/stat.h>
 #include <psp2/kernel/clib.h>
 #include <psp2/kernel/modulemgr.h>
 #include <psp2/kernel/processmgr.h>
@@ -1288,6 +1293,7 @@ F httpFn(int i) {
 }
 const int kHttpVersion11 = 2;                    // SCE_HTTP_VERSION_1_1
 const int kHttpGet = 0;                          // SCE_HTTP_METHOD_GET
+const int kHttpPost = 1;                         // SCE_HTTP_METHOD_POST
 const unsigned kHeaderOverwrite = 0;             // SCE_HTTP_HEADER_OVERWRITE
 const int kHttpAlreadyInited = (int)0x80431020;  // SCE_HTTP_ERROR_ALREADY_INITED
 const int kSslAlreadyInited = (int)0x80435020;   // what SceShell's gave (build 2040)
@@ -1332,21 +1338,49 @@ bool findLibraries(const char* who) {
 // Both libraries started, unless SceShell has started them: their starts'
 // codes, which say what is to be ended after (httpEnd). A start that failed
 // otherwise than as begun already is logged. true when the HTTP library can
-// be used.
+// be used. The fetch, the server's and the download threads each start them
+// and end them as they go, and may run at once: the first to start them
+// starts them, and the last to end ends them, so that none ends them under
+// another (g_netLock).
+SceUID g_netLock = -1;
+int g_netUsers;              // under g_netLock: threads between start and end
+int g_netRcSsl, g_netRcHttp;  // under g_netLock: the first's starts
+bool httpUsable(int rcHttp) {
+    return rcHttp >= 0 || rcHttp == kHttpAlreadyInited;
+}
 bool httpStart(const char* who, int* rcSsl, int* rcHttp) {
-    *rcSsl = ((FnUnsigned)g_ssl[kSslInit].fn)(kSslPool);
-    if (*rcSsl < 0 && *rcSsl != kSslAlreadyInited)
-        logLine("%s: SSL library not started: 0x%08X", who, (unsigned)*rcSsl);
-    *rcHttp = httpFn<FnUnsigned>(kHttpInit)(kHttpPool);
-    if (*rcHttp < 0 && *rcHttp != kHttpAlreadyInited)
-        logLine("%s: HTTP library not started: 0x%08X", who, (unsigned)*rcHttp);
-    return *rcHttp >= 0 || *rcHttp == kHttpAlreadyInited;
+    sceKernelLockMutex(g_netLock, 1, NULL);
+    if (g_netUsers == 0) {
+        g_netRcSsl = ((FnUnsigned)g_ssl[kSslInit].fn)(kSslPool);
+        if (g_netRcSsl < 0 && g_netRcSsl != kSslAlreadyInited)
+            logLine("%s: SSL library not started: 0x%08X", who, (unsigned)g_netRcSsl);
+        g_netRcHttp = httpFn<FnUnsigned>(kHttpInit)(kHttpPool);
+        if (!httpUsable(g_netRcHttp)) {
+            logLine("%s: HTTP library not started: 0x%08X", who, (unsigned)g_netRcHttp);
+            if (g_netRcSsl >= 0) ((FnVoid)g_ssl[kSslTerm].fn)();
+            g_netRcSsl = -1;
+        }
+    }
+    *rcSsl = g_netRcSsl;
+    *rcHttp = g_netRcHttp;
+    const bool usable = httpUsable(g_netRcHttp);
+    if (usable) g_netUsers++;
+    sceKernelUnlockMutex(g_netLock, 1);
+    return usable;
 }
 
-// What httpStart started, ended.
+// What httpStart started, ended once no thread uses it. Called with the codes
+// it gave, whether or not it was called: nothing is ended for a start that
+// failed or never was.
 void httpEnd(int rcSsl, int rcHttp) {
-    if (rcHttp >= 0) httpFn<FnVoid>(kHttpTerm)();
-    if (rcSsl >= 0) ((FnVoid)g_ssl[kSslTerm].fn)();
+    (void)rcSsl;
+    if (!httpUsable(rcHttp)) return;
+    sceKernelLockMutex(g_netLock, 1, NULL);
+    if (g_netUsers > 0 && --g_netUsers == 0) {
+        if (g_netRcHttp >= 0) httpFn<FnVoid>(kHttpTerm)();
+        if (g_netRcSsl >= 0) ((FnVoid)g_ssl[kSslTerm].fn)();
+    }
+    sceKernelUnlockMutex(g_netLock, 1);
 }
 
 // A template with the time-outs build 2040's test found to do: 5 s to resolve
@@ -4261,6 +4295,957 @@ void startUpdate() {
     g_updating = 1;
 }
 
+// ── VitaPlex's downloads, carried on ────────────────────────────────────────
+// (qm_protocol.h, QM_CMD_DOWNLOADS) The system closes VitaPlex to start a
+// game, and its downloads stopped with it until it was opened again. As it
+// goes it now lists them for SceShell, which carries them on from here once
+// VitaPlex has gone: each into the file VitaPlex had begun, from where that
+// file ends, by HTTP Range, as VitaPlex's own download goes on with a file
+// cut off. A video the server prepares in its download queue is waited for
+// here as VitaPlex waits for it, and one not yet in the queue is added to it
+// under VitaPlex's client id, with the query and profile VitaPlex would have
+// sent. How far it has got goes to QM_DOWNLOADS_STATUS, which VitaPlex reads
+// as it takes them back (QM_CMD_TAKE_DOWNLOADS), and to a progress
+// notification of SceShell's own, the one VitaPlex shows while it downloads.
+// One download at a time, on a thread of its own at the lowest priority, which
+// gives way to the music's fetches. Its lines in the log begin "download:".
+// The files' URLs and the token are never logged.
+enum { kDlWaiting, kDlGoing, kDlDone, kDlGone, kDlFailed };
+const char* const kDlStateNames[5] = {"waiting", "going", "done", "gone", "failed"};
+const int kDlStack = 0x8000;
+// Tries at a file before it is given up, each after a wait longer than the
+// last; a try that gets some of it starts the count again.
+const int kDlTries = 4;
+const uint32_t kDlRetryMs[kDlTries] = {0, 5000, 15000, 60000};
+// How long the server may answer 503 for a file it is still preparing, and
+// how long a queue item may stay unprepared, as VitaPlex waits for one
+// (downloads_manager.cpp, waitForQueueItem): an hour.
+const uint32_t kDlPrepareMs = 60u * 60u * 1000u;
+// The status and the notification, this often while it goes.
+const uint32_t kDlStatusEveryMs = 2000;
+const uint32_t kDlLogEveryMs = 10000;
+// How long VitaPlex has to go before the downloads are begun.
+const uint32_t kDlGoneMs = 30000;
+const uint32_t kDlLookMs = 250;
+
+// A download of the list. Under g_lock; the download thread's as it runs.
+struct DlItem {
+    char key[24];
+    int state;        // kDl*
+    uint64_t bytes;   // in its file
+    uint64_t total;   // its full size, 0 when not known
+    char queue[16];   // the download queue's id and the item's, "" for none
+    char item[16];
+};
+DlItem g_dl[QM_DOWNLOADS_MAX];
+int g_dlCount;
+int g_dlRunning;  // under g_lock: the download thread runs
+int g_dlStop;     // under g_lock: stop after the piece being written
+int g_dlAgain;    // under g_lock: a new list came as it ran; it is taken up
+
+// The download thread's: what VitaPlex names itself as, from the list's head.
+struct DlHead {
+    int notify;
+    char client[64], platform[32], device[48];
+};
+DlHead g_dlHead;
+// The download thread's: the list a line at a time, as the queue is read
+// (LineReader), with room for an add's profile; a piece of a file on its way
+// to the card; a URL; an answer of the server's.
+struct DlReader {
+    SceUID fd;
+    char buf[2048];
+    int len, pos;
+};
+DlReader g_dlReader;
+char g_dlLine[4096];
+uint8_t g_dlBuf[16384];
+char g_dlUrl[1536];
+char g_dlAnswer[4096];
+
+// Milliseconds since `from`, in 32 bits (splitUs has why there is no 64-bit
+// division).
+uint32_t msSince(SceUInt64 from) {
+    uint32_t secs, micros;
+    splitUs(sceKernelGetSystemTimeWide() - from, &secs, &micros);
+    return secs * 1000u + micros / 1000u;
+}
+
+// src, cut to fit, into dst, always ended with 0.
+void copyText(char* dst, const char* src, int cap) {
+    int n = 0;
+    for (; src[n] && n < cap - 1; n++) dst[n] = src[n];
+    dst[n] = 0;
+}
+
+bool dlStopped() {
+    lock();
+    const int stop = g_dlStop;
+    unlock();
+    return stop != 0;
+}
+
+// Waits ms, a look at a time, for as long as nothing stops the downloads.
+// false if something did.
+bool dlWait(uint32_t ms) {
+    for (uint32_t waited = 0; waited < ms; waited += kDlLookMs) {
+        if (dlStopped()) return false;
+        sceKernelDelayThread(kDlLookMs * 1000);
+    }
+    return !dlStopped();
+}
+
+// A count of bytes as decimal, without a 64-bit division (splitUs has why).
+struct Big {
+    char s[24];
+};
+Big bigOf(uint64_t v) {
+    Big b;
+    uint32_t hi, lo;
+    splitUs(v, &hi, &lo);
+    if (hi)
+        sceClibSnprintf(b.s, sizeof(b.s), "%u%06u", (unsigned)hi, (unsigned)lo);
+    else
+        sceClibSnprintf(b.s, sizeof(b.s), "%u", (unsigned)lo);
+    return b;
+}
+uint64_t toU64(const char* s) {
+    uint64_t v = 0;
+    for (; *s >= '0' && *s <= '9'; s++) v = v * 10u + (uint64_t)(*s - '0');
+    return v;
+}
+// Megabytes, "x.yy", of a size that may pass 4 GB.
+Num mb64Of(uint64_t bytes) {
+    Num m;
+    sceClibSnprintf(m.s, sizeof(m.s), "%u.%02u", (unsigned)(bytes >> 20),
+                    (unsigned)((((uint32_t)bytes & 0xFFFFF) * 100u) >> 20));
+    return m;
+}
+// bytes of total in percent, in 32 bits.
+uint32_t percentOf(uint64_t bytes, uint64_t total) {
+    if (bytes > total) bytes = total;
+    while (total >= (1u << 24)) {
+        total >>= 1;
+        bytes >>= 1;
+    }
+    if (total == 0) return 0;
+    return (uint32_t)bytes * 100u / (uint32_t)total;
+}
+
+// A file's size on the card, 0 when it is not there.
+uint64_t fileSize(const char* path) {
+    SceIoStat st;
+    sceClibMemset(&st, 0, sizeof(st));
+    if (sceIoGetstat(path, &st) < 0 || st.st_size < 0) return 0;
+    return (uint64_t)st.st_size;
+}
+
+// The list's next line in g_dlLine, as readerNext reads the queue. false at
+// its end.
+bool dlNext() {
+    int n = 0;
+    bool any = false;
+    for (;;) {
+        if (g_dlReader.pos == g_dlReader.len) {
+            const int got = sceIoRead(g_dlReader.fd, g_dlReader.buf, sizeof(g_dlReader.buf));
+            g_dlReader.len = got > 0 ? got : 0;
+            g_dlReader.pos = 0;
+            if (g_dlReader.len == 0) break;
+        }
+        any = true;
+        const char c = g_dlReader.buf[g_dlReader.pos++];
+        if (c == '\n') break;
+        if (c != '\r' && n < (int)sizeof(g_dlLine) - 1) g_dlLine[n++] = c;
+    }
+    g_dlLine[n] = 0;
+    return any;
+}
+
+bool dlOpenList() {
+    g_dlReader.fd = sceIoOpen(QM_DOWNLOADS_LIST, SCE_O_RDONLY, 0);
+    g_dlReader.len = g_dlReader.pos = 0;
+    return g_dlReader.fd >= 0;
+}
+
+void dlCloseList() {
+    if (g_dlReader.fd >= 0) sceIoClose(g_dlReader.fd);
+    g_dlReader.fd = -1;
+}
+
+// An item's fields, cut at its tabs, in place: how many.
+int dlFields(char* line, char** f, int cap) {
+    int n = 0;
+    f[n++] = line;
+    for (char* p = line; *p && n < cap; p++)
+        if (*p == '\t') {
+            *p = 0;
+            f[n++] = p + 1;
+        }
+    return n;
+}
+// The fields every item has before how it is fetched.
+enum { kFKey, kFPath, kFSize, kFTitle, kFToken, kFKind, kFArg1, kFArg2, kFArg3, kFMax };
+
+// The list read through for its head and its items, which g_dl then holds,
+// waiting. false when it is not there or not whole.
+bool dlReadList() {
+    sceClibMemset(&g_dlHead, 0, sizeof(g_dlHead));
+    if (!dlOpenList()) return false;
+    int count = 0;
+    bool whole = false;
+    char* f[kFMax];
+    while (dlNext()) {
+        if (same(g_dlLine, "end")) {
+            whole = true;
+            break;
+        }
+        if (startsWith(g_dlLine, "notify=")) {
+            g_dlHead.notify = g_dlLine[7] == '1';
+        } else if (startsWith(g_dlLine, "client=")) {
+            copyText(g_dlHead.client, g_dlLine + 7, sizeof(g_dlHead.client));
+        } else if (startsWith(g_dlLine, "platform=")) {
+            copyText(g_dlHead.platform, g_dlLine + 9, sizeof(g_dlHead.platform));
+        } else if (startsWith(g_dlLine, "device=")) {
+            copyText(g_dlHead.device, g_dlLine + 7, sizeof(g_dlHead.device));
+        } else if (startsWith(g_dlLine, "item=") && count < QM_DOWNLOADS_MAX) {
+            if (dlFields(g_dlLine + 5, f, kFMax) <= kFArg1) continue;
+            const uint64_t bytes = fileSize(f[kFPath]);  // not under the lock: the card
+            lock();
+            DlItem* d = &g_dl[count];
+            sceClibMemset(d, 0, sizeof(*d));
+            copyText(d->key, f[kFKey], sizeof(d->key));
+            d->state = kDlWaiting;
+            d->total = toU64(f[kFSize]);
+            d->bytes = bytes;
+            unlock();
+            count++;
+        }
+    }
+    dlCloseList();
+    lock();
+    g_dlCount = whole ? count : 0;
+    unlock();
+    return whole;
+}
+
+// The status, as qm_protocol.h lays it out: written beside its name and moved
+// in. Under nothing: g_dl is read under g_lock a line at a time.
+int g_dlStatusErrors;
+void dlStatus(bool running) {
+    char text[160];
+    const char* const part = QM_DOWNLOADS_STATUS ".part";
+    const SceUID fd = sceIoOpen(part, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+    int rc = fd;
+    if (fd >= 0) {
+        uint32_t secs, micros;
+        splitUs(sceKernelGetSystemTimeWide(), &secs, &micros);
+        int n = sceClibSnprintf(text, sizeof(text), "written=%u.%06u\nrunning=%d\n",
+                                (unsigned)secs, (unsigned)micros, running ? 1 : 0);
+        rc = sceIoWrite(fd, text, (SceSize)n) == n ? 0 : -1;
+        for (int i = 0; rc == 0; i++) {
+            lock();
+            const bool more = i < g_dlCount;
+            if (more) {
+                const DlItem* d = &g_dl[i];
+                n = sceClibSnprintf(text, sizeof(text), "item=%s\t%s\t%s\t%s\t%s\t%s\n", d->key,
+                                    kDlStateNames[d->state], bigOf(d->bytes).s,
+                                    bigOf(d->total).s, d->queue, d->item);
+            }
+            unlock();
+            if (!more) break;
+            rc = sceIoWrite(fd, text, (SceSize)n) == n ? 0 : -1;
+        }
+        if (rc == 0) rc = sceIoWrite(fd, "end\n", 4) == 4 ? 0 : -1;
+        const int rcClose = sceIoClose(fd);
+        if (rc == 0) rc = rcClose;
+    }
+    if (rc >= 0) {
+        // rename does not replace a file on every target (player.c's moveIn).
+        sceIoRemove(QM_DOWNLOADS_STATUS);
+        rc = sceIoRename(part, QM_DOWNLOADS_STATUS);
+    }
+    if (rc < 0 && g_dlStatusErrors < 3) {
+        g_dlStatusErrors++;
+        logLine("download: status not written: 0x%08X", (unsigned)rc);
+    }
+}
+
+// ── The downloads' progress notification ──
+// SceNotificationUtil's progress notification, the one a system download
+// shows and VitaPlex shows while it downloads (src/utils/
+// shell_integration_psv.cpp), from SceShell, found with taiHEN as the HTTP
+// library is: SceShell's module of it, else the module loaded into SceShell
+// through SceSysmodule. Its calls go to SceShell's notification service from
+// this thread, never SceShell's UI thread, as the music service's do. Where it
+// is not there, or Begin refuses, the downloads go on without it.
+const uint32_t kNotifyProgressLibrary = 0x75602769;  // SceNotificationUtilProgress
+enum { kNotifyBegin, kNotifyUpdate, kNotifyFinish, kNotifyFns };
+LibFn g_notify[kNotifyFns] = {{"sceNotificationUtilProgressBegin", 0xFD0769B0, 0},
+                              {"sceNotificationUtilProgressUpdate", 0xD9890A65, 0},
+                              {"sceNotificationUtilProgressFinish", 0x8CD688A1, 0}};
+typedef int (*FnNotify)(void*);
+// The parameters, as vitasdk's notificationutil.h lays them out: two lines of
+// 63 UTF-16 units, each followed by a 0, then the rest. Begin's handler, the
+// one its module calls with each event, is the word at 0x4E8, not the header's
+// eventHandler at 0x4EC, and must not be 0 (docs/DESIGN_NOTES.md, "Vita:
+// notifications yes, background downloads no").
+struct NotifyText {
+    uint16_t text[63];
+    int16_t sep0;
+    uint16_t sub[63];
+    int16_t sep1;
+};
+struct NotifyBeginParam {
+    NotifyText t;
+    uint8_t rest[0x4F0 - sizeof(NotifyText)];
+};
+struct NotifyUpdateParam {
+    NotifyText t;
+    float progress;
+    uint8_t reserved[0x38];
+};
+struct NotifyFinishParam {
+    NotifyText t;
+    char path[0x3E8];
+};
+const uint32_t kNotifyHandlerOffset = 0x4E8;
+// The download thread's.
+int g_notifyFound;  // 0 not looked for, 1 there, -1 not there
+int g_notifyLive;   // Begin has shown it
+int g_notifyFailed;  // an Update of it has failed, logged once
+union {
+    NotifyBeginParam begin;
+    NotifyUpdateParam update;
+    NotifyFinishParam finish;
+} g_notifyParam;
+
+// Its events, as VitaPlex's: what they mean is not known, so they are logged.
+// Called from inside Update, on the download thread, with its module's lock
+// held: nothing here calls back into it.
+void notifyEvent(int id) {
+    logLine("download: notification event %d", id);
+}
+
+bool notifyFind() {
+    if (g_notifyFound) return g_notifyFound > 0;
+    g_notifyFound = -1;
+    uintptr_t fn = 0;
+    int rc = vitaplexQmGetModuleExportFunc("SceNotificationUtil", kNotifyProgressLibrary,
+                                           g_notify[0].nid, &fn);
+    if (rc < 0) {
+        rc = sceSysmoduleLoadModule(SCE_SYSMODULE_NOTIFICATION_UTIL);
+        logLine("download: SceNotificationUtil loaded into SceShell: 0x%08X", (unsigned)rc);
+        if (rc < 0) return false;
+    }
+    for (int i = 0; i < kNotifyFns; i++) {
+        fn = 0;
+        rc = vitaplexQmGetModuleExportFunc("SceNotificationUtil", kNotifyProgressLibrary,
+                                           g_notify[i].nid, &fn);
+        g_notify[i].fn = rc >= 0 ? fn : 0;
+        if (rc < 0) {
+            logLine("download: %s not in SceNotificationUtil: 0x%08X", g_notify[i].name,
+                    (unsigned)rc);
+            return false;
+        }
+    }
+    g_notifyFound = 1;
+    return true;
+}
+
+void notifyText(NotifyText* t, const char* text, const char* sub) {
+    fromUtf8(text, t->text, 63);
+    fromUtf8(sub, t->sub, 63);
+    t->sep0 = t->sep1 = 0;
+}
+
+// The notification shown, or brought up to date: progress from 0 to 1, or
+// below 0 when not known.
+void notifyShow(const char* text, const char* sub, float progress) {
+    if (!g_dlHead.notify || !notifyFind()) return;
+    sceClibMemset(&g_notifyParam, 0, sizeof(g_notifyParam));
+    if (!g_notifyLive) {
+        notifyText(&g_notifyParam.begin.t, text, sub);
+        void (*handler)(int) = &notifyEvent;
+        sceClibMemcpy((uint8_t*)&g_notifyParam.begin + kNotifyHandlerOffset, &handler,
+                      sizeof(handler));
+        const int rc = ((FnNotify)g_notify[kNotifyBegin].fn)(&g_notifyParam.begin);
+        logLine("download: notification begun: 0x%08X", (unsigned)rc);
+        if (rc < 0) {
+            g_notifyFound = -1;  // not tried again this boot
+            return;
+        }
+        g_notifyLive = 1;
+        g_notifyFailed = 0;
+        return;
+    }
+    notifyText(&g_notifyParam.update.t, text, sub);
+    g_notifyParam.update.progress = progress < 0.0f ? 0.0f : progress > 1.0f ? 1.0f : progress;
+    const int rc = ((FnNotify)g_notify[kNotifyUpdate].fn)(&g_notifyParam.update);
+    // As VitaPlex's: closed in SceShell, it may refuse its updates.
+    if (rc < 0 && !g_notifyFailed) {
+        g_notifyFailed = 1;
+        logLine("download: notification not brought up to date: 0x%08X", (unsigned)rc);
+    }
+}
+
+void notifyEnd(const char* text, const char* sub) {
+    if (!g_notifyLive) return;
+    g_notifyLive = 0;
+    sceClibMemset(&g_notifyParam, 0, sizeof(g_notifyParam));
+    notifyText(&g_notifyParam.finish.t, text, sub);
+    const int rc = ((FnNotify)g_notify[kNotifyFinish].fn)(&g_notifyParam.finish);
+    logLine("download: notification finished: 0x%08X", (unsigned)rc);
+}
+
+// ── Asking the server ──
+// A request of the server's for the downloads: as httpOpen makes one, but
+// under VitaPlex's own names for itself (the download queue is its client
+// id's), with POST when post, JSON asked for when json, and the profile an add
+// carries. 0 with *conn and *req to read and close, else the failed call's
+// code. Logged as `what`.
+int dlOpen(int tmpl, const char* what, const char* url, const char* token, const char* range,
+           bool post, bool json, const char* profileExtra, int* conn, int* req) {
+    *req = -1;
+    *conn = httpFn<FnConnection>(kHttpCreateConnection)(tmpl, url, 1);
+    if (*conn < 0) {
+        logLine("download: %s: connection 0x%08X", what, (unsigned)*conn);
+        return *conn;
+    }
+    *req = httpFn<FnRequest>(kHttpCreateRequest)(*conn, post ? kHttpPost : kHttpGet, url, 0);
+    if (*req < 0) {
+        const int rc = *req;
+        logLine("download: %s: request 0x%08X", what, (unsigned)rc);
+        httpClose(*conn, -1);
+        return rc;
+    }
+    const char* const client = g_dlHead.client[0] ? g_dlHead.client : "VitaPlex";
+    int rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "X-Plex-Client-Identifier", client,
+                                              kHeaderOverwrite);
+    if (rc >= 0)
+        rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "X-Plex-Product", "VitaPlex", kHeaderOverwrite);
+    if (rc >= 0 && g_dlHead.platform[0])
+        rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "X-Plex-Platform", g_dlHead.platform,
+                                              kHeaderOverwrite);
+    if (rc >= 0 && g_dlHead.device[0])
+        rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "X-Plex-Device", g_dlHead.device,
+                                              kHeaderOverwrite);
+    if (rc >= 0 && token && token[0])
+        rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "X-Plex-Token", token, kHeaderOverwrite);
+    if (rc >= 0 && json)
+        rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "Accept", "application/json", kHeaderOverwrite);
+    if (rc >= 0 && profileExtra) {
+        rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "X-Plex-Client-Profile-Name", "Generic",
+                                              kHeaderOverwrite);
+        if (rc >= 0)
+            rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "X-Plex-Client-Profile-Extra",
+                                                  profileExtra, kHeaderOverwrite);
+    }
+    if (rc >= 0 && range) rc = httpFn<FnHeader>(kHttpAddHeader)(*req, "Range", range, kHeaderOverwrite);
+    if (rc >= 0) rc = httpFn<FnSend>(kHttpSend)(*req, NULL, 0);
+    if (rc < 0) {
+        logLine("download: %s: failed 0x%08X", what, (unsigned)rc);
+        httpClose(*conn, *req);
+        return rc;
+    }
+    return 0;
+}
+
+// A short answer of the server's, into g_dlAnswer, ended with 0: its HTTP
+// status, or the failed call's code.
+int dlAsk(int tmpl, const char* what, const char* url, const char* token, bool post,
+          const char* profileExtra) {
+    int conn, req, status = 0;
+    g_dlAnswer[0] = 0;
+    int rc = dlOpen(tmpl, what, url, token, NULL, post, true, profileExtra, &conn, &req);
+    if (rc < 0) return rc;
+    httpFn<FnStatus>(kHttpStatus)(req, &status);
+    int n = 0;
+    while (n < (int)sizeof(g_dlAnswer) - 1) {
+        const int got = httpFn<FnRead>(kHttpRead)(req, g_dlAnswer + n,
+                                                  (unsigned)(sizeof(g_dlAnswer) - 1 - n));
+        if (got <= 0) break;
+        n += got;
+    }
+    g_dlAnswer[n] = 0;
+    httpClose(conn, req);
+    return status;
+}
+
+// The first number under "key" in a JSON answer, as VitaPlex's extractJsonInt
+// takes it; 0 when there is none.
+uint32_t jsonNumber(const char* json, const char* key) {
+    char pat[40];
+    const int plen = sceClibSnprintf(pat, sizeof(pat), "\"%s\"", key);
+    const char* v = findText(json, pat);
+    if (!v) return 0;
+    v += plen;
+    while (*v == ' ' || *v == ':' || *v == '"') v++;
+    return toUint(v);
+}
+
+// The item added to VitaPlex's download queue on server, with the query and
+// profile VitaPlex would have added it with: the queue's id and the item's in
+// d. true when the server gave both.
+bool dlAdd(int tmpl, DlItem* d, const char* server, const char* token, const char* query,
+           const char* profile, const char* label) {
+    sceClibSnprintf(g_dlUrl, sizeof(g_dlUrl), "%s/downloadQueue", server);
+    int status = dlAsk(tmpl, "the download queue", g_dlUrl, token, true, NULL);
+    const uint32_t queue = status == 200 ? jsonNumber(g_dlAnswer, "id") : 0;
+    if (queue == 0) {
+        logLine("download: %s: no download queue (HTTP %d)", label, status);
+        return false;
+    }
+    const int len = sceClibSnprintf(g_dlUrl, sizeof(g_dlUrl), "%s/downloadQueue/%u/add%s",
+                                    server, (unsigned)queue, query);
+    if (len >= (int)sizeof(g_dlUrl)) {
+        logLine("download: %s: the add's URL is longer than the %u bytes here", label,
+                (unsigned)sizeof(g_dlUrl));
+        return false;
+    }
+    status = dlAsk(tmpl, "the add", g_dlUrl, token, true, profile);
+    const uint32_t item = status == 200 ? jsonNumber(g_dlAnswer, "id") : 0;
+    if (item == 0) {
+        logLine("download: %s: not added to download queue %u (HTTP %d)", label,
+                (unsigned)queue, status);
+        return false;
+    }
+    lock();
+    sceClibSnprintf(d->queue, sizeof(d->queue), "%u", (unsigned)queue);
+    sceClibSnprintf(d->item, sizeof(d->item), "%u", (unsigned)item);
+    unlock();
+    logLine("download: %s: added to download queue %u as item %u", label, (unsigned)queue,
+            (unsigned)item);
+    return true;
+}
+
+// What the notification's second line says, for n of count.
+void dlSub(char* out, int cap, int n, int count, const char* what) {
+    if (count > 1)
+        sceClibSnprintf(out, cap, "%d of %d \xC2\xB7 %s", n + 1, count, what);
+    else
+        sceClibSnprintf(out, cap, "%s", what);
+}
+
+enum { kPrepReady, kPrepGone, kPrepNotReady, kPrepStopped };
+// The queue item d waited for until the server has prepared its file, as
+// VitaPlex waits for it (waitForQueueItem): its status looked at every 5 s at
+// first, every 30 s after 5 minutes. kPrepReady, kPrepGone when the server no
+// longer has it or gave it up, kPrepNotReady after an hour or five failures in a
+// row, kPrepStopped when the downloads are taken back.
+int dlPrepared(int tmpl, DlItem* d, const char* server, const char* token, const char* title,
+               int n, int count, const char* label) {
+    sceClibSnprintf(g_dlUrl, sizeof(g_dlUrl), "%s/downloadQueue/%s/items/%s", server, d->queue,
+                    d->item);
+    char last[24], status[24], sub[96];
+    last[0] = 0;
+    int errors = 0;
+    const SceUInt64 t0 = sceKernelGetSystemTimeWide();
+    for (;;) {
+        const uint32_t ms = msSince(t0);
+        if (ms > kDlPrepareMs) {
+            logLine("download: %s: not prepared on the server in an hour", label);
+            return kPrepNotReady;
+        }
+        const int http = dlAsk(tmpl, "its queue item", g_dlUrl, token, false, NULL);
+        if (http == 404) {
+            logLine("download: %s: the server no longer has queue item %s", label, d->item);
+            return kPrepGone;
+        }
+        if (http != 200) {
+            if (++errors >= 5) {
+                logLine("download: %s: its queue item would not answer (%d)", label, http);
+                return kPrepNotReady;
+            }
+        } else {
+            errors = 0;
+            jsonString(g_dlAnswer, "status", status, sizeof(status));
+            const uint32_t progress = jsonNumber(g_dlAnswer, "progress");
+            if (!same(status, last)) {
+                logLine("download: %s: queue item %s %s, %u%%", label, d->item, status,
+                        (unsigned)progress);
+                copyText(last, status, sizeof(last));
+            }
+            if (same(status, "available")) return kPrepReady;
+            if (same(status, "error") || same(status, "expired")) return kPrepGone;
+            char what[48];
+            sceClibSnprintf(what, sizeof(what), "Preparing on server %u%%", (unsigned)progress);
+            dlSub(sub, sizeof(sub), n, count, what);
+            notifyShow(title, sub, progress > 0 && progress <= 100 ? (float)progress / 100.0f : -1.0f);
+        }
+        dlStatus(true);
+        const uint32_t wait = ms < 30000 ? 5000 : ms < 120000 ? 10000 : ms < 300000 ? 20000 : 30000;
+        if (!dlWait(wait)) return kPrepStopped;
+    }
+}
+
+// kDl* of fetching url into path from where the file ends: the bytes and full
+// size in d as they come.
+int dlFetch(int tmpl, DlItem* d, const char* url, const char* path, const char* token,
+            const char* title, int n, int count, const char* label) {
+    char range[48], sub[96], what[64];
+    int tries = 0;
+    SceUInt64 prepareFrom = 0;
+    for (;;) {
+        if (dlStopped()) return kDlGoing;
+        uint64_t have = fileSize(path);
+        if (d->total > 0 && have == d->total) return kDlDone;
+        if (have > 0) sceClibSnprintf(range, sizeof(range), "bytes=%s-", bigOf(have).s);
+        int conn, req, status = 0;
+        int rc = dlOpen(tmpl, label, url, token, have > 0 ? range : NULL, false, false, NULL,
+                        &conn, &req);
+        if (rc >= 0) {
+            httpFn<FnStatus>(kHttpStatus)(req, &status);
+            unsigned long long length = 0;
+            const int rcLength = httpFn<FnLength>(kHttpLength)(req, &length);
+            if (status == 416 && have > 0) {
+                httpClose(conn, req);
+                lock();
+                d->bytes = d->total = have;
+                unlock();
+                return kDlDone;
+            }
+            if (status == 404 || status == 410) {
+                httpClose(conn, req);
+                logLine("download: %s: HTTP %d", label, status);
+                return kDlGone;
+            }
+            if (status == 503) {
+                // Still being prepared: waited for, a while at a time.
+                httpClose(conn, req);
+                if (!prepareFrom) prepareFrom = sceKernelGetSystemTimeWide();
+                if (msSince(prepareFrom) > kDlPrepareMs) {
+                    logLine("download: %s: the server answered 503 for an hour", label);
+                    return kDlFailed;
+                }
+                dlSub(sub, sizeof(sub), n, count, "Waiting for the server");
+                notifyShow(title, sub, -1.0f);
+                dlStatus(true);
+                if (!dlWait(10000)) return kDlGoing;
+                continue;
+            }
+            if (status != 200 && status != 206) {
+                httpClose(conn, req);
+                logLine("download: %s: HTTP %d", label, status);
+                rc = -1;
+            } else {
+                // A whole file when the server answers 200: written anew.
+                const bool append = status == 206 && have > 0;
+                if (!append) have = 0;
+                const uint64_t total = rcLength >= 0 ? have + length : 0;
+                if (append && d->total > 0 && total > 0 && total != d->total)
+                    logLine("download: %s: the server gives its size as %s, not %s", label,
+                            bigOf(total).s, bigOf(d->total).s);
+                lock();
+                d->state = kDlGoing;
+                d->bytes = have;
+                if (total > 0) d->total = total;
+                unlock();
+                const SceUID fd = sceIoOpen(path, SCE_O_WRONLY | SCE_O_CREAT |
+                                                      (append ? SCE_O_APPEND : SCE_O_TRUNC),
+                                            0666);
+                if (fd < 0) {
+                    httpClose(conn, req);
+                    logLine("download: %s: its file not opened: 0x%08X", label, (unsigned)fd);
+                    return kDlFailed;
+                }
+                logLine("download: %s: %s from %s MB of %s MB", label,
+                        append ? "going on" : "begun", mb64Of(have).s, mb64Of(d->total).s);
+                const SceUInt64 began = sceKernelGetSystemTimeWide();
+                SceUInt64 shown = 0, logged = began;
+                uint64_t shownBytes = have;
+                const uint64_t from = have;
+                for (;;) {
+                    if (dlStopped()) {
+                        rc = 1;
+                        break;
+                    }
+                    // The music's fetch first: a song wanted now, a download not.
+                    lock();
+                    const bool songFetching = g_fetch.state == kFetchRunning;
+                    unlock();
+                    if (songFetching) sceKernelDelayThread(50 * 1000);
+                    const int got = httpFn<FnRead>(kHttpRead)(req, g_dlBuf, sizeof(g_dlBuf));
+                    if (got <= 0) {
+                        rc = got;
+                        break;
+                    }
+                    // Taken back as it read: not written, VitaPlex may have the
+                    // file again.
+                    if (dlStopped()) {
+                        rc = 1;
+                        break;
+                    }
+                    const int wrote = sceIoWrite(fd, g_dlBuf, (SceSize)got);
+                    if (wrote != got) {
+                        logLine("download: %s: not written: 0x%08X", label,
+                                (unsigned)(wrote < 0 ? wrote : -1));
+                        rc = -2;
+                        break;
+                    }
+                    have += (uint64_t)got;
+                    const SceUInt64 now = sceKernelGetSystemTimeWide();
+                    if (now - shown >= kDlStatusEveryMs * 1000ull) {
+                        lock();
+                        d->bytes = have;
+                        unlock();
+                        const uint32_t ms = shown ? msSince(shown) : 0;
+                        const uint32_t kbs =
+                            ms ? (uint32_t)((have - shownBytes) >> 10) * 1000u / ms : 0;
+                        if (d->total > 0 && kbs > 0)
+                            sceClibSnprintf(what, sizeof(what), "%u%% \xC2\xB7 %u.%u MB/s",
+                                            (unsigned)percentOf(have, d->total),
+                                            (unsigned)(kbs >> 10),
+                                            (unsigned)((kbs & 1023) * 10u >> 10));
+                        else if (d->total > 0)
+                            sceClibSnprintf(what, sizeof(what), "%u%%",
+                                            (unsigned)percentOf(have, d->total));
+                        else
+                            sceClibSnprintf(what, sizeof(what), "%s MB", mb64Of(have).s);
+                        dlSub(sub, sizeof(sub), n, count, what);
+                        notifyShow(title, sub,
+                                   d->total > 0 ? (float)percentOf(have, d->total) / 100.0f
+                                                : -1.0f);
+                        dlStatus(true);
+                        shown = now;
+                        shownBytes = have;
+                    }
+                    if (now - logged >= kDlLogEveryMs * 1000ull) {
+                        logged = now;
+                        logLine("download: %s: %s of %s MB", label, mb64Of(have).s,
+                                mb64Of(d->total).s);
+                    }
+                }
+                sceIoClose(fd);
+                httpClose(conn, req);
+                lock();
+                d->bytes = have;
+                unlock();
+                const uint32_t ms = msSince(began);
+                if (rc == 1) {
+                    logLine("download: %s: stopped at %s MB", label, mb64Of(have).s);
+                    return kDlGoing;
+                }
+                if (rc == 0 && (d->total == 0 || have >= d->total)) {
+                    logLine("download: %s: whole, %s MB, %s MB of it in %s s", label,
+                            mb64Of(have).s, mb64Of(have - from).s, secsOf(ms).s);
+                    lock();
+                    if (d->total == 0) d->total = have;
+                    unlock();
+                    return kDlDone;
+                }
+                if (rc == -2) return kDlFailed;
+                logLine("download: %s: cut off at %s MB (0x%08X)", label, mb64Of(have).s,
+                        (unsigned)rc);
+                if (have > from) tries = 0;  // it got somewhere: the count starts again
+            }
+        }
+        if (++tries >= kDlTries) {
+            logLine("download: %s: given up after %d tries", label, kDlTries);
+            return kDlFailed;
+        }
+        dlStatus(true);
+        if (!dlWait(kDlRetryMs[tries])) return kDlGoing;
+    }
+}
+
+// One download of the list: its fields f. Its state when it ends.
+int dlOne(int tmpl, int n, int count, char** f, int nf, const char* label) {
+    DlItem* d = &g_dl[n];
+    const char* const path = f[kFPath];
+    const char* const title = f[kFTitle];
+    const char* const token = f[kFToken];
+    const char* const kind = f[kFKind];
+    if (d->total > 0 && fileSize(path) == d->total) {
+        logLine("download: %s: whole already", label);
+        return kDlDone;
+    }
+    const char* server = nf > kFArg1 ? f[kFArg1] : "";
+    if (same(kind, "add") && nf > kFArg3) {
+        if (!dlAdd(tmpl, d, server, token, f[kFArg2], f[kFArg3], label)) return kDlFailed;
+    } else if (same(kind, "queue") && nf > kFArg3) {
+        lock();
+        copyText(d->queue, f[kFArg2], sizeof(d->queue));
+        copyText(d->item, f[kFArg3], sizeof(d->item));
+        unlock();
+    } else {
+        logLine("download: %s: fetched in a way not known here (%s)", label, kind);
+        return kDlFailed;
+    }
+    char sub[96];
+    dlSub(sub, sizeof(sub), n, count, "Preparing on server");
+    notifyShow(title, sub, -1.0f);
+    const int prepared = dlPrepared(tmpl, d, server, token, title, n, count, label);
+    if (prepared == kPrepStopped) return kDlGoing;
+    if (prepared == kPrepGone) {
+        lock();
+        d->queue[0] = d->item[0] = 0;
+        unlock();
+        return kDlGone;
+    }
+    if (prepared != kPrepReady) return kDlFailed;
+    // Its file, once prepared: not g_dlUrl, which dlAsk's callers fill.
+    static char media[512];
+    sceClibSnprintf(media, sizeof(media), "%s/downloadQueue/%s/item/%s/media", server, d->queue,
+                    d->item);
+    return dlFetch(tmpl, d, media, path, token, title, n, count, label);
+}
+
+// Waits up to ms while VitaPlex runs, as the update does (updateWaitGone):
+// the file it writes is not touched while it might still write it. true once
+// it has gone.
+bool dlWaitGone(uint32_t ms) {
+    for (uint32_t waited = 0;; waited += kDlLookMs) {
+        SceUID pid = -1;
+        if (sceAppMgrGetIdByName(&pid, VITAPLEX_TITLEID) < 0) {
+            logLine("download: VitaPlex gone, %s s after it handed them over", secsOf(waited).s);
+            return true;
+        }
+        if (waited >= ms || dlStopped()) return false;
+        sceKernelDelayThread(kDlLookMs * 1000);
+    }
+}
+
+// The list carried on, once.
+void dlRun() {
+    if (!dlReadList()) {
+        logLine("download: no whole list at %s", QM_DOWNLOADS_LIST);
+        dlStatus(false);
+        return;
+    }
+    const int count = g_dlCount;
+    logLine("download: %d download(s) handed over%s", count,
+            g_dlHead.notify ? ", with their notification" : "");
+    dlStatus(true);
+    if (count == 0 || !dlWaitGone(kDlGoneMs)) {
+        if (count > 0)
+            logLine("download: %s; nothing carried on",
+                    dlStopped() ? "taken back first" : "VitaPlex did not go");
+        dlStatus(false);
+        return;
+    }
+    int rcSsl = -1, rcHttp = -1, tmpl = -1;
+    if (!g_netFound) g_netFound = findLibraries("download");
+    if (g_netFound && httpStart("download", &rcSsl, &rcHttp)) tmpl = httpTemplate("download");
+    if (tmpl < 0) {
+        logLine("download: no way to ask the server here; nothing carried on");
+        httpEnd(rcSsl, rcHttp);
+        dlStatus(false);
+        return;
+    }
+    // Shown at once, so that it is plain the downloads go on.
+    char sub[96];
+    sceClibSnprintf(sub, sizeof(sub), "%d to go, in the background", count);
+    notifyShow("VitaPlex downloads", sub, -1.0f);
+    int done = 0, failed = 0, gone = 0, n = 0;
+    const char* lastTitle = "";
+    static char title[96];
+    title[0] = 0;
+    char* f[kFMax];
+    bool stopped = false;
+    if (dlOpenList()) {
+        while (n < count && dlNext()) {
+            if (!startsWith(g_dlLine, "item=")) continue;
+            const int nf = dlFields(g_dlLine + 5, f, kFMax);
+            if (nf <= kFArg1) continue;
+            if (dlStopped()) {
+                stopped = true;
+                break;
+            }
+            char label[40];
+            sceClibSnprintf(label, sizeof(label), "%d of %d (%s)", n + 1, count, f[kFKey]);
+            lock();
+            g_dl[n].state = kDlGoing;
+            unlock();
+            const int state = dlOne(tmpl, n, count, f, nf, label);
+            lock();
+            g_dl[n].state = state;
+            if (state == kDlDone) g_dl[n].bytes = g_dl[n].total ? g_dl[n].total : g_dl[n].bytes;
+            unlock();
+            dlStatus(true);
+            if (state == kDlDone) {
+                done++;
+                copyText(title, f[kFTitle], sizeof(title));
+                lastTitle = title;
+            } else if (state == kDlGone) {
+                gone++;
+            } else if (state == kDlFailed) {
+                failed++;
+            } else {
+                stopped = true;
+                break;
+            }
+            n++;
+        }
+        dlCloseList();
+    }
+    httpFn<FnId>(kHttpDeleteTemplate)(tmpl);
+    httpEnd(rcSsl, rcHttp);
+    dlStatus(false);
+    logLine("download: %s: %d done, %d failed, %d gone from the server, %d not begun",
+            stopped ? "stopped" : "all carried on", done, failed, gone, count - n);
+    if (stopped) {
+        notifyEnd("VitaPlex", "Downloads go on in VitaPlex");
+    } else if (failed + gone > 0) {
+        sceClibSnprintf(sub, sizeof(sub), "%d downloaded, %d go on when VitaPlex opens", done,
+                        failed + gone);
+        notifyEnd("Downloads stopped", sub);
+    } else if (done == 1) {
+        notifyEnd("Download complete", lastTitle);
+    } else {
+        sceClibSnprintf(sub, sizeof(sub), "%d items are now available offline", done);
+        notifyEnd("Downloads complete", sub);
+    }
+}
+
+// The download thread: the list carried on, and again for each new one that
+// comes meanwhile.
+int dlThread(SceSize, void*) {
+    for (;;) {
+        dlRun();
+        lock();
+        if (g_dlAgain) {
+            g_dlAgain = 0;
+            g_dlStop = 0;
+            unlock();
+            continue;
+        }
+        g_dlRunning = 0;
+        unlock();
+        break;
+    }
+    return sceKernelExitDeleteThread(0);
+}
+
+// From VitaPlex as it goes (QM_CMD_DOWNLOADS). Under g_lock.
+void startDownloads() {
+    if (g_dlRunning) {
+        // The run under way stops at its next piece and takes the new list up.
+        logLine("download: a new list, taken up once the one under way stops");
+        g_dlAgain = 1;
+        g_dlStop = 1;
+        return;
+    }
+    g_dlStop = 0;
+    g_dlAgain = 0;
+    const SceUID thread = sceKernelCreateThread("VitaPlexQM::Download", dlThread, kThreadPriority,
+                                                kDlStack, 0, 0, NULL);
+    const int rc = thread < 0 ? thread : sceKernelStartThread(thread, 0, NULL);
+    if (rc < 0) {
+        if (thread >= 0) sceKernelDeleteThread(thread);
+        logLine("download: no thread to carry them on: 0x%08X", (unsigned)rc);
+        return;
+    }
+    g_dlRunning = 1;
+}
+
+// From VitaPlex as it opens (QM_CMD_TAKE_DOWNLOADS). Under g_lock.
+void takeDownloads() {
+    logLine("download: VitaPlex takes the downloads back%s",
+            g_dlRunning ? "" : "; none carried on here");
+    g_dlStop = 1;
+    g_dlAgain = 0;
+}
+
 // ── Threads ─────────────────────────────────────────────────────────────────
 // The note of an open begun, as the quick menu is seen open. Under g_lock.
 void noteOpened() {
@@ -4444,6 +5429,12 @@ private:
         case QM_CMD_INSTALL_UPDATE:
             startUpdate();
             break;
+        case QM_CMD_DOWNLOADS:
+            startDownloads();
+            break;
+        case QM_CMD_TAKE_DOWNLOADS:
+            takeDownloads();
+            break;
         default:
             logLine("unknown command %u", (unsigned)m.cmd);
             break;
@@ -4498,13 +5489,14 @@ extern "C" int module_start(SceSize args, const void* argp) {
     g_surfacePool = *(paf::graph::SurfacePool* const*)((const char*)power + kPluginSurfacePool);
 
     g_lock = sceKernelCreateMutex("VitaPlexQM::Lock", 0, 0, NULL);
+    g_netLock = sceKernelCreateMutex("VitaPlexQM::Net", 0, 0, NULL);
     // As ElevenMPV-A's pipes are made: 0x40, user main memory; 0x81, whole
     // messages and openable by name.
     g_toPlugin = sceKernelCreateMsgPipe(QM_PIPE_TO_PLUGIN, 0x40, 0x81,
                                         sizeof(QmMessage) * QM_TO_PLUGIN_SLOTS, NULL);
     g_fromPlugin = sceKernelCreateMsgPipe(QM_PIPE_FROM_PLUGIN, 0x40, 0x81,
                                           sizeof(QmPress) * QM_FROM_PLUGIN_SLOTS, NULL);
-    if (g_lock < 0 || g_toPlugin < 0 || g_fromPlugin < 0) {
+    if (g_lock < 0 || g_netLock < 0 || g_toPlugin < 0 || g_fromPlugin < 0) {
         logLine("pipes: 0x%08X, 0x%08X, lock 0x%08X: not staying", (unsigned)g_toPlugin,
                 (unsigned)g_fromPlugin, (unsigned)g_lock);
         logDrain();
