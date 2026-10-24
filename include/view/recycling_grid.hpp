@@ -9,6 +9,7 @@
 #include <borealis.hpp>
 #include "app/plex_client.hpp"
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -60,6 +61,17 @@ private:
     void rebuildGrid();
     void onItemClicked(int index);
     void addCellForItem(brls::Box*& currentRow, int& itemsInRow, size_t index);
+
+    // The cells are made a few rows at a time: a library page made in one go
+    // held the UI thread ~0.4-0.5 s. buildCells makes them up to item
+    // `upTo` (exclusive) at once; scheduleBuild makes the rest a couple of
+    // rows a frame.
+    void buildCells(size_t upTo);
+    void scheduleBuild();
+    brls::Box* m_buildRow = nullptr;  // the row the next cell goes in
+    int m_buildInRow = 0;             // cells already in it
+    uint64_t m_buildGeneration = 0;   // a rebuild stops the older build
+    bool m_buildScheduled = false;
 
     std::vector<MediaItem> m_items;
     std::function<void(const MediaItem&)> m_onItemSelected;

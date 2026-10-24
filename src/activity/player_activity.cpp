@@ -1,5 +1,7 @@
 // VitaPlex - Player Activity implementation
 
+#include <atomic>
+#include <mutex>
 #include "activity/player_activity.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
@@ -1968,6 +1970,13 @@ void PlayerActivity::syncHiddenFocus() {
     if (queueClearBtn) queueClearBtn->setFocusable(queue);
 }
 
+// The playing/paused timeline reports, sent off the UI thread in order:
+// each is numbered as it is made, and one whose number is not past the last
+// sent is dropped (updateProgress).
+static std::mutex s_timelineMutex;
+static std::atomic<uint64_t> s_timelineSeq{0};
+static uint64_t s_timelineSent = 0;  // under s_timelineMutex
+
 void PlayerActivity::updateProgress() {
     // Don't update if destroying or showing photo
     if (m_destroying || m_isPhoto) return;
@@ -2389,9 +2398,19 @@ void PlayerActivity::updateProgress() {
                         }
                     }
 
+                    // Off the UI thread: sent from here, every report held
+                    // the player 0.3-1.2 s (the "anim" stalls every 10 s in
+                    // build 2091's frame log). Numbered, so one overtaken by
+                    // a newer report is dropped rather than sent after it.
                     std::string key = "/library/metadata/" + ratingKey;
-                    PlexClient::getInstance().reportTimeline(
-                        ratingKey, key, currentState, timeMs, durationMs, pqItemID);
+                    const uint64_t seq = ++s_timelineSeq;
+                    asyncRun([ratingKey, key, currentState, timeMs, durationMs, pqItemID, seq]() {
+                        std::lock_guard<std::mutex> lock(s_timelineMutex);
+                        if (seq <= s_timelineSent) return;
+                        s_timelineSent = seq;
+                        PlexClient::getInstance().reportTimeline(
+                            ratingKey, key, currentState, timeMs, durationMs, pqItemID);
+                    });
                 }
             }
         }

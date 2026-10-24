@@ -2,6 +2,8 @@
  * VitaPlex - Plex API Client implementation
  */
 
+#include <mutex>
+#include <chrono>
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
 #include "utils/http_client.hpp"
@@ -1442,6 +1444,20 @@ bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaIt
     return true;
 }
 
+// The last item's metadata fetchMediaDetails had, for resolveTranscodeUrl to
+// reuse: opening the player fetched the same /library/metadata/<key> twice
+// in a row on the UI thread (the details, then the transcode URL's part key).
+// Only the part and its type are read from it there, which do not change, so
+// a few seconds' reuse is safe; fetchMediaDetails itself always fetches (it
+// carries the resume point).
+namespace {
+std::mutex s_lastMetadataMutex;
+std::string s_lastMetadataKey;
+std::string s_lastMetadataBody;
+std::chrono::steady_clock::time_point s_lastMetadataAt;
+constexpr std::chrono::seconds kMetadataReuse{5};
+}  // namespace
+
 bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item) {
     HttpClient client;
     std::string url = buildApiUrl("/library/metadata/" + ratingKey);
@@ -1456,6 +1472,12 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
     if (resp.statusCode != 200) {
         if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_lastMetadataMutex);
+        s_lastMetadataKey = ratingKey;
+        s_lastMetadataBody = resp.body;
+        s_lastMetadataAt = std::chrono::steady_clock::now();
     }
 
     item.ratingKey = extractJsonValue(resp.body, "ratingKey");
@@ -3726,15 +3748,27 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
                                      int offsetMs, std::string& outSessionId) {
     brls::Logger::debug("getTranscodeUrl: ratingKey={}, offsetMs={}", ratingKey, offsetMs);
 
-    // Fetch media details to get the Part key and determine if audio or video
+    // Fetch media details to get the Part key and determine if audio or video,
+    // unless fetchMediaDetails has just fetched them (s_lastMetadata*).
     HttpClient client;
-    std::string apiUrl = buildApiUrl("/library/metadata/" + ratingKey);
-
-    HttpRequest req;
-    req.url = apiUrl;
-    req.method = "GET";
-    req.headers["Accept"] = "application/json";
-    HttpResponse resp = client.request(req);
+    HttpResponse resp;
+    {
+        std::lock_guard<std::mutex> lock(s_lastMetadataMutex);
+        if (s_lastMetadataKey == ratingKey &&
+            std::chrono::steady_clock::now() - s_lastMetadataAt < kMetadataReuse) {
+            resp.statusCode = 200;
+            resp.body = s_lastMetadataBody;
+            brls::Logger::debug("getTranscodeUrl: metadata just fetched, reused");
+        }
+    }
+    if (resp.statusCode != 200) {
+        std::string apiUrl = buildApiUrl("/library/metadata/" + ratingKey);
+        HttpRequest req;
+        req.url = apiUrl;
+        req.method = "GET";
+        req.headers["Accept"] = "application/json";
+        resp = client.request(req);
+    }
 
     if (resp.statusCode != 200) {
         brls::Logger::error("getTranscodeUrl: Failed to fetch metadata: {}", resp.statusCode);

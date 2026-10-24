@@ -10,6 +10,8 @@
 #include "view/long_press_gesture.hpp"
 #include "platform/platform.hpp"
 
+#include <algorithm>
+
 namespace vitaplex {
 
 namespace {
@@ -85,25 +87,12 @@ void RecyclingGrid::appendItems(const std::vector<MediaItem>& newItems) {
         return;
     }
 
-    size_t oldSize = m_items.size();
     m_items.insert(m_items.end(), newItems.begin(), newItems.end());
 
-    // Render the new items continuing from where we left off
-    brls::Box* currentRow = nullptr;
-    int itemsInRow = (int)(oldSize % m_columns);
-    if (itemsInRow > 0 && m_contentBox->getChildren().size() > 0) {
-        auto& children = m_contentBox->getChildren();
-        currentRow = dynamic_cast<brls::Box*>(children.back());
-        if (!currentRow) itemsInRow = 0;
-    } else {
-        itemsInRow = 0;
-    }
-
-    for (size_t i = oldSize; i < m_items.size(); i++) {
-        addCellForItem(currentRow, itemsInRow, i);
-    }
-
-    m_renderedCount = m_items.size();
+    // The new page continues the build where it is: the rows just below the
+    // one the user reached now, the rest a couple a frame.
+    buildCells(m_renderedCount + 2 * (size_t)m_columns);
+    scheduleBuild();
     m_loading = false;
 }
 
@@ -125,6 +114,8 @@ void RecyclingGrid::setHasMore(bool hasMore) {
 }
 
 void RecyclingGrid::scrollToItemIndex(size_t index, bool animated) {
+    // Its row, and a screenful below it, made first if the build is behind.
+    if (m_columns > 0) buildCells(index + (size_t)(m_visibleRows + 1) * m_columns);
     if (m_columns <= 0 || m_rows.empty()) return;
 
     size_t rowIdx = index / (size_t)m_columns;
@@ -146,6 +137,15 @@ void RecyclingGrid::scrollToItemIndex(size_t index, bool animated) {
 
 brls::View* RecyclingGrid::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
     brls::View* next = brls::ScrollingFrame::getNextFocus(direction, currentView);
+
+    // Down off the last row made while the build is still behind: the next
+    // rows are made now, so the move neither dead-ends nor asks for the
+    // next page early.
+    if (direction == brls::FocusDirection::DOWN && next == nullptr &&
+        m_renderedCount < m_items.size()) {
+        buildCells(m_renderedCount + 2 * (size_t)m_columns);
+        next = brls::ScrollingFrame::getNextFocus(direction, currentView);
+    }
 
     // At the right edge (no cell to the right) hop to an opt-in escape target,
     // e.g. the A-Z jump rail — but only when it's actually visible. Without this
@@ -269,13 +269,14 @@ void RecyclingGrid::rebuildGrid() {
     }
 
     // Step 3: build the new rows/cells. addCellForItem() addView()s into
-    // m_contentBox, so the old rows are still in the tree above them.
-    brls::Box* currentRow = nullptr;
-    int itemsInRow = 0;
-    for (size_t i = 0; i < m_items.size(); i++) {
-        addCellForItem(currentRow, itemsInRow, i);
-    }
-    m_renderedCount = m_items.size();
+    // m_contentBox, so the old rows are still in the tree above them. A
+    // screenful and a margin now, the rest a couple of rows a frame.
+    m_buildRow = nullptr;
+    m_buildInRow = 0;
+    ++m_buildGeneration;
+    m_buildScheduled = false;
+    buildCells((size_t)(m_visibleRows + 2) * m_columns);
+    scheduleBuild();
 
     // Step 4: move focus onto a freshly-created cell so deleting the
     // old ones in Step 5 can't pull the focused view out from under the
@@ -308,6 +309,29 @@ void RecyclingGrid::rebuildGrid() {
     for (auto* row : oldRows) {
         if (row) m_contentBox->removeView(row, true);
     }
+}
+
+void RecyclingGrid::buildCells(size_t upTo) {
+    const size_t end = std::min(upTo, m_items.size());
+    while (m_renderedCount < end) {
+        addCellForItem(m_buildRow, m_buildInRow, m_renderedCount);
+        m_renderedCount++;
+    }
+}
+
+void RecyclingGrid::scheduleBuild() {
+    if (m_buildScheduled || m_renderedCount >= m_items.size()) return;
+    m_buildScheduled = true;
+    const uint64_t generation = m_buildGeneration;
+    std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+    brls::sync([this, aliveWeak, generation]() {
+        auto alive = aliveWeak.lock();
+        if (!alive || !alive->load()) return;
+        if (generation != m_buildGeneration) return;  // a rebuild started its own
+        m_buildScheduled = false;
+        buildCells(m_renderedCount + 2 * (size_t)m_columns);
+        scheduleBuild();
+    });
 }
 
 void RecyclingGrid::onItemClicked(int index) {
