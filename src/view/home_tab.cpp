@@ -5,6 +5,7 @@
  * rail is sourced from the Live TV path and tunes on click.
  */
 
+#include "utils/frame_profiler.hpp"
 #include "view/home_tab.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
@@ -154,6 +155,7 @@ private:
 
 void HomeTab::draw(NVGcontext* vg, float x, float y, float width, float height,
                    brls::Style style, brls::FrameContext* ctx) {
+    perf::Scope timed(perf::Probe::HomeDraw);
     // Vertical culling: mark rails/headers outside the page viewport
     // INVISIBLE so their whole subtree skips draw (an off-screen rail's
     // cards each cost a cover pattern + badge paths per frame otherwise).

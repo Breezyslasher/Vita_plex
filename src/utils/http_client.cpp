@@ -3,6 +3,7 @@
  */
 
 #include "utils/http_client.hpp"
+#include "utils/frame_profiler.hpp"
 #include "app/application.hpp"
 #include "platform/platform.hpp"
 
@@ -331,6 +332,11 @@ HttpResponse HttpClient::del(const std::string& url) {
 }
 
 HttpResponse HttpClient::request(const HttpRequest& req) {
+    // Counted for the frame profiler's log (utils/frame_profiler.hpp).
+    perf::httpBegun();
+    struct Ended {
+        ~Ended() { perf::httpEnded(); }
+    } ended;
     HttpResponse response;
 
     if (!m_curl) {

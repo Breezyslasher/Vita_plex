@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <functional>
 #include <borealis/core/activity.hpp>
 #include <borealis/core/audio.hpp>
 #include <borealis/core/font.hpp>
@@ -388,6 +389,29 @@ class Application
     static void addToWatchedKeys(const BrlsKeyCombination key);
 
     static void removeWatchedKeys(const BrlsKeyCombination key);
+
+    // VitaPlex patch: where each main-loop iteration's time went, in µs,
+    // handed to frameTimingsCallback after the iteration (before any
+    // frame-limit sleep). Nothing is measured while no callback is set.
+    struct FrameTimings
+    {
+        Time poll     = 0;  // platform->mainLoopIteration(): events, input polling
+        Time input    = 0;  // processInput()
+        Time anim     = 0;  // highlight animation + Ticking::updateTickings()
+        Time begin    = 0;  // videoContext->beginFrame() + clear
+        Time views    = 0;  // the activities' views drawn, highlight, notifications
+        Time nvgEnd   = 0;  // nvgEndFrame(): nanovg's draw calls flushed to the GPU
+        Time end      = 0;  // videoContext->endFrame(): GPU finish + swap (vsync wait)
+        Time sync     = 0;  // Threading::performSyncTasks() (brls::sync / delay)
+        Time runLoop  = 0;  // runLoopEvent subscribers
+        Time deletion = 0;  // deletion pool
+        Time start    = 0;  // when the iteration began (getCPUTimeUsec)
+        Time total    = 0;  // the whole iteration
+        size_t tickings   = 0;  // running tickings after updateTickings()
+        size_t activities = 0;
+        bool drawn        = false;
+    };
+    inline static std::function<void(const FrameTimings&)> frameTimingsCallback;
 
   private:
     inline static bool inited               = false;

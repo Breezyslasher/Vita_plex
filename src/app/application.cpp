@@ -2,6 +2,7 @@
  * VitaPlex - Application implementation
  */
 
+#include "utils/frame_profiler.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
@@ -124,6 +125,9 @@ void Application::run() {
         // Show login screen
         pushLoginActivity();
     }
+
+    // Where the frames go, in the log (utils/frame_profiler.hpp).
+    perf::install();
 
     // Main loop handled by Borealis
     while (brls::Application::mainLoop()) {

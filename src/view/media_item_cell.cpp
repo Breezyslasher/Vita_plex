@@ -2,6 +2,7 @@
  * VitaPlex - Media Item Cell implementation
  */
 
+#include "utils/frame_profiler.hpp"
 #include "view/media_item_cell.hpp"
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
@@ -361,6 +362,7 @@ brls::View* MediaItemCell::create() {
 
 void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float height,
                           brls::Style style, brls::FrameContext* ctx) {
+    perf::Scope timed(perf::Probe::CellDraw);
     // Cell background, labels, progress bar, etc. paint first.
     brls::Box::draw(vg, x, y, width, height, style, ctx);
 

@@ -255,11 +255,35 @@ bool Application::mainLoop()
     return Application::platform->runLoop(internalMainLoop);
 }
 
+// VitaPlex patch: this iteration's timings (frameTimingsCallback), filled
+// by internalMainLoop and frame().
+static Application::FrameTimings g_frameTimings;
+static bool g_timeFrame = false;
+static Time g_timeMark  = 0;
+
+// The time since the last mark, which moves to now; 0 when not timing.
+static Time frameLap()
+{
+    if (!g_timeFrame)
+        return 0;
+    const Time now = getCPUTimeUsec();
+    const Time lap = now - g_timeMark;
+    g_timeMark     = now;
+    return lap;
+}
+
 bool Application::internalMainLoop()
 {
     Application::updateFPS();
     Application::frameStartTime = getCPUTimeUsec();
     Application::setActiveEvent(false);
+
+    g_timeFrame = (bool)frameTimingsCallback;
+    if (g_timeFrame)
+    {
+        g_frameTimings = FrameTimings();
+        g_timeMark     = Application::frameStartTime;
+    }
 
     // Main loop callback
     if (!Application::platform->mainLoopIteration() || Application::quitRequested)
@@ -268,6 +292,7 @@ bool Application::internalMainLoop()
         Application::exit();
         return false;
     }
+    g_frameTimings.poll = frameLap();
 
     // Mouse and touch
     if (Application::blockInputsTokens == 0)
@@ -281,11 +306,14 @@ bool Application::internalMainLoop()
             Application::getAudioPlayer()->play(Sound::SOUND_CLICK_ERROR);
     }
 
+    g_frameTimings.input = frameLap();
+
     // Animations
 #ifndef SIMPLE_HIGHLIGHT
     updateHighlightAnimation();
 #endif
     Ticking::updateTickings();
+    g_frameTimings.anim = frameLap();
 
     // Render. On mobile, skip drawing while backgrounded (no GL surface) and for
     // a few warm-up frames after returning, so we never upload textures against a
@@ -343,11 +371,15 @@ bool Application::internalMainLoop()
     Application::frame();
 #endif
 
+    frameLap();  // frame() timed its own parts
+
     // Run sync functions
     Threading::performSyncTasks();
+    g_frameTimings.sync = frameLap();
 
     // Trigger RunLoop subscribers
     runLoopEvent.fire();
+    g_frameTimings.runLoop = frameLap();
 
     // Free views deletion pool.
     // A view deletion might inserts other views to deletionPool
@@ -365,6 +397,17 @@ bool Application::internalMainLoop()
         }
     }
     Application::deletionPool = undeletedViews;
+
+    if (g_timeFrame)
+    {
+        g_frameTimings.deletion   = frameLap();
+        g_frameTimings.start      = Application::frameStartTime;
+        g_frameTimings.total      = getCPUTimeUsec() - Application::frameStartTime;
+        g_frameTimings.tickings   = Ticking::runningTickings.size();
+        g_frameTimings.activities = Application::activitiesStack.size();
+        if (frameTimingsCallback)
+            frameTimingsCallback(g_frameTimings);
+    }
 
     if (Application::limitedFrameTime > 0)
     {
@@ -944,9 +987,13 @@ void Application::frame()
     frameContext.fontStash  = &Application::fontStash;
     frameContext.theme      = Application::getTheme();
 
+    frameLap();
+    g_frameTimings.drawn = true;
+
     // Begin frame and clear
     videoContext->beginFrame();
     videoContext->clear(Application::getTheme().getColor("brls/clear"));
+    g_frameTimings.begin = frameLap();
     float scaleFactor = videoContext->getScaleFactor();
 
     nvgBeginFrame(frameContext.vg, Application::windowWidth, Application::windowHeight, scaleFactor);
@@ -995,11 +1042,15 @@ void Application::frame()
         debugLayer->frame(&frameContext);
     }
 
+    g_frameTimings.views = frameLap();
+
     // End frame
     nvgResetTransform(Application::getNVGContext()); // scale
     nvgEndFrame(Application::getNVGContext());
+    g_frameTimings.nvgEnd = frameLap();
 
     Application::platform->getVideoContext()->endFrame();
+    g_frameTimings.end = frameLap();
 }
 
 void Application::exit()

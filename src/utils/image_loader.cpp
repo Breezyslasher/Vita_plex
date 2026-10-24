@@ -3,6 +3,7 @@
  * Uses LRU eviction to keep memory bounded instead of clearing entire cache.
  */
 
+#include "utils/frame_profiler.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
 #include "platform/platform.hpp"
@@ -146,7 +147,10 @@ void ImageLoader::ensureRunLoopHook() {
                         noteSkip("deferred: target destroyed");
                         continue;
                     }
-                    p.target->setImageFromMem(p.data.data(), p.data.size());
+                    {
+                        perf::Scope timed(perf::Probe::TextureDecode);
+                        p.target->setImageFromMem(p.data.data(), p.data.size());
+                    }
                     if (p.imageCallback) p.imageCallback(p.target);
                     settle(p.target, p.request);
                 }
@@ -299,7 +303,10 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
             deferUpload(std::move(pending));
             return;
         }
-        target->setImageFromMem(cached.data(), cached.size());
+        {
+            perf::Scope timed(perf::Probe::TextureDecode);
+            target->setImageFromMem(cached.data(), cached.size());
+        }
         if (callback) callback(target);
         settle(target, request);
         return;
@@ -359,7 +366,10 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
                 deferUpload(std::move(pending));
                 return;
             }
-            target->setImageFromMem(imageData.data(), imageData.size());
+            {
+                perf::Scope timed(perf::Probe::TextureDecode);
+                target->setImageFromMem(imageData.data(), imageData.size());
+            }
             if (callback) callback(target);
             settle(target, request);
         });
@@ -384,6 +394,7 @@ static void dispatchCoverFromBytes(const std::vector<uint8_t>& bytes,
     // can't hand it the cached `data.data()` directly without risking
     // corrupting the shared cache entry. Copy into a scratch buffer.
     std::vector<unsigned char> scratch(bytes.begin(), bytes.end());
+    perf::Scope timed(perf::Probe::TextureDecode);
     int nvgImg = nvgCreateImageMem(vg, 0,
                                    scratch.data(),
                                    static_cast<int>(scratch.size()));
@@ -488,7 +499,10 @@ bool ImageLoader::loadFromFile(const std::string& path, brls::Image* target) {
     std::vector<uint8_t> data;
     if (!platform::readLocalFile(path, data, 4 * 1024 * 1024)) return false;
 
-    target->setImageFromMem(data.data(), data.size());
+    {
+        perf::Scope timed(perf::Probe::TextureDecode);
+        target->setImageFromMem(data.data(), data.size());
+    }
     return true;
 }
 

@@ -456,6 +456,16 @@ void nvgEndFrame(NVGcontext* ctx)
 	}
 }
 
+// VitaPlex patch: the counts nanovg keeps for the frame (reset by
+// nvgBeginFrame), for the app's frame profiler.
+void nvgFrameCounts(NVGcontext* ctx, int* drawCalls, int* fillTris, int* strokeTris, int* textTris)
+{
+	if (drawCalls) *drawCalls = ctx->drawCallCount;
+	if (fillTris) *fillTris = ctx->fillTriCount;
+	if (strokeTris) *strokeTris = ctx->strokeTriCount;
+	if (textTris) *textTris = ctx->textTriCount;
+}
+
 NVGcolor nvgRGB(unsigned char r, unsigned char g, unsigned char b)
 {
 	return nvgRGBA(r,g,b,255);
