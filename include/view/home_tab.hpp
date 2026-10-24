@@ -13,6 +13,8 @@
 #include "app/plex_client.hpp"
 #include "view/recycling_grid.hpp"
 #include "view/horizontal_scroll_row.hpp"
+#include <map>
+#include <memory>
 
 namespace vitaplex {
 
@@ -43,6 +45,14 @@ private:
     // an episode-typed item would otherwise get — used by "Shows On Now".
     void populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items,
                      bool directPlay = false, bool preferPoster = false);
+    // populateRow's cards past the first screenful, a few a frame, while
+    // `generation` is still the row's latest populate.
+    void appendRowCards(HorizontalScrollRow* row,
+                        std::shared_ptr<const std::vector<MediaItem>> items, size_t from,
+                        bool directPlay, bool preferPoster, uint64_t generation);
+    void addRowCard(HorizontalScrollRow* row, const MediaItem& item, bool directPlay,
+                    bool preferPoster);
+    std::map<HorizontalScrollRow*, uint64_t> m_rowGeneration;
     void populateChannelRow();          // build channel cells into m_recentChannelsRow
     void tuneChannel(const LiveTVChannel& channel);  // same tune path as the Live TV tab
 

@@ -5,7 +5,8 @@
     by view type, into Application::viewDrawSamples; View::invalidate on the
     UI thread leaves the root's layout for later (Application::deferLayout),
     and the layout getters lay out what is pending before reading
-    (Application::flushLayout); a deleted view is forgotten.
+    (Application::flushLayout); a deleted view is forgotten. The common XML
+    attributes are registered on first use, not in every constructor.
 */
 /*
     Copyright 2019-2021 natinusala
@@ -34,6 +35,7 @@
 #include <algorithm>
 #include <sstream>
 #include <functional>
+#include <unordered_set>
 #include <optional>
 #include <typeinfo>
 #include <borealis/core/animation.hpp>
@@ -82,8 +84,12 @@ View::View()
     YGNodeStyleSetWidthAuto(this->ygNode);
     YGNodeStyleSetHeightAuto(this->ygNode);
 
-    // Register common XML attributes
-    this->registerCommonAttributes();
+    // VitaPlex patch: the common XML attributes are registered the first time
+    // this view is given XML attributes (BRLS_ENSURE_COMMON_ATTRIBUTES), not
+    // here. Registering them cost every view ~80 hash-map entries, each a
+    // name and a handler, made in the constructor and freed in the
+    // destructor: ~0.5 ms a view on the Vita to delete alone, and views the
+    // app builds in code never use them.
 
     // Default values
     Style style = Application::getStyle();
@@ -169,6 +175,24 @@ Sound View::gestureRecognizerRequest(TouchState touch, MouseState mouse, View* f
 
     return soundToPlay;
 }
+
+// VitaPlex patch: the views whose common XML attributes are registered
+// (registerCommonAttributes), lazily on first use. Registered late, an
+// attribute a subclass registered already keeps the subclass's handler, as
+// when the common ones came first and the subclass's replaced them.
+static std::unordered_set<const View*> g_commonAttributesRegistered;
+static bool g_registeringCommonLate = false;
+
+#define BRLS_ENSURE_COMMON_ATTRIBUTES()                                  \
+    do                                                                   \
+    {                                                                    \
+        if (g_commonAttributesRegistered.insert(this).second)            \
+        {                                                                \
+            g_registeringCommonLate = true;                              \
+            this->registerCommonAttributes();                            \
+            g_registeringCommonLate = false;                             \
+        }                                                                \
+    } while (0)
 
 // VitaPlex patch: what invalidate() left to lay out, before a layout value
 // is read (Application::flushLayout).
@@ -1589,6 +1613,8 @@ std::string View::getCustomNavigationRouteId(FocusDirection direction)
 
 View::~View()
 {
+    g_commonAttributesRegistered.erase(this);
+
     // VitaPlex patch: no longer to be laid out (Application::flushLayout).
     if (Application::layoutPending)
         Application::forgetLayout(this);
@@ -1657,6 +1683,8 @@ std::string View::getFilePathXMLAttributeValue(std::string value)
 
 bool View::applyXMLAttribute(std::string name, std::string value)
 {
+    BRLS_ENSURE_COMMON_ATTRIBUTES();
+
     // String -> string
     if (this->stringAttributes.count(name) > 0)
     {
@@ -1911,6 +1939,7 @@ void View::applyXMLAttributes(tinyxml2::XMLElement* element)
 
 bool View::isXMLAttributeValid(std::string attributeName)
 {
+    BRLS_ENSURE_COMMON_ATTRIBUTES();
     return this->knownAttributes.count(attributeName) > 0;
 }
 
@@ -2456,6 +2485,7 @@ Visibility View::getVisibility()
 
 void View::printXMLAttributeErrorMessage(tinyxml2::XMLElement* element, std::string name, std::string value)
 {
+    BRLS_ENSURE_COMMON_ATTRIBUTES();
     if (this->knownAttributes.find(name) != this->knownAttributes.end())
         fatal("Illegal value \"" + value + "\" for \"" + std::string(element->Name()) + "\" XML attribute \"" + name + "\"");
     else
@@ -2464,42 +2494,56 @@ void View::printXMLAttributeErrorMessage(tinyxml2::XMLElement* element, std::str
 
 void View::registerFloatXMLAttribute(std::string name, FloatAttributeHandler handler)
 {
+    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+        return;
     this->floatAttributes[name] = handler;
     this->knownAttributes.insert(name);
 }
 
 void View::registerPercentageXMLAttribute(std::string name, FloatAttributeHandler handler)
 {
+    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+        return;
     this->percentageAttributes[name] = handler;
     this->knownAttributes.insert(name);
 }
 
 void View::registerAutoXMLAttribute(std::string name, AutoAttributeHandler handler)
 {
+    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+        return;
     this->autoAttributes[name] = handler;
     this->knownAttributes.insert(name);
 }
 
 void View::registerStringXMLAttribute(std::string name, StringAttributeHandler handler)
 {
+    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+        return;
     this->stringAttributes[name] = handler;
     this->knownAttributes.insert(name);
 }
 
 void View::registerColorXMLAttribute(std::string name, ColorAttributeHandler handler)
 {
+    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+        return;
     this->colorAttributes[name] = handler;
     this->knownAttributes.insert(name);
 }
 
 void View::registerBoolXMLAttribute(std::string name, BoolAttributeHandler handler)
 {
+    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+        return;
     this->boolAttributes[name] = handler;
     this->knownAttributes.insert(name);
 }
 
 void View::registerFilePathXMLAttribute(std::string name, FilePathAttributeHandler handler)
 {
+    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+        return;
     this->filePathAttributes[name] = handler;
     this->knownAttributes.insert(name);
 }
