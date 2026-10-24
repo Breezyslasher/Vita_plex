@@ -625,6 +625,19 @@ void MediaItemCell::onFocusLost() {
     updateFocusInfo(false);
 }
 
+namespace {
+// Each Label::setText and each change to or from GONE re-runs the layout of
+// the whole page (borealis's invalidate()), and a focus move on the home tab
+// did several of them: the frame log had it at 40-110 ms. Only what changes
+// is set.
+void setTextIfChanged(brls::Label* label, const std::string& text) {
+    if (label->getFullText() != text) label->setText(text);
+}
+void setVisibilityIfChanged(brls::View* view, brls::Visibility visibility) {
+    if (view->getVisibility() != visibility) view->setVisibility(visibility);
+}
+}  // namespace
+
 void MediaItemCell::updateFocusInfo(bool focused) {
     if (!m_titleLabel || !m_descriptionLabel) return;
 
@@ -635,8 +648,8 @@ void MediaItemCell::updateFocusInfo(bool focused) {
     // when it ends beats its year and runtime, so keep the window and drop
     // the description; the detail view still carries the rest.
     if (m_item.airStartAt > 0 && m_item.airEndAt > m_item.airStartAt) {
-        m_titleLabel->setText(focused ? m_item.title : m_originalTitle);
-        m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+        setTextIfChanged(m_titleLabel, focused ? m_item.title : m_originalTitle);
+        setVisibilityIfChanged(m_descriptionLabel, brls::Visibility::GONE);
         return;
     }
 
@@ -693,16 +706,16 @@ void MediaItemCell::updateFocusInfo(bool focused) {
     }
 
     // Focus expands the title to its untruncated form either way.
-    m_titleLabel->setText(focused ? m_item.title : m_originalTitle);
+    setTextIfChanged(m_titleLabel, focused ? m_item.title : m_originalTitle);
 
     if (focused && !info.empty()) {
-        if (m_subtitleLabel) m_subtitleLabel->setVisibility(brls::Visibility::GONE);
-        m_descriptionLabel->setText(info);
-        m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
+        if (m_subtitleLabel) setVisibilityIfChanged(m_subtitleLabel, brls::Visibility::GONE);
+        setTextIfChanged(m_descriptionLabel, info);
+        setVisibilityIfChanged(m_descriptionLabel, brls::Visibility::VISIBLE);
     } else {
-        m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+        setVisibilityIfChanged(m_descriptionLabel, brls::Visibility::GONE);
         if (m_subtitleLabel)
-            m_subtitleLabel->setVisibility(m_hasSubtitle ? brls::Visibility::VISIBLE
+            setVisibilityIfChanged(m_subtitleLabel, m_hasSubtitle ? brls::Visibility::VISIBLE
                                                          : brls::Visibility::GONE);
     }
 }

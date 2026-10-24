@@ -19,6 +19,8 @@
 #pragma once
 
 #include <functional>
+#include <unordered_map>
+#include <utility>
 #include <borealis/core/activity.hpp>
 #include <borealis/core/audio.hpp>
 #include <borealis/core/font.hpp>
@@ -407,11 +409,24 @@ class Application
         Time deletion = 0;  // deletion pool
         Time start    = 0;  // when the iteration began (getCPUTimeUsec)
         Time total    = 0;  // the whole iteration
+        // Within input: focus changes (giveFocus), by part.
+        Time focusLost   = 0;  // the old focus's onFocusLost
+        Time focusEvent  = 0;  // globalFocusChangeEvent subscribers
+        Time focusGained = 0;  // the new focus's onFocusGained
+        Time focusHints  = 0;  // globalHintsUpdateEvent (the hints bar)
+        int focusChanges = 0;
         size_t tickings   = 0;  // running tickings after updateTickings()
         size_t activities = 0;
         bool drawn        = false;
     };
     inline static std::function<void(const FrameTimings&)> frameTimingsCallback;
+
+    // VitaPlex patch (patches/brls_view.cpp): while set, View::frame adds
+    // each view's own drawing time (µs, children excluded) and count by
+    // type name (typeid) to viewDrawSamples. The app sets it for a frame
+    // now and then, and reads and clears the samples after it.
+    inline static bool sampleViewDraws = false;
+    inline static std::unordered_map<const char*, std::pair<Time, int>> viewDrawSamples;
 
   private:
     inline static bool inited               = false;

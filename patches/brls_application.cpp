@@ -1126,19 +1126,35 @@ void Application::giveFocus(View* view)
 
     if (oldFocus != newFocus && newFocus != nullptr)
     {
+        // VitaPlex patch: each part timed for the frame profiler.
+        Time mark = g_timeFrame ? getCPUTimeUsec() : 0;
+        auto lap  = [&mark](Time& into) {
+            if (!g_timeFrame)
+                return;
+            const Time now = getCPUTimeUsec();
+            into += now - mark;
+            mark = now;
+        };
+        if (g_timeFrame)
+            g_frameTimings.focusChanges++;
+
         if (oldFocus)
             oldFocus->onFocusLost();
+        lap(g_frameTimings.focusLost);
 
         Application::currentFocus = newFocus;
         Application::globalFocusChangeEvent.fire(newFocus);
+        lap(g_frameTimings.focusEvent);
 
         if (newFocus)
         {
             newFocus->onFocusGained();
             Logger::debug("Giving focus to {}", newFocus->describe());
         }
+        lap(g_frameTimings.focusGained);
 
         Application::globalHintsUpdateEvent.fire();
+        lap(g_frameTimings.focusHints);
     }
 }
 

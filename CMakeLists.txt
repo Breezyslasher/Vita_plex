@@ -183,6 +183,18 @@ else()
     message(FATAL_ERROR "Patch file not found: ${BRLS_APP_CPP_PATCH}")
 endif()
 
+# Borealis View patch (all platforms): View::frame times each view's own
+# drawing, by type, on the frames the app's frame profiler samples
+# (utils/frame_profiler.cpp). Unsampled frames only test a flag.
+set(BRLS_VIEW_CPP_PATCH  ${CMAKE_CURRENT_SOURCE_DIR}/patches/brls_view.cpp)
+set(BRLS_VIEW_CPP_TARGET ${BOREALIS_LIBRARY}/lib/core/view.cpp)
+if(EXISTS ${BRLS_VIEW_CPP_PATCH})
+    message(STATUS "Applying patch: borealis view.cpp")
+    configure_file(${BRLS_VIEW_CPP_PATCH} ${BRLS_VIEW_CPP_TARGET} COPYONLY)
+else()
+    message(FATAL_ERROR "Patch file not found: ${BRLS_VIEW_CPP_PATCH}")
+endif()
+
 # ---------------------------------------------------------------------------
 # GLFW keyboard mapping patch (desktop only): adds keyboard shortcuts
 # for Start / Back / X / Y / LB / RB on the desktop GLFW backend so

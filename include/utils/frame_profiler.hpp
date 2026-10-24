@@ -16,6 +16,8 @@ enum class Probe {
     HomeDraw,       // HomeTab::draw, its rails and cards
     CellDraw,       // MediaItemCell::draw (counted too)
     TextureDecode,  // an image decoded and uploaded on the UI thread
+    Layout,         // a Yoga layout pass (borealis runs one per invalidate())
+    Measure,        // within layout: a measure callback (a label measuring its text)
     Count
 };
 

@@ -9,6 +9,8 @@
 #include <typeinfo>
 #include <vector>
 
+#include <yoga/event/event.h>
+
 #ifdef __vita__
 #include <psp2/kernel/threadmgr.h>
 #endif
@@ -32,9 +34,18 @@ const int64_t kSlowGapUs = 2 * 1000 * 1000;     // at most one slow frame line p
 const int kLowFps = 55;                         // a window below this is logged
 
 // The parts of an iteration, as borealis times them.
-const int kParts = 11;
-const char* const kPartNames[kParts] = {"poll",  "input", "anim", "begin",  "views", "nvg",
-                                        "swap",  "sync",  "runloop", "delete", "outside"};
+// The last four are the focus changes' parts, within input.
+const int kParts = 15;
+const char* const kPartNames[kParts] = {"poll",    "input",  "anim",       "begin",
+                                        "views",   "nvg",    "swap",       "sync",
+                                        "runloop", "delete", "outside",    "input/focus-lost",
+                                        "input/focus-event", "input/focus-gained",
+                                        "input/hints"};
+const int kOwnParts = 11;  // the parts that add up to the frame
+
+// How often one frame is drawn with each view's drawing timed by type
+// (Application::sampleViewDraws): the timing itself costs a little.
+const int64_t kViewSampleEveryUs = 1000 * 1000;
 
 struct Frame {
     int64_t part[kParts] = {};
@@ -56,6 +67,10 @@ struct Window {
     int probeN[(int)Probe::Count] = {};
     int64_t drawCalls = 0, tris = 0, textTris = 0;
     int64_t tickings = 0;
+    int focusChanges = 0;
+    // The sampled frames' drawing by view type: own µs and count.
+    int sampledFrames = 0;
+    std::map<std::string, std::pair<int64_t, int>> viewDraws;
     // Frames in each whole second, for the worst second's rate.
     int64_t secondStartUs = 0;
     int secondFrames = 0;
@@ -72,6 +87,10 @@ int64_t g_lastLogUs = 0;
 int64_t g_lastSlowUs = 0;
 std::atomic<int> g_httpBegun{0};
 std::atomic<int> g_httpInFlight{0};
+int64_t g_lastViewSampleUs = 0;
+bool g_sampling = false;  // this frame's drawing is being timed by type
+int64_t g_layoutStartUs = 0, g_measureStartUs = 0;
+int g_layoutDepth = 0;
 
 int64_t nowUs() { return (int64_t)brls::getCPUTimeUsec(); }
 
@@ -100,7 +119,8 @@ std::string partsLine(const int64_t* part) {
 
 std::string probesLine(const int64_t* us, const int* n, double per) {
     std::string out;
-    static const char* const names[(int)Probe::Count] = {"home draw", "cells", "textures"};
+    static const char* const names[(int)Probe::Count] = {"home draw", "cells", "textures",
+                                                         "layout passes", "of them measuring"};
     for (int i = 0; i < (int)Probe::Count; i++) {
         if (!n[i]) continue;
         if (!out.empty()) out += ", ";
@@ -127,6 +147,23 @@ std::string tickingsLine() {
         out += fmt::format("{} x{}", sorted[i].first, sorted[i].second);
     }
     return out.empty() ? "none" : out;
+}
+
+// The sampled frames' drawing by view type, most own time first, per frame.
+std::string viewDrawsLine(const Window& w) {
+    if (!w.sampledFrames) return "not sampled";
+    std::vector<std::pair<std::string, std::pair<int64_t, int>>> sorted(w.viewDraws.begin(),
+                                                                         w.viewDraws.end());
+    std::sort(sorted.begin(), sorted.end(),
+              [](const auto& a, const auto& b) { return a.second.first > b.second.first; });
+    const double per = (double)w.sampledFrames;
+    int64_t all = 0;
+    for (const auto& e : sorted) all += e.second.first;
+    std::string out = fmt::format("{:.1f} ms in {} frame(s):", ms(all) / per, w.sampledFrames);
+    for (size_t i = 0; i < sorted.size() && i < 10; i++)
+        out += fmt::format("{} {} x{:.0f} {:.2f} ms", i ? "," : "", sorted[i].first,
+                           sorted[i].second.second / per, ms(sorted[i].second.first) / per);
+    return out;
 }
 
 // What is on screen: the top activity's content and the focused view.
@@ -166,6 +203,8 @@ void report(int64_t now, bool quiet) {
 
     int64_t avg[kParts];
     for (int i = 0; i < kParts; i++) avg[i] = (int64_t)(w.partSum[i] / per);
+    // An average below the line's 0.5 ms cut still matters when it is the
+    // focus: logged as is.
     brls::Logger::info("[perf]   avg ms: {}", partsLine(avg));
     brls::Logger::info("[perf]   max ms: {}", partsLine(w.partMax));
     brls::Logger::info("[perf]   worst frame {:.1f} ms: {}", ms(w.worst.total),
@@ -175,6 +214,8 @@ void report(int64_t now, bool quiet) {
         "{}; http {} begun, {} in flight",
         w.drawCalls / per, w.tris / per, w.textTris / per, w.tickings / per,
         probesLine(w.probeUs, w.probeN, per), g_httpBegun.exchange(0), g_httpInFlight.load());
+    brls::Logger::info("[perf]   focus changes: {}", w.focusChanges);
+    brls::Logger::info("[perf]   drawing by view type (own time): {}", viewDrawsLine(w));
     brls::Logger::info("[perf]   tickings: {}", tickingsLine());
     brls::Logger::info("[perf]   screen: {}", screenLine());
 }
@@ -207,6 +248,10 @@ void onFrame(const Timings& t) {
     f.part[7] = t.sync;
     f.part[8] = t.runLoop;
     f.part[9] = t.deletion;
+    f.part[11] = t.focusLost;
+    f.part[12] = t.focusEvent;
+    f.part[13] = t.focusGained;
+    f.part[14] = t.focusHints;
     // The time between the last iteration's end and this one's start:
     // frame-limit sleeps, the platform's own loop.
     f.part[10] = g_lastIterationStartUs ? std::max<int64_t>(0, start - g_lastIterationStartUs) -
@@ -214,6 +259,7 @@ void onFrame(const Timings& t) {
                                         : 0;
     if (f.part[10] < 0) f.part[10] = 0;
     f.total = (int64_t)t.total + f.part[10];
+    (void)kOwnParts;
     f.tickings = t.tickings;
     if (t.drawn) {
         if (NVGcontext* vg = brls::Application::getNVGContext()) {
@@ -239,6 +285,18 @@ void onFrame(const Timings& t) {
     w.tris += f.tris;
     w.textTris += f.textTris;
     w.tickings += (int64_t)f.tickings;
+    w.focusChanges += t.focusChanges;
+    if (g_sampling) {
+        g_sampling = false;
+        brls::Application::sampleViewDraws = false;
+        w.sampledFrames++;
+        for (const auto& e : brls::Application::viewDrawSamples) {
+            auto& into = w.viewDraws[e.first];
+            into.first += (int64_t)e.second.first;
+            into.second += e.second.second;
+        }
+        brls::Application::viewDrawSamples.clear();
+    }
     if (f.total > 33333) w.over33++;
     if (f.total > kSlowFrameUs) w.over50++;
     if (f.total > w.worst.total) w.worst = f;
@@ -266,15 +324,47 @@ void onFrame(const Timings& t) {
         startWindow(now);
     }
 
+    // Time the next frame's drawing by view type, once a second.
+    if (now - g_lastViewSampleUs >= kViewSampleEveryUs) {
+        g_lastViewSampleUs = now;
+        g_sampling = true;
+        brls::Application::sampleViewDraws = true;
+    }
+
     g_lastIterationStartUs = start;
     const int64_t total = (int64_t)t.total;
     g_frame = Frame();
     g_frame.total = total;  // this iteration's own length, for the next gap
 }
 
+// Yoga's events: each layout pass and measure callback, into the frame.
+// Layout runs on the UI thread (borealis's invalidate()).
+void onYogaEvent(const YGNode&, facebook::yoga::Event::Type type,
+                 facebook::yoga::Event::Data) {
+    using E = facebook::yoga::Event;
+    switch (type) {
+        case E::LayoutPassStart:
+            if (g_layoutDepth++ == 0) g_layoutStartUs = nowUs();
+            break;
+        case E::LayoutPassEnd:
+            if (g_layoutDepth > 0 && --g_layoutDepth == 0)
+                addUi(Probe::Layout, nowUs() - g_layoutStartUs);
+            break;
+        case E::MeasureCallbackStart:
+            g_measureStartUs = nowUs();
+            break;
+        case E::MeasureCallbackEnd:
+            addUi(Probe::Measure, nowUs() - g_measureStartUs);
+            break;
+        default:
+            break;
+    }
+}
+
 }  // namespace
 
 void install() {
+    facebook::yoga::Event::subscribe(onYogaEvent);
     brls::Application::frameTimingsCallback = [](const Timings& t) { onFrame(t); };
     brls::Logger::info("[perf] frame profiler on: a summary every {} s when below {} fps or a "
                        "frame passes {} ms, else one a minute",
