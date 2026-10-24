@@ -177,9 +177,13 @@ Sound View::gestureRecognizerRequest(TouchState touch, MouseState mouse, View* f
 }
 
 // VitaPlex patch: the views whose common XML attributes are registered
-// (registerCommonAttributes), lazily on first use. Registered late, an
-// attribute a subclass registered already keeps the subclass's handler, as
-// when the common ones came first and the subclass's replaced them.
+// (registerCommonAttributes), lazily on first use. Registered late, a name
+// a subclass registered already for the same kind of value (the same map)
+// keeps the subclass's handler, as when the common ones came first and the
+// subclass's replaced them. The same name can be registered for several
+// kinds ("width": auto, percentage, float), so the test is per map: by
+// name alone (build 2087), "width" lost its percentage handler and
+// width="100%" was fatal at start.
 static std::unordered_set<const View*> g_commonAttributesRegistered;
 static bool g_registeringCommonLate = false;
 
@@ -2494,7 +2498,7 @@ void View::printXMLAttributeErrorMessage(tinyxml2::XMLElement* element, std::str
 
 void View::registerFloatXMLAttribute(std::string name, FloatAttributeHandler handler)
 {
-    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+    if (g_registeringCommonLate && this->floatAttributes.count(name) > 0)
         return;
     this->floatAttributes[name] = handler;
     this->knownAttributes.insert(name);
@@ -2502,7 +2506,7 @@ void View::registerFloatXMLAttribute(std::string name, FloatAttributeHandler han
 
 void View::registerPercentageXMLAttribute(std::string name, FloatAttributeHandler handler)
 {
-    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+    if (g_registeringCommonLate && this->percentageAttributes.count(name) > 0)
         return;
     this->percentageAttributes[name] = handler;
     this->knownAttributes.insert(name);
@@ -2510,7 +2514,7 @@ void View::registerPercentageXMLAttribute(std::string name, FloatAttributeHandle
 
 void View::registerAutoXMLAttribute(std::string name, AutoAttributeHandler handler)
 {
-    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+    if (g_registeringCommonLate && this->autoAttributes.count(name) > 0)
         return;
     this->autoAttributes[name] = handler;
     this->knownAttributes.insert(name);
@@ -2518,7 +2522,7 @@ void View::registerAutoXMLAttribute(std::string name, AutoAttributeHandler handl
 
 void View::registerStringXMLAttribute(std::string name, StringAttributeHandler handler)
 {
-    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+    if (g_registeringCommonLate && this->stringAttributes.count(name) > 0)
         return;
     this->stringAttributes[name] = handler;
     this->knownAttributes.insert(name);
@@ -2526,7 +2530,7 @@ void View::registerStringXMLAttribute(std::string name, StringAttributeHandler h
 
 void View::registerColorXMLAttribute(std::string name, ColorAttributeHandler handler)
 {
-    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+    if (g_registeringCommonLate && this->colorAttributes.count(name) > 0)
         return;
     this->colorAttributes[name] = handler;
     this->knownAttributes.insert(name);
@@ -2534,7 +2538,7 @@ void View::registerColorXMLAttribute(std::string name, ColorAttributeHandler han
 
 void View::registerBoolXMLAttribute(std::string name, BoolAttributeHandler handler)
 {
-    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+    if (g_registeringCommonLate && this->boolAttributes.count(name) > 0)
         return;
     this->boolAttributes[name] = handler;
     this->knownAttributes.insert(name);
@@ -2542,7 +2546,7 @@ void View::registerBoolXMLAttribute(std::string name, BoolAttributeHandler handl
 
 void View::registerFilePathXMLAttribute(std::string name, FilePathAttributeHandler handler)
 {
-    if (g_registeringCommonLate && this->knownAttributes.count(name) > 0)
+    if (g_registeringCommonLate && this->filePathAttributes.count(name) > 0)
         return;
     this->filePathAttributes[name] = handler;
     this->knownAttributes.insert(name);
