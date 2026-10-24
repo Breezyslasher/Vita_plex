@@ -117,14 +117,6 @@ enum {
 // downloads, it leaves this file, which VitaPlex's download thread looks for
 // once a second and pauses on.
 #define QM_DOWNLOADS_PAUSE "ux0:data/VitaPlex/handover-downloads-pause"
-// The download notification's picture: the run's first download's cover, a
-// PNG of at most QM_NOTIFY_COVER_SIZE square, written by VitaPlex before its
-// run's first QM_CMD_DL_PROGRESS. A notification shows its owner's icon,
-// ur0:appmeta/<title>/icon0.png, so the plugin puts the cover there under a
-// title of its own (VPLXN0001 to VPLXN0009, in turn) and answers that title
-// as the notification's owner; VitaPlex's own when there is no cover.
-#define QM_NOTIFY_COVER      "ux0:data/VitaPlex/notify-cover.png"
-#define QM_NOTIFY_COVER_SIZE 128
 
 enum { QM_OWNER_APP = 1 };
 

@@ -3727,6 +3727,28 @@ Build 2074 changed no answer: the lookup named an app, which the log did
 not say. Every lookup within the window is logged now, and one naming a
 system title (NPXS...) is answered VitaPlex too.
 
+Build 2075 showed VitaPlex's icon: the lookup in the window named
+NPXS19999, kind 0, and was answered.
+
+**The cover as the icon: two tries, neither shows.**
+- Build 2076 copied the cover to ur0:appmeta/VPLXN000n/icon0.png and
+  answered that title: the icon was blank. SceShell knows a title's icon
+  from its app database and icon cache, not from that file alone, and a
+  title not installed has neither.
+- Build 2077 answered VitaPlex and, for 15 s after the Begin, hooked
+  SceShell's sceIoOpen and sceIoGetstat (any library) to give the cover for
+  VitaPlex's icon0.png, logging every appmeta, icon0 or VPLEX0001 path. Not
+  one was opened, just after a reboot either. SceShell keeps icons in its
+  IconCacheManager ("GetIconCacheImageJob", DDS files named "%s%llu.dds"),
+  and VitaPlex's, on the home screen, is there before any notification.
+
+Showing a poster would mean putting a picture into that cache, or into the
+texture SceShell already holds for VitaPlex's icon; neither is attempted.
+The notification keeps VitaPlex's icon, and the hooks are gone again.
+SceShell's Update handler (0x8124046A) also showed why the bar never moved:
+it stores the float at +0x100 as it comes, and the bar runs to 100; it is
+sent in percent since build 2076.
+
 The same run (log of 16:55:06) had VitaPlex ended by its own 10 s watchdog
 in the hand-over: after the plugin had the list, VitaPlex waited 1.5 s for
 its download thread and then did not get its state saved. The plugin

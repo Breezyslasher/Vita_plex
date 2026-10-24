@@ -374,10 +374,6 @@ void DownloadsManager::startDownloads() {
 #ifdef __vita__
         // A pause asked for before this run began is not one for it.
         sceIoRemove(QM_DOWNLOADS_PAUSE);
-        // The notification's picture is the run's first download's cover
-        // (QM_NOTIFY_COVER), fetched as that download begins.
-        sceIoRemove(QM_NOTIFY_COVER);
-        bool coverFetched = false;
         takeBackFromShell();
         // The quick menu plugin loaded into SceShell now, off the UI thread,
         // so that handing the downloads over as VitaPlex closes does not wait
@@ -420,15 +416,6 @@ void DownloadsManager::startDownloads() {
                 // pointer to the deque element, which would be invalidated if
                 // the deque is modified (e.g. by clearCompleted/purge).
                 DownloadItem* nextItem = findItemByKey(nextRatingKey);
-#ifdef __vita__
-                if (nextItem && !coverFetched && !shell::progressInShell()) {
-                    coverFetched = true;
-                    const bool got =
-                        fetchCoverPng(*nextItem, QM_NOTIFY_COVER_SIZE, QM_NOTIFY_COVER);
-                    brls::Logger::info("DownloadsManager: notification picture for {}: {}",
-                                       nextItem->title, got ? "fetched" : "none");
-                }
-#endif
                 if (nextItem && nextItem->state != DownloadState::CANCELLED) {
                     brls::Logger::info("DownloadsManager: Starting download of {}", nextItem->title);
                     downloadItem(*nextItem);
