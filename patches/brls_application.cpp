@@ -1119,6 +1119,29 @@ void Application::notify(const std::string& text)
     Application::notificationManager->notify(text);
 }
 
+static std::vector<View*> g_deferredLayoutRoots;
+
+void Application::deferLayout(View* root)
+{
+    if (std::find(g_deferredLayoutRoots.begin(), g_deferredLayoutRoots.end(), root) == g_deferredLayoutRoots.end())
+        g_deferredLayoutRoots.push_back(root);
+}
+
+void Application::beginLayoutBatch()
+{
+    layoutBatchDepth++;
+}
+
+void Application::endLayoutBatch()
+{
+    if (layoutBatchDepth <= 0 || --layoutBatchDepth > 0)
+        return;
+    std::vector<View*> roots;
+    roots.swap(g_deferredLayoutRoots);
+    for (View* root : roots)
+        YGNodeCalculateLayout(root->getYGNode(), YGUndefined, YGUndefined, YGDirectionLTR);
+}
+
 void Application::giveFocus(View* view)
 {
     View* oldFocus = Application::currentFocus;
@@ -1138,6 +1161,10 @@ void Application::giveFocus(View* view)
         if (g_timeFrame)
             g_frameTimings.focusChanges++;
 
+        // One layout for the whole change (endLayoutBatch below), however
+        // many labels and visibilities the old and new focus change.
+        beginLayoutBatch();
+
         if (oldFocus)
             oldFocus->onFocusLost();
         lap(g_frameTimings.focusLost);
@@ -1151,6 +1178,7 @@ void Application::giveFocus(View* view)
             newFocus->onFocusGained();
             Logger::debug("Giving focus to {}", newFocus->describe());
         }
+        endLayoutBatch();
         lap(g_frameTimings.focusGained);
 
         Application::globalHintsUpdateEvent.fire();

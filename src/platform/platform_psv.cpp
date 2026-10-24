@@ -29,6 +29,11 @@
 #include "utils/http_client.hpp"
 
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
 #include <pthread.h>
 #include <ctime>
 #include <cstring>
@@ -52,6 +57,36 @@ constexpr int HTTP_MEMORY_SIZE = 1 * 1024 * 1024;
 char __attribute__((aligned(64))) g_netMemory[NET_MEMORY_SIZE];
 
 FILE* g_logFile = nullptr;
+
+// The log's lines are written by a thread of their own. Written by the thread
+// logging, each line cost it ~10 ms (one write to the memory card per line,
+// line-buffered): the frame log of build 2081 had ten summary lines take
+// 100 ms of the UI thread, and every focus move pay for its "Giving focus"
+// line. The logger queues the line and wakes the writer, which writes what
+// is queued and flushes, so a line still reaches the card within moments.
+std::mutex g_logMutex;
+std::condition_variable g_logWake;
+std::vector<std::string> g_logQueue;
+std::thread g_logWriter;
+bool g_logStopping = false;
+
+void logWriterLoop() {
+    std::vector<std::string> lines;
+    std::unique_lock<std::mutex> lock(g_logMutex);
+    for (;;) {
+        g_logWake.wait(lock, [] { return g_logStopping || !g_logQueue.empty(); });
+        lines.swap(g_logQueue);
+        const bool stopping = g_logStopping;
+        lock.unlock();
+        if (g_logFile && !lines.empty()) {
+            for (const std::string& line : lines) std::fputs(line.c_str(), g_logFile);
+            std::fflush(g_logFile);
+        }
+        lines.clear();
+        lock.lock();
+        if (stopping && g_logQueue.empty()) return;
+    }
+}
 
 bool loadShaderCompiler() {
     SceUID mod = sceKernelLoadStartModule("ur0:data/libshacccg.suprx", 0, NULL, 0, NULL, NULL);
@@ -272,7 +307,10 @@ void openLogFile() {
     rotateLogForNewRun();
     g_logFile = std::fopen(getLogPath().c_str(), "w");
     if (!g_logFile) return;
-    setvbuf(g_logFile, NULL, _IOLBF, 0);
+    // Fully buffered: the writer thread flushes after each batch.
+    setvbuf(g_logFile, NULL, _IOFBF, 16 * 1024);
+    g_logStopping = false;
+    g_logWriter = std::thread(logWriterLoop);
 
     // Subscribe to log events to write to file (since brls::Logger::setLogOutput
     // doesn't work on Vita — it writes to sceClibPrintf which is invisible).
@@ -299,14 +337,29 @@ void openLogFile() {
             // Redacted at the sink, as on desktop and Android: one call site
             // that forgets to redact would otherwise put an X-Plex-Token in
             // a log that gets pasted into a bug report.
-            fprintf(g_logFile, "%02d:%02d:%02d.%03d [%s] %s\n",
-                    time_tm.tm_hour, time_tm.tm_min, time_tm.tm_sec,
-                    (int)ms, levelStr, ::vitaplex::redactTokensInUrl(log).c_str());
+            std::string line = fmt::format("{:02d}:{:02d}:{:02d}.{:03d} [{}] {}\n",
+                                           time_tm.tm_hour, time_tm.tm_min, time_tm.tm_sec,
+                                           (int)ms, levelStr,
+                                           ::vitaplex::redactTokensInUrl(log));
+            {
+                std::lock_guard<std::mutex> lock(g_logMutex);
+                g_logQueue.push_back(std::move(line));
+            }
+            g_logWake.notify_one();
         });
     brls::Logger::info("Log file initialized");
 }
 
 void closeLogFile() {
+    // What is queued is written before the file closes.
+    if (g_logWriter.joinable()) {
+        {
+            std::lock_guard<std::mutex> lock(g_logMutex);
+            g_logStopping = true;
+        }
+        g_logWake.notify_one();
+        g_logWriter.join();
+    }
     if (g_logFile) {
         std::fclose(g_logFile);
         g_logFile = nullptr;

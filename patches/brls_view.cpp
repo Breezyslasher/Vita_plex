@@ -2,7 +2,9 @@
     VitaPlex patch of borealis's core/view.cpp (CMakeLists.txt copies it
     over the submodule's): View::frame times each view's own drawing on
     the frames the app's profiler samples (Application::sampleViewDraws),
-    by view type, into Application::viewDrawSamples. Nothing else changed.
+    by view type, into Application::viewDrawSamples; and View::invalidate
+    leaves the root's layout to the end of a layout batch while one is open
+    (Application::layoutBatchDepth, a focus change).
 */
 /*
     Copyright 2019-2021 natinusala
@@ -1260,6 +1262,10 @@ void View::invalidate()
 
     if (this->hasParent() && !this->detached)
         this->getParent()->invalidate();
+    else if (Application::layoutBatchDepth > 0)
+        // VitaPlex patch: inside a batch (a focus change), the root is laid
+        // out once as the batch ends rather than once per change.
+        Application::deferLayout(this);
     else
         YGNodeCalculateLayout(this->ygNode, YGUndefined, YGUndefined, YGDirectionLTR);
 }

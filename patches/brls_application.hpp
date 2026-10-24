@@ -426,6 +426,15 @@ class Application
     // type name (typeid) to viewDrawSamples. The app sets it for a frame
     // now and then, and reads and clears the samples after it.
     inline static bool sampleViewDraws = false;
+
+    // VitaPlex patch (patches/brls_view.cpp): while layoutBatchDepth > 0, an
+    // invalidate() reaching a root defers its layout (deferLayout) to the
+    // batch's end (endLayoutBatch), so a focus change that sets several
+    // labels and visibilities lays the page out once, not once per change.
+    inline static int layoutBatchDepth = 0;
+    static void deferLayout(View* root);
+    static void beginLayoutBatch();
+    static void endLayoutBatch();
     inline static std::unordered_map<const char*, std::pair<Time, int>> viewDrawSamples;
 
   private:
