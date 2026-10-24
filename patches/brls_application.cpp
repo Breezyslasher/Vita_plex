@@ -1174,10 +1174,11 @@ void Application::forgetLayout(View* view)
     layoutPending = !g_deferredLayout.empty();
 }
 
-void Application::flushLayout()
+void Application::flushLayout(View* reader)
 {
     if (!layoutPending || g_layingOut || !isMainThread())
         return;
+    layoutReaders[reader ? typeid(*reader).name() : "(scheduled: before drawing or after a focus change)"]++;
     g_layingOut = true;
     // A layout's onLayout handlers may invalidate again: a few rounds.
     for (int round = 0; round < 8 && !g_deferredLayout.empty(); round++)

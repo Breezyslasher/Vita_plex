@@ -448,7 +448,13 @@ class Application
     inline static std::unordered_map<const char*, std::pair<Time, int>> deleteSamples;
     static void timedDelete(View* view);
     static void deferLayout(View* view);
-    static void flushLayout();
+    static void flushLayout(View* reader = nullptr);
+
+    // VitaPlex patch: for the app's frame log, per frame: the views whose
+    // change started an invalidate() (by type), and what made a pending
+    // layout run (the type of the view reading a layout value, or "draw").
+    inline static std::unordered_map<const char*, int> layoutCauses;
+    inline static std::unordered_map<const char*, int> layoutReaders;
     static void forgetLayout(View* view);
     static bool isMainThread();
     inline static std::unordered_map<const char*, std::pair<Time, int>> viewDrawSamples;

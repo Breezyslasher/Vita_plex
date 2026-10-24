@@ -176,7 +176,7 @@ Sound View::gestureRecognizerRequest(TouchState touch, MouseState mouse, View* f
     do                                     \
     {                                      \
         if (Application::layoutPending)    \
-            Application::flushLayout();    \
+            Application::flushLayout(this);\
     } while (0)
 
 // VitaPlex patch: on a sampled frame, each view's own drawing time (its
@@ -1266,8 +1266,19 @@ void View::setAlignSelf(AlignSelf alignSelf)
     this->invalidate();
 }
 
+// VitaPlex patch: invalidate() calls itself up to the root; the view it
+// started from is noted once (Application::layoutCauses).
+static int g_invalidateDepth = 0;
+
 void View::invalidate()
 {
+    if (g_invalidateDepth++ == 0 && Application::isMainThread())
+        Application::layoutCauses[typeid(*this).name()]++;
+    struct DepthGuard
+    {
+        ~DepthGuard() { g_invalidateDepth--; }
+    } depthGuard;
+
     if (YGNodeHasMeasureFunc(this->ygNode))
         YGNodeMarkDirty(this->ygNode);
 

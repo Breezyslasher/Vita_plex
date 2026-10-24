@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <map>
+#include <unordered_map>
 #include <string>
 #include <typeinfo>
 #include <cxxabi.h>
@@ -167,6 +168,18 @@ void logSlowTasksAndDeletes(int64_t deletionUs) {
                            ms(deletionUs), out);
     }
     samples.clear();
+}
+
+// "Type xN" for each, most first, at most eight.
+std::string countsLine(const std::unordered_map<const char*, int>& counts) {
+    std::vector<std::pair<const char*, int>> sorted(counts.begin(), counts.end());
+    std::sort(sorted.begin(), sorted.end(),
+              [](const auto& a, const auto& b) { return a.second > b.second; });
+    std::string out;
+    for (size_t i = 0; i < sorted.size() && i < 8; i++)
+        out += fmt::format("{}{} x{}", i ? ", " : "", demangle(sorted[i].first),
+                           sorted[i].second);
+    return out.empty() ? "nothing" : out;
 }
 
 // The running tickings by type, most first: an animation or task that never
@@ -353,7 +366,14 @@ void onFrame(const Timings& t) {
         brls::Logger::info(
             "[perf] slow frame {:.1f} ms: {}; {} draw calls; {}; {} tickings", ms(f.total),
             partsLine(f.part), f.drawCalls, probesLine(f.probeUs, f.probeN, 1.0), f.tickings);
+        // Where its layout passes came from: what changed, what read.
+        if (f.probeN[(int)Probe::Layout] >= 2)
+            brls::Logger::info("[perf]   its layout: changed {}; read by {}",
+                               countsLine(brls::Application::layoutCauses),
+                               countsLine(brls::Application::layoutReaders));
     }
+    brls::Application::layoutCauses.clear();
+    brls::Application::layoutReaders.clear();
 
     if (now - w.startUs >= kWindowUs) {
         const double fps = w.frames * 1e6 / (double)(now - w.startUs);
