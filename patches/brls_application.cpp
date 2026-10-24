@@ -61,6 +61,7 @@
 #include <chrono>
 #include <set>
 #include <thread>
+#include <typeinfo>
 
 #if defined(ANDROID)
 // Queried once per frame to find out whether a GL draw surface is actually
@@ -398,7 +399,7 @@ bool Application::internalMainLoop()
     {
         if (!view->isPtrLocked())
         {
-            delete view;
+            timedDelete(view);
         }
         else
         {
@@ -1131,6 +1132,30 @@ void Application::notify(const std::string& text)
 
 static std::vector<View*> g_deferredLayout;
 static bool g_layingOut = false;
+void Application::noteSlowSyncTask(const char* typeName, Time us)
+{
+    if (slowSyncTasks.size() < 64)
+        slowSyncTasks.emplace_back(typeName ? typeName : "?", us);
+}
+
+// The time the views being deleted inside the current delete took, for the
+// one deleting them to take out of its own.
+static Time g_deleteChildUs = 0;
+
+void Application::timedDelete(View* view)
+{
+    const char* type = typeid(*view).name();
+    const Time start = getCPUTimeUsec();
+    const Time outer = g_deleteChildUs;
+    g_deleteChildUs  = 0;
+    delete view;
+    const Time all = getCPUTimeUsec() - start;
+    auto& entry    = deleteSamples[type];
+    entry.first += all - g_deleteChildUs;
+    entry.second += 1;
+    g_deleteChildUs = outer + all;
+}
+
 bool Application::isMainThread()
 {
     return std::this_thread::get_id() == g_mainThread;

@@ -206,6 +206,22 @@ else()
     message(FATAL_ERROR "Patch file not found: ${BRLS_BOX_CPP_PATCH}")
 endif()
 
+# Borealis thread and hint patches (all platforms): slow brls::sync tasks
+# noted for the frame log; the hints bar left as it is when a focus change
+# would give it the same hints.
+foreach(_brls_patch thread:core/thread.cpp hint:views/hint.cpp)
+    string(REPLACE ":" ";" _brls_parts "${_brls_patch}")
+    list(GET _brls_parts 0 _brls_name)
+    list(GET _brls_parts 1 _brls_target)
+    set(_brls_src ${CMAKE_CURRENT_SOURCE_DIR}/patches/brls_${_brls_name}.cpp)
+    if(EXISTS ${_brls_src})
+        message(STATUS "Applying patch: borealis ${_brls_target}")
+        configure_file(${_brls_src} ${BOREALIS_LIBRARY}/lib/${_brls_target} COPYONLY)
+    else()
+        message(FATAL_ERROR "Patch file not found: ${_brls_src}")
+    endif()
+endforeach()
+
 # ---------------------------------------------------------------------------
 # GLFW keyboard mapping patch (desktop only): adds keyboard shortcuts
 # for Start / Back / X / Y / LB / RB on the desktop GLFW backend so

@@ -436,6 +436,17 @@ class Application
     // Width/Height flush first) or before the frame is drawn (flushLayout).
     // Off the UI thread it lays out at once, as before.
     inline static bool layoutPending = false;
+
+    // VitaPlex patch: for the app's frame log. brls::sync tasks that took
+    // kSlowSyncTaskUs or more (patches/brls_thread.cpp), by the type name of
+    // their function; and views deleted, by type, with their own time
+    // (children excluded), through timedDelete (deletion pool, ~Box). Both
+    // filled on the UI thread; the app drains them.
+    static constexpr Time kSlowSyncTaskUs = 15000;
+    inline static std::vector<std::pair<std::string, Time>> slowSyncTasks;
+    static void noteSlowSyncTask(const char* typeName, Time us);
+    inline static std::unordered_map<const char*, std::pair<Time, int>> deleteSamples;
+    static void timedDelete(View* view);
     static void deferLayout(View* view);
     static void flushLayout();
     static void forgetLayout(View* view);

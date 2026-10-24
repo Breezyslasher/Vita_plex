@@ -1,7 +1,8 @@
 /*
     VitaPlex patch of borealis's core/box.cpp (CMakeLists.txt copies it over
     the submodule's): Box::draw takes its culling bounds once per draw rather
-    than once per child. Nothing else changed.
+    than once per child, and ~Box deletes its children through
+    Application::timedDelete (timed by type for the frame log).
 */
 /*
     Copyright 2020-2021 natinusala
@@ -795,7 +796,8 @@ Box::~Box()
         it->setParent(nullptr);
         if (!it->isPtrLocked())
         {
-            delete it;
+            // VitaPlex patch: timed by type for the frame log.
+            Application::timedDelete(it);
         }
         else
         {

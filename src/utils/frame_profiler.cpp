@@ -7,6 +7,8 @@
 #include <map>
 #include <string>
 #include <typeinfo>
+#include <cxxabi.h>
+#include <cstdlib>
 #include <vector>
 
 #include <yoga/event/event.h>
@@ -130,13 +132,50 @@ std::string probesLine(const int64_t* us, const int* n, double per) {
     return out.empty() ? "none" : out;
 }
 
+// A type's name as written, from its mangled name (a lambda's names the
+// function it was written in).
+std::string demangle(const char* name) {
+    int status = 0;
+    char* out = abi::__cxa_demangle(name, nullptr, nullptr, &status);
+    std::string s = (status == 0 && out) ? out : name;
+    std::free(out);
+    // A lambda's type ends in its parameters' "{lambda(...)#n}"; the
+    // function it sits in is what tells it apart.
+    if (s.size() > 160) s = s.substr(0, 160) + "...";
+    return s;
+}
+
+// What borealis noted this frame: brls::sync tasks that took long, and the
+// views it deleted by type (patches/brls_thread.cpp, brls_application.cpp).
+void logSlowTasksAndDeletes(int64_t deletionUs) {
+    for (const auto& t : brls::Application::slowSyncTasks)
+        brls::Logger::info("[perf] slow sync task {:.1f} ms: {}", ms((int64_t)t.second),
+                           demangle(t.first.c_str()));
+    brls::Application::slowSyncTasks.clear();
+
+    auto& samples = brls::Application::deleteSamples;
+    if (deletionUs >= 30000 && !samples.empty()) {
+        std::vector<std::pair<const char*, std::pair<brls::Time, int>>> sorted(samples.begin(),
+                                                                              samples.end());
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const auto& a, const auto& b) { return a.second.first > b.second.first; });
+        std::string out;
+        for (size_t i = 0; i < sorted.size() && i < 8; i++)
+            out += fmt::format("{} {} x{} {:.1f} ms", i ? "," : "", demangle(sorted[i].first),
+                               sorted[i].second.second, ms((int64_t)sorted[i].second.first));
+        brls::Logger::info("[perf] deleting views took {:.1f} ms, own time by type:{}",
+                           ms(deletionUs), out);
+    }
+    samples.clear();
+}
+
 // The running tickings by type, most first: an animation or task that never
 // ends shows here.
 std::string tickingsLine() {
     std::map<std::string, int> byType;
     for (brls::Ticking* t : brls::Ticking::runningTickings) {
         if (!t) continue;
-        byType[typeid(*t).name()]++;
+        byType[demangle(typeid(*t).name())]++;
     }
     std::vector<std::pair<std::string, int>> sorted(byType.begin(), byType.end());
     std::sort(sorted.begin(), sorted.end(),
@@ -270,6 +309,8 @@ void onFrame(const Timings& t) {
         }
     }
 
+    logSlowTasksAndDeletes(t.deletion);
+
     Window& w = g_window;
     w.frames++;
     w.totalSum += f.total;
@@ -291,7 +332,7 @@ void onFrame(const Timings& t) {
         brls::Application::sampleViewDraws = false;
         w.sampledFrames++;
         for (const auto& e : brls::Application::viewDrawSamples) {
-            auto& into = w.viewDraws[e.first];
+            auto& into = w.viewDraws[demangle(e.first)];
             into.first += (int64_t)e.second.first;
             into.second += e.second.second;
         }
