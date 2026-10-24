@@ -75,6 +75,18 @@ endif()
 # ---------------------------------------------------------------------------
 # Project (after toolchain so cross-compilers are in effect)
 # ---------------------------------------------------------------------------
+# Optimised unless a build type is asked for. With none, CMake passes no -O
+# flag at all, and every CI build (Vita, Switch, PS4, desktop) configured
+# without one: the app, borealis, Yoga and nanovg were built at -O0. The
+# frame log had a Vita frame at 30 ms of drawing with the GPU idle, ~0.1 ms
+# a plain Box. RelWithDebInfo is -O2 with debug info, so crash dumps still
+# resolve to source lines. Android's Gradle build and multi-config
+# generators choose their own.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
+        "Build type (Debug, Release, RelWithDebInfo, MinSizeRel)" FORCE)
+endif()
+
 project(VitaPlex VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
