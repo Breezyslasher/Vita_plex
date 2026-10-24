@@ -190,9 +190,9 @@ const ImageConstraints& getImageConstraints() {
 
         /* imageCacheSize           */  20,
 
-        /* libraryPageSize          */  60,
-        /* playlistTrackPageSize    */  50,
-        /* musicCarouselLimit       */  40,
+        /* libraryPageSize          */  6000,
+        /* playlistTrackPageSize    */  5000,
+        /* musicCarouselLimit       */  4000,
 
         /* posterRequestWidth       */ 220,  // ~2x poster display, Vita VRAM budget
         /* posterRequestHeight      */ 330,
