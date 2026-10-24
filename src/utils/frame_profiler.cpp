@@ -34,14 +34,14 @@ const int64_t kSlowGapUs = 2 * 1000 * 1000;     // at most one slow frame line p
 const int kLowFps = 55;                         // a window below this is logged
 
 // The parts of an iteration, as borealis times them.
-// The last four are the focus changes' parts, within input.
-const int kParts = 15;
+// "input/..." are the focus changes' parts, within input; "layout" is what
+// was left to lay out before drawing (borealis lays out on demand).
+const int kParts = 16;
 const char* const kPartNames[kParts] = {"poll",    "input",  "anim",       "begin",
                                         "views",   "nvg",    "swap",       "sync",
                                         "runloop", "delete", "outside",    "input/focus-lost",
                                         "input/focus-event", "input/focus-gained",
-                                        "input/hints"};
-const int kOwnParts = 11;  // the parts that add up to the frame
+                                        "input/hints", "layout"};
 
 // How often one frame is drawn with each view's drawing timed by type
 // (Application::sampleViewDraws): the timing itself costs a little.
@@ -252,6 +252,7 @@ void onFrame(const Timings& t) {
     f.part[12] = t.focusEvent;
     f.part[13] = t.focusGained;
     f.part[14] = t.focusHints;
+    f.part[15] = t.layout;
     // The time between the last iteration's end and this one's start:
     // frame-limit sleeps, the platform's own loop.
     f.part[10] = g_lastIterationStartUs ? std::max<int64_t>(0, start - g_lastIterationStartUs) -
@@ -259,7 +260,6 @@ void onFrame(const Timings& t) {
                                         : 0;
     if (f.part[10] < 0) f.part[10] = 0;
     f.total = (int64_t)t.total + f.part[10];
-    (void)kOwnParts;
     f.tickings = t.tickings;
     if (t.drawn) {
         if (NVGcontext* vg = brls::Application::getNVGContext()) {

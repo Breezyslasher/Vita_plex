@@ -400,6 +400,7 @@ class Application
         Time poll     = 0;  // platform->mainLoopIteration(): events, input polling
         Time input    = 0;  // processInput()
         Time anim     = 0;  // highlight animation + Ticking::updateTickings()
+        Time layout   = 0;  // the layout left pending, done before drawing
         Time begin    = 0;  // videoContext->beginFrame() + clear
         Time views    = 0;  // the activities' views drawn, highlight, notifications
         Time nvgEnd   = 0;  // nvgEndFrame(): nanovg's draw calls flushed to the GPU
@@ -427,14 +428,18 @@ class Application
     // now and then, and reads and clears the samples after it.
     inline static bool sampleViewDraws = false;
 
-    // VitaPlex patch (patches/brls_view.cpp): while layoutBatchDepth > 0, an
-    // invalidate() reaching a root defers its layout (deferLayout) to the
-    // batch's end (endLayoutBatch), so a focus change that sets several
-    // labels and visibilities lays the page out once, not once per change.
-    inline static int layoutBatchDepth = 0;
-    static void deferLayout(View* root);
-    static void beginLayoutBatch();
-    static void endLayoutBatch();
+    // VitaPlex patch (patches/brls_view.cpp): layout on demand. borealis laid
+    // the whole tree out on every invalidate() (each setText, addView, change
+    // to or from GONE): 4-8 passes a focus move, 55 building a tab. On the UI
+    // thread an invalidate() now only notes its root (deferLayout); the roots
+    // are laid out once, when anything reads a layout value (View's getX/Y/
+    // Width/Height flush first) or before the frame is drawn (flushLayout).
+    // Off the UI thread it lays out at once, as before.
+    inline static bool layoutPending = false;
+    static void deferLayout(View* view);
+    static void flushLayout();
+    static void forgetLayout(View* view);
+    static bool isMainThread();
     inline static std::unordered_map<const char*, std::pair<Time, int>> viewDrawSamples;
 
   private:

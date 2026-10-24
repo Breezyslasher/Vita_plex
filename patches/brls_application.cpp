@@ -89,8 +89,14 @@ extern "C" void nvgMarkFontAtlasDirty(NVGcontext* ctx);
 namespace brls
 {
 
+// VitaPlex patch: the UI thread, set by init (Application::isMainThread).
+static std::thread::id g_mainThread;
+
 bool Application::init()
 {
+    // The UI thread: invalidate() defers layout only here (flushLayout).
+    g_mainThread = std::this_thread::get_id();
+
     Application::inited        = false;
     Application::quitRequested = false;
 
@@ -314,6 +320,10 @@ bool Application::internalMainLoop()
 #endif
     Ticking::updateTickings();
     g_frameTimings.anim = frameLap();
+
+    // What the input and animations left to lay out, once, before drawing.
+    flushLayout();
+    g_frameTimings.layout = frameLap();
 
     // Render. On mobile, skip drawing while backgrounded (no GL surface) and for
     // a few warm-up frames after returning, so we never upload textures against a
@@ -1119,27 +1129,53 @@ void Application::notify(const std::string& text)
     Application::notificationManager->notify(text);
 }
 
-static std::vector<View*> g_deferredLayoutRoots;
-
-void Application::deferLayout(View* root)
+static std::vector<View*> g_deferredLayout;
+static bool g_layingOut = false;
+bool Application::isMainThread()
 {
-    if (std::find(g_deferredLayoutRoots.begin(), g_deferredLayoutRoots.end(), root) == g_deferredLayoutRoots.end())
-        g_deferredLayoutRoots.push_back(root);
+    return std::this_thread::get_id() == g_mainThread;
 }
 
-void Application::beginLayoutBatch()
+void Application::deferLayout(View* view)
 {
-    layoutBatchDepth++;
+    if (std::find(g_deferredLayout.begin(), g_deferredLayout.end(), view) == g_deferredLayout.end())
+        g_deferredLayout.push_back(view);
+    layoutPending = true;
 }
 
-void Application::endLayoutBatch()
+void Application::forgetLayout(View* view)
 {
-    if (layoutBatchDepth <= 0 || --layoutBatchDepth > 0)
+    g_deferredLayout.erase(std::remove(g_deferredLayout.begin(), g_deferredLayout.end(), view), g_deferredLayout.end());
+    layoutPending = !g_deferredLayout.empty();
+}
+
+void Application::flushLayout()
+{
+    if (!layoutPending || g_layingOut || !isMainThread())
         return;
-    std::vector<View*> roots;
-    roots.swap(g_deferredLayoutRoots);
-    for (View* root : roots)
-        YGNodeCalculateLayout(root->getYGNode(), YGUndefined, YGUndefined, YGDirectionLTR);
+    g_layingOut = true;
+    // A layout's onLayout handlers may invalidate again: a few rounds.
+    for (int round = 0; round < 8 && !g_deferredLayout.empty(); round++)
+    {
+        std::vector<View*> views;
+        views.swap(g_deferredLayout);
+        layoutPending = false;
+        // Each view's root now: a view noted as a root may have been added
+        // to a parent since.
+        std::vector<View*> roots;
+        for (View* view : views)
+        {
+            View* root = view;
+            while (root->hasParent() && !root->isDetached())
+                root = root->getParent();
+            if (std::find(roots.begin(), roots.end(), root) == roots.end())
+                roots.push_back(root);
+        }
+        for (View* root : roots)
+            YGNodeCalculateLayout(root->getYGNode(), YGUndefined, YGUndefined, YGDirectionLTR);
+    }
+    layoutPending = !g_deferredLayout.empty();
+    g_layingOut   = false;
 }
 
 void Application::giveFocus(View* view)
@@ -1161,10 +1197,6 @@ void Application::giveFocus(View* view)
         if (g_timeFrame)
             g_frameTimings.focusChanges++;
 
-        // One layout for the whole change (endLayoutBatch below), however
-        // many labels and visibilities the old and new focus change.
-        beginLayoutBatch();
-
         if (oldFocus)
             oldFocus->onFocusLost();
         lap(g_frameTimings.focusLost);
@@ -1178,7 +1210,9 @@ void Application::giveFocus(View* view)
             newFocus->onFocusGained();
             Logger::debug("Giving focus to {}", newFocus->describe());
         }
-        endLayoutBatch();
+        // Laid out once for the whole change, however many labels and
+        // visibilities the old and new focus changed (flushLayout).
+        flushLayout();
         lap(g_frameTimings.focusGained);
 
         Application::globalHintsUpdateEvent.fire();

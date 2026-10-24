@@ -7,7 +7,14 @@
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
 #include "platform/platform.hpp"
+#include <condition_variable>
+#include <deque>
+#include <thread>
 #include <vector>
+
+// nanovg's stb_image (its implementation is compiled into borealis), used to
+// decode off the UI thread.
+#include <stb_image.h>
 
 namespace vitaplex {
 
@@ -100,6 +107,64 @@ static void noteSkip(const char* reason) {
     const uint64_t n = ++counts[reason];
     if (n == 1 || n % 25 == 0)
         brls::Logger::warning("ImageLoader: {} load(s) skipped — {}", n, reason);
+}
+
+// ── Decoding off the UI thread ────────────────────────────────────────────
+// A cover used to be decoded where it was uploaded, on the UI thread
+// (setImageFromMem / nvgCreateImageMem): ~50 ms a poster on the Vita, and a
+// screenful arriving together froze the UI for 0.6-2.6 s in the frame log.
+// The bytes are now decoded to RGBA off it (stb_image, as nanovg does), and
+// the UI thread only creates the texture from the pixels.
+struct ImageLoader::Decoded {
+    std::shared_ptr<unsigned char> pixels;  // RGBA, freed with stbi_image_free
+    int w = 0, h = 0;
+};
+
+std::shared_ptr<ImageLoader::Decoded> ImageLoader::decode(const std::vector<uint8_t>& bytes) {
+    if (bytes.empty()) return nullptr;
+    int w = 0, h = 0, comp = 0;
+    unsigned char* px = stbi_load_from_memory(bytes.data(), (int)bytes.size(), &w, &h, &comp, 4);
+    if (!px) return nullptr;
+    auto d = std::make_shared<Decoded>();
+    d->pixels = std::shared_ptr<unsigned char>(px, [](unsigned char* p) { stbi_image_free(p); });
+    d->w = w;
+    d->h = h;
+    return d;
+}
+
+// UI thread: the texture for decoded pixels, 0 if there are none.
+static int uploadDecoded(const std::shared_ptr<ImageLoader::Decoded>& d) {
+    NVGcontext* vg = brls::Application::getNVGContext();
+    if (!d || !vg) return 0;
+    perf::Scope timed(perf::Probe::TextureDecode);
+    return nvgCreateImageRGBA(vg, d->w, d->h, 0, d->pixels.get());
+}
+
+// Decodes cached bytes, which are already at hand, on a thread of their own:
+// on brls::async's they would queue behind every download in flight.
+static void decodeOffUi(std::function<void()> job) {
+    static std::mutex mutex;
+    static std::condition_variable wake;
+    static std::deque<std::function<void()>>* queue = nullptr;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!queue) {
+        queue = new std::deque<std::function<void()>>();
+        // Never joined: it lives as long as the app.
+        new std::thread([]() {
+            for (;;) {
+                std::function<void()> next;
+                {
+                    std::unique_lock<std::mutex> l(mutex);
+                    wake.wait(l, [] { return !queue->empty(); });
+                    next = std::move(queue->front());
+                    queue->pop_front();
+                }
+                next();
+            }
+        });
+    }
+    queue->push_back(std::move(job));
+    wake.notify_one();
 }
 
 bool ImageLoader::uploadsAreSafe() {
@@ -245,6 +310,33 @@ size_t ImageLoader::getCacheSize() {
     return s_cache.size();
 }
 
+// UI thread: a brls::Image request's reply, its bytes and their decoded
+// pixels (null when they would not decode), delivered if still current.
+void ImageLoader::deliverImage(std::vector<uint8_t> bytes, std::shared_ptr<Decoded> decoded,
+                               LoadCallback callback, brls::Image* target,
+                               std::shared_ptr<std::atomic<bool>> alive, uint64_t gen,
+                               uint64_t request) {
+    if (!currentRequest(target, request)) return;
+    // Sync tasks keep running while backgrounded (by design, so audio and
+    // timers survive), but the GL surface is gone then — uploading now would
+    // silently produce a blank texture.
+    if (!uploadsAreSafe()) {
+        DeferredUpload pending;
+        pending.data          = std::move(bytes);
+        pending.imageCallback = callback;
+        pending.target        = target;
+        pending.request       = request;
+        pending.alive         = alive;
+        pending.gen           = gen;
+        deferUpload(std::move(pending));
+        return;
+    }
+    const int tex = uploadDecoded(decoded);
+    if (tex != 0) target->innerSetImage(tex);
+    if (callback) callback(target);
+    settle(target, request);
+}
+
 void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
                             brls::Image* target, std::shared_ptr<std::atomic<bool>> alive) {
     if (url.empty() || !target || !alive) return;
@@ -303,12 +395,15 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
             deferUpload(std::move(pending));
             return;
         }
-        {
-            perf::Scope timed(perf::Probe::TextureDecode);
-            target->setImageFromMem(cached.data(), cached.size());
-        }
-        if (callback) callback(target);
-        settle(target, request);
+        // Decoded off the UI thread, then delivered as a download's is.
+        decodeOffUi([cached = std::move(cached), callback, target, alive, gen, request]() mutable {
+            if (!alive->load() || gen != s_generation.load()) return;
+            auto decoded = decode(cached);
+            brls::sync([cached = std::move(cached), decoded, callback, target, alive, gen,
+                        request]() mutable {
+                deliverImage(std::move(cached), decoded, callback, target, alive, gen, request);
+            });
+        });
         return;
     }
 
@@ -347,31 +442,13 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
             s_cache[url] = std::move(entry);
         }
 
-        // Update UI on main thread, only if this is still the target's request,
-        // the caller's alive flag and generation hold, and the image itself
-        // still exists.
-        brls::sync([imageData, callback, target, alive, gen, request]() {
-            if (!currentRequest(target, request)) return;
-            // Sync tasks keep running while backgrounded (by design, so audio
-            // and timers survive), but the GL surface is gone then — uploading
-            // now would silently produce a blank texture.
-            if (!uploadsAreSafe()) {
-                DeferredUpload pending;
-                pending.data          = imageData;
-                pending.imageCallback = callback;
-                pending.target        = target;
-                pending.request       = request;
-                pending.alive         = alive;
-                pending.gen           = gen;
-                deferUpload(std::move(pending));
-                return;
-            }
-            {
-                perf::Scope timed(perf::Probe::TextureDecode);
-                target->setImageFromMem(imageData.data(), imageData.size());
-            }
-            if (callback) callback(target);
-            settle(target, request);
+        // Decoded here, off the UI thread; then the UI thread delivers it, only
+        // if this is still the target's request, the caller's alive flag and
+        // generation hold, and the image itself still exists.
+        auto decoded = decode(imageData);
+        brls::sync([imageData = std::move(imageData), decoded, callback, target, alive, gen,
+                    request]() mutable {
+            deliverImage(std::move(imageData), decoded, callback, target, alive, gen, request);
         });
     });
 }
@@ -411,6 +488,26 @@ static void dispatchCoverFromBytes(const std::vector<uint8_t>& bytes,
     if (callback) callback(nvgImg, w, h);
 }
 
+// UI thread: a cover's decoded pixels as a texture for its callback, if the
+// caller is still there; parked for replay with no drawing surface.
+void ImageLoader::deliverCover(std::vector<uint8_t> bytes, std::shared_ptr<Decoded> decoded,
+                               CoverCallback callback, std::shared_ptr<std::atomic<bool>> alive,
+                               uint64_t gen) {
+    if (!alive->load() || gen != s_generation.load()) return;
+    if (!uploadsAreSafe()) {
+        DeferredUpload pending;
+        pending.data          = std::move(bytes);
+        pending.coverCallback = callback;
+        pending.alive         = alive;
+        pending.gen           = gen;
+        deferUpload(std::move(pending));
+        return;
+    }
+    const int nvgImg = uploadDecoded(decoded);
+    if (nvgImg == 0) return;
+    if (callback) callback(nvgImg, decoded->w, decoded->h);
+}
+
 void ImageLoader::loadCoverAsync(const std::string& url, CoverCallback callback,
                                   std::shared_ptr<std::atomic<bool>> alive) {
     if (url.empty() || !alive) return;
@@ -439,17 +536,15 @@ void ImageLoader::loadCoverAsync(const std::string& url, CoverCallback callback,
         }
     }
     if (hit) {
-        // nvgCreateImageMem needs a live drawing surface — park it if we have none.
-        if (!uploadsAreSafe()) {
-            DeferredUpload pending;
-            pending.data          = cachedBytes;
-            pending.coverCallback = callback;
-            pending.alive         = alive;
-            pending.gen           = gen;
-            deferUpload(std::move(pending));
-            return;
-        }
-        dispatchCoverFromBytes(cachedBytes, callback, alive, gen, s_generation);
+        // Decoded off the UI thread, then delivered as a download's is.
+        decodeOffUi([cachedBytes = std::move(cachedBytes), callback, alive, gen]() mutable {
+            if (!alive->load() || gen != s_generation.load()) return;
+            auto decoded = decode(cachedBytes);
+            brls::sync([cachedBytes = std::move(cachedBytes), decoded, callback, alive,
+                        gen]() mutable {
+                deliverCover(std::move(cachedBytes), decoded, callback, alive, gen);
+            });
+        });
         return;
     }
 
@@ -475,18 +570,9 @@ void ImageLoader::loadCoverAsync(const std::string& url, CoverCallback callback,
             s_cache[url] = std::move(entry);
         }
 
-        brls::sync([imageData, callback, alive, gen]() {
-            if (!alive->load() || gen != s_generation.load()) return;
-            if (!uploadsAreSafe()) {
-                DeferredUpload pending;
-                pending.data          = imageData;
-                pending.coverCallback = callback;
-                pending.alive         = alive;
-                pending.gen           = gen;
-                deferUpload(std::move(pending));
-                return;
-            }
-            dispatchCoverFromBytes(imageData, callback, alive, gen, s_generation);
+        auto decoded = decode(imageData);
+        brls::sync([imageData = std::move(imageData), decoded, callback, alive, gen]() mutable {
+            deliverCover(std::move(imageData), decoded, callback, alive, gen);
         });
     });
 }

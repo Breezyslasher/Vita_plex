@@ -60,7 +60,20 @@ public:
     // Get current cache size (for debug display)
     static size_t getCacheSize();
 
+    // Pixels decoded off the UI thread (stb_image, RGBA), and the decoding.
+    struct Decoded;
+    static std::shared_ptr<Decoded> decode(const std::vector<uint8_t>& bytes);
+
 private:
+    // UI thread: a decoded reply delivered to its target or callback.
+    static void deliverImage(std::vector<uint8_t> bytes, std::shared_ptr<Decoded> decoded,
+                             LoadCallback callback, brls::Image* target,
+                             std::shared_ptr<std::atomic<bool>> alive, uint64_t gen,
+                             uint64_t request);
+    static void deliverCover(std::vector<uint8_t> bytes, std::shared_ptr<Decoded> decoded,
+                             CoverCallback callback, std::shared_ptr<std::atomic<bool>> alive,
+                             uint64_t gen);
+
     // Texture uploads parked because the app had no GL drawing surface at the
     // moment they completed (mobile background). Creating a texture then is not
     // merely wasted work: the GL calls are silently dropped and the image is

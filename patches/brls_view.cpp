@@ -2,9 +2,10 @@
     VitaPlex patch of borealis's core/view.cpp (CMakeLists.txt copies it
     over the submodule's): View::frame times each view's own drawing on
     the frames the app's profiler samples (Application::sampleViewDraws),
-    by view type, into Application::viewDrawSamples; and View::invalidate
-    leaves the root's layout to the end of a layout batch while one is open
-    (Application::layoutBatchDepth, a focus change).
+    by view type, into Application::viewDrawSamples; View::invalidate on the
+    UI thread leaves the root's layout for later (Application::deferLayout),
+    and the layout getters lay out what is pending before reading
+    (Application::flushLayout); a deleted view is forgotten.
 */
 /*
     Copyright 2019-2021 natinusala
@@ -168,6 +169,15 @@ Sound View::gestureRecognizerRequest(TouchState touch, MouseState mouse, View* f
 
     return soundToPlay;
 }
+
+// VitaPlex patch: what invalidate() left to lay out, before a layout value
+// is read (Application::flushLayout).
+#define BRLS_FLUSH_LAYOUT()                \
+    do                                     \
+    {                                      \
+        if (Application::layoutPending)    \
+            Application::flushLayout();    \
+    } while (0)
 
 // VitaPlex patch: on a sampled frame, each view's own drawing time (its
 // children's taken out) by type. The time its children took, for the view
@@ -419,6 +429,7 @@ void View::drawWireframe(FrameContext* ctx, Rect frame)
     nvgBeginPath(ctx->vg);
     nvgStrokeColor(ctx->vg, nvgRGB(0, 255, 0));
 
+    BRLS_FLUSH_LAYOUT();
     float paddingTop    = ntz(YGNodeLayoutGetPadding(this->ygNode, YGEdgeTop));
     float paddingLeft   = ntz(YGNodeLayoutGetPadding(this->ygNode, YGEdgeLeft));
     float paddingBottom = ntz(YGNodeLayoutGetPadding(this->ygNode, YGEdgeBottom));
@@ -1262,9 +1273,9 @@ void View::invalidate()
 
     if (this->hasParent() && !this->detached)
         this->getParent()->invalidate();
-    else if (Application::layoutBatchDepth > 0)
-        // VitaPlex patch: inside a batch (a focus change), the root is laid
-        // out once as the batch ends rather than once per change.
+    else if (Application::isMainThread())
+        // VitaPlex patch: laid out on demand (Application::flushLayout), once
+        // for however many changes come before anything reads the layout.
         Application::deferLayout(this);
     else
         YGNodeCalculateLayout(this->ygNode, YGUndefined, YGUndefined, YGDirectionLTR);
@@ -1277,6 +1288,7 @@ Rect View::getFrame()
 
 float View::getX()
 {
+    BRLS_FLUSH_LAYOUT();
     if (this->hasParent())
         return this->getParent()->getX() + YGNodeLayoutGetLeft(this->ygNode) + this->translation.x + (isDetached() ? this->detachedOrigin.x : 0);
     return YGNodeLayoutGetLeft(this->ygNode) + this->translation.x;
@@ -1284,6 +1296,7 @@ float View::getX()
 
 float View::getY()
 {
+    BRLS_FLUSH_LAYOUT();
     if (this->hasParent())
         return this->getParent()->getY() + YGNodeLayoutGetTop(this->ygNode) + this->translation.y + (isDetached() ? this->detachedOrigin.y : 0);
     return YGNodeLayoutGetTop(this->ygNode) + this->translation.y;
@@ -1296,21 +1309,25 @@ Rect View::getLocalFrame()
 
 float View::getLocalX()
 {
+    BRLS_FLUSH_LAYOUT();
     return YGNodeLayoutGetLeft(this->ygNode) + this->translation.x + (isDetached() ? this->detachedOrigin.x : 0);
 }
 
 float View::getLocalY()
 {
+    BRLS_FLUSH_LAYOUT();
     return YGNodeLayoutGetTop(this->ygNode) + this->translation.y + (isDetached() ? this->detachedOrigin.y : 0);
 }
 
 float View::getHeight(bool includeCollapse)
 {
+    BRLS_FLUSH_LAYOUT();
     return YGNodeLayoutGetHeight(this->ygNode) * (includeCollapse ? this->collapseState.getValue() : 1.0f);
 }
 
 float View::getWidth()
 {
+    BRLS_FLUSH_LAYOUT();
     return YGNodeLayoutGetWidth(this->ygNode);
 }
 
@@ -1561,6 +1578,10 @@ std::string View::getCustomNavigationRouteId(FocusDirection direction)
 
 View::~View()
 {
+    // VitaPlex patch: no longer to be laid out (Application::flushLayout).
+    if (Application::layoutPending)
+        Application::forgetLayout(this);
+
     this->resetClickAnimation();
 
     // Parent userdata
