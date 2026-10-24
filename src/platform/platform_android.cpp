@@ -7,6 +7,7 @@
  */
 
 #include "platform/platform.hpp"
+#include "utils/log_file_writer.hpp"
 #include "platform/android_assets.hpp"
 
 #include <borealis.hpp>
@@ -471,9 +472,10 @@ void openLogFile() {
         brls::Logger::warning("Could not open the log file at {}", getLogPath());
         return;
     }
-    // Line buffered, so a crash keeps everything up to the last line — which
-    // is the case this file is for.
-    setvbuf(g_logFile, nullptr, _IOLBF, 0);
+    // Written by a thread of its own (utils/log_file_writer.hpp): a line
+    // written by the thread logging it cost that thread a write to storage.
+    // Error lines are still written and flushed before the logger returns.
+    ::vitaplex::logfile::start(g_logFile);
 
     brls::Logger::getLogEvent()->subscribe(
         [](brls::Logger::TimePoint time, brls::LogLevel level, std::string log) {
@@ -494,15 +496,18 @@ void openLogFile() {
             // Redacted at the sink, not trusted to every caller: a log is
             // something people paste into a bug report, and an X-Plex-Token in
             // one is a credential for the whole server.
-            std::fprintf(g_logFile, "%02d:%02d:%02d.%03d [%s] %s\n", tm.tm_hour, tm.tm_min,
+            ::vitaplex::logfile::write(
+                fmt::format("{:02d}:{:02d}:{:02d}.{:03d} [{}] {}\n", tm.tm_hour, tm.tm_min,
                          tm.tm_sec, (int)ms, levelStr,
-                         ::vitaplex::redactTokensInUrl(log).c_str());
+                         ::vitaplex::redactTokensInUrl(log)),
+                level == brls::LogLevel::LOG_ERROR);
         });
     brls::Logger::info("Log file: {}", getLogPath());
 }
 
 void closeLogFile() {
     if (g_logFile) {
+        ::vitaplex::logfile::stop();
         std::fclose(g_logFile);
         g_logFile = nullptr;
     }
