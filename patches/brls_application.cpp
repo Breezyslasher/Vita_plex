@@ -772,9 +772,19 @@ void Application::navigate(FocusDirection direction, bool repeating)
 
     View* currentFocus = Application::currentFocus;
 
-    // Do nothing if there is no current focus
+    // VitaPlex patch: no current focus (an activity pushed with nothing to
+    // focus then): the first direction pressed focuses the top activity's
+    // default focus, if it has one now.
     if (!currentFocus)
+    {
+        if (!Application::activitiesStack.empty())
+        {
+            View* first = Application::activitiesStack.back()->getDefaultFocus();
+            if (first)
+                Application::giveFocus(first);
+        }
         return;
+    }
 
     View* nextFocus = nullptr;
 
@@ -1314,6 +1324,23 @@ std::vector<Activity*> Application::getActivitiesStack()
     return activitiesStack;
 }
 
+// VitaPlex patch: a view tree, as far as focus goes: each view's type, id,
+// visibility and focusability, four levels down, at most 60 lines.
+static void logFocusTree(View* view, int depth)
+{
+    static int lines = 0;
+    if (depth == 0)
+        lines = 0;
+    if (!view || depth > 4 || lines >= 60)
+        return;
+    lines++;
+    const char* vis = view->getVisibility() == Visibility::VISIBLE ? "visible" : view->getVisibility() == Visibility::GONE ? "gone" : "invisible";
+    Logger::info("pushActivity:   {}{} {}{}", std::string(depth * 2, ' '), view->describe(), vis, view->isFocusable() ? " focusable" : "");
+    if (Box* box = dynamic_cast<Box*>(view))
+        for (View* child : box->getChildren())
+            logFocusTree(child, depth + 1);
+}
+
 void Application::pushActivity(Activity* activity, TransitionAnimation animation)
 {
     Application::blockInputs();
@@ -1343,7 +1370,28 @@ void Application::pushActivity(Activity* activity, TransitionAnimation animation
 
     // Layout and prepare activity
     activity->willAppear(true);
-    Application::giveFocus(activity->getDefaultFocus());
+    View* newFocus = activity->getDefaultFocus();
+    if (newFocus)
+    {
+        Application::giveFocus(newFocus);
+    }
+    else
+    {
+        // VitaPlex patch: nothing in the new activity can take focus yet (its
+        // focusable views hidden until something shows them). The focus was
+        // left on the activity below, which then took every button press
+        // while the new one showed: the video player's controls never came
+        // up (build 2089). With no focus, presses go to the top activity's
+        // content view and its actions (handleAction), and the first
+        // direction pressed focuses its default focus (navigate). The views
+        // that might have taken focus are logged.
+        Logger::info("pushActivity: no view to focus in the new activity; focus cleared");
+        logFocusTree(activity->getContentView(), 0);
+        if (Application::currentFocus)
+            Application::currentFocus->onFocusLost();
+        Application::currentFocus = nullptr;
+        Application::globalHintsUpdateEvent.fire();
+    }
 
     if (!fadeIn) // No animations
     {
