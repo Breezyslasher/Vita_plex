@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 #include <deque>
@@ -166,13 +167,22 @@ public:
     // Update watch progress for downloaded media
     void updateProgress(const std::string& ratingKey, int64_t viewOffset);
 
-    // Sync all offline progress to server (call when online)
-    void syncProgressToServer();
+    // Server progress as syncProgressFromServer found it: offset in ms, and
+    // whether the server has the item watched. By rating key.
+    struct ServerProgress {
+        int64_t viewOffset = 0;
+        bool watched = false;
+    };
 
-    // Pull server progress for downloaded items (call when online)
-    void syncProgressFromServer();
+    // Sync offline progress to server (call when online). Given what the
+    // server has, only progress ahead of it is sent.
+    void syncProgressToServer(const std::map<std::string, ServerProgress>* server = nullptr);
 
-    // Bidirectional sync: push local then pull server progress
+    // Pull server progress for downloaded items (call when online), noting
+    // what the server has in `seen`.
+    void syncProgressFromServer(std::map<std::string, ServerProgress>* seen = nullptr);
+
+    // Bidirectional sync: pull server progress, then push what is ahead of it
     void syncProgressBidirectional();
 
     // Resume incomplete downloads (queues PAUSED/FAILED items)

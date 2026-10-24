@@ -648,17 +648,28 @@ void DownloadsManager::updateProgress(const std::string& ratingKey, int64_t view
     }
 }
 
-void DownloadsManager::syncProgressToServer() {
+void DownloadsManager::syncProgressToServer(
+    const std::map<std::string, ServerProgress>* server) {
     std::vector<DownloadItem> itemsToSync;
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         for (auto& item : m_downloads) {
-            if (item.state == DownloadState::COMPLETED && item.viewOffset > 0) {
-                itemsToSync.push_back(item);
+            if (item.state != DownloadState::COMPLETED || item.viewOffset <= 0) continue;
+            if (server) {
+                // Only what is ahead of the server: an older position would
+                // take back progress made on another device, and one on an
+                // item the server has watched (and no position) would mark
+                // it unwatched again.
+                auto it = server->find(item.ratingKey);
+                if (it == server->end()) continue;  // the server not reached for it
+                if (it->second.watched && it->second.viewOffset == 0) continue;
+                if (item.viewOffset <= it->second.viewOffset) continue;
             }
+            itemsToSync.push_back(item);
         }
     }
+    if (itemsToSync.empty()) return;
 
     brls::Logger::info("DownloadsManager: Syncing {} items to server", itemsToSync.size());
 
@@ -678,7 +689,7 @@ void DownloadsManager::syncProgressToServer() {
     saveState();
 }
 
-void DownloadsManager::syncProgressFromServer() {
+void DownloadsManager::syncProgressFromServer(std::map<std::string, ServerProgress>* seen) {
     std::vector<std::string> ratingKeys;
 
     {
@@ -699,6 +710,7 @@ void DownloadsManager::syncProgressFromServer() {
     for (const auto& key : ratingKeys) {
         MediaItem serverItem;
         if (!client.fetchMediaDetails(key, serverItem)) continue;
+        if (seen) (*seen)[key] = ServerProgress{serverItem.viewOffset, serverItem.watched};
         std::lock_guard<std::mutex> lock(m_mutex);
         for (auto& d : m_downloads) {
             if (d.ratingKey == key) {
@@ -729,8 +741,10 @@ void DownloadsManager::syncProgressFromServer() {
 
 void DownloadsManager::syncProgressBidirectional() {
     brls::Logger::info("DownloadsManager: Starting bidirectional progress sync");
-    syncProgressToServer();
-    syncProgressFromServer();
+    // The server's first, so that only progress ahead of it goes back.
+    std::map<std::string, ServerProgress> server;
+    syncProgressFromServer(&server);
+    syncProgressToServer(&server);
     brls::Logger::info("DownloadsManager: Bidirectional sync complete");
 #ifdef __vita__
     fillSmallCovers();
@@ -2482,15 +2496,24 @@ bool DownloadsManager::reportTimeline(const DownloadItem& item, const std::strin
         << "&offline=1"
         << "&X-Plex-Token=" << token;
 
+    // Without the client's identifier the server answers 400, as
+    // PlexClient::reportTimeline sends it.
     HttpClient http;
-    std::string response;
-    if (http.get(url.str(), response)) {
-        brls::Logger::debug("DownloadsManager: Reported timeline for {} ({}ms)",
-                           item.title, item.viewOffset);
+    HttpRequest req;
+    req.url = url.str();
+    req.method = "GET";
+    req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+    req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    req.timeout = 15;
+    HttpResponse resp = http.request(req);
+    if (resp.statusCode == 200) {
+        brls::Logger::info("DownloadsManager: Reported timeline for {} ({}ms)", item.title,
+                           item.viewOffset);
         return true;
     }
 
-    brls::Logger::error("DownloadsManager: Failed to report timeline for {}", item.title);
+    brls::Logger::error("DownloadsManager: Failed to report timeline for {}: {} {}", item.title,
+                        resp.statusCode, resp.body.substr(0, 120));
     return false;
 }
 
