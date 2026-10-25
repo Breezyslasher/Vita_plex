@@ -89,7 +89,7 @@ struct DownloadItem {
     // download over. Empty when there is none.
     std::string queueId;
     std::string queueItemId;
-    // Vita: handed to VitaPlex's quick menu plugin as VitaPlex closed, which
+    // Vita: handed to the shell companion plugin as VitaPlex closed, which
     // carries it on from inside SceShell (handOverToShell); taken back, with
     // what SceShell made of it, before VitaPlex downloads anything again.
     bool withShell = false;
@@ -205,7 +205,7 @@ public:
     // As VitaPlex closes, on the UI thread: a download running is left to go
     // on when it opens again (resumeInterrupted), and its notification says
     // so instead of showing a bar that no longer moves. On the Vita, with the
-    // setting on, the downloads go to VitaPlex's quick menu plugin instead,
+    // setting on, the downloads go to the shell companion plugin instead,
     // which carries them on from inside SceShell (handOverToShell).
     void noteAppClosing();
 
@@ -227,8 +227,8 @@ public:
 
 #ifdef __vita__
     // Beside a download's cover (thumbPath): the same as the PNG of
-    // QM_ART_SIZE that VitaPlex's quick menu plugin shows in SceShell, which
-    // can make none of the JPEG (handover_psv/qm_protocol.h); the server
+    // SC_ART_SIZE that the shell companion plugin shows in SceShell, which
+    // can make none of the JPEG (sc_protocol.h); the server
     // makes it as the track is downloaded. "" for a cover of another name.
     static std::string smallCoverPath(const std::string& thumbPath);
 #endif
@@ -259,8 +259,8 @@ private:
     bool reportTimeline(const DownloadItem& item, const std::string& state);
 
 #ifdef __vita__
-    // The downloads under way listed for VitaPlex's quick menu plugin
-    // (qm_protocol.h, QM_CMD_DOWNLOADS), which carries them on from inside
+    // The downloads under way listed for the shell companion plugin
+    // (scWriteDownloads, scDownloadsStart), which carries them on from inside
     // SceShell once VitaPlex has gone. On the UI thread as VitaPlex closes;
     // true when the plugin has them.
     bool handOverToShell();

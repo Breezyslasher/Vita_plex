@@ -11,10 +11,10 @@
  *   Switch   — downloads the matching .nro and replaces the running one
  *              (path captured from argv[0]); relaunch applies it.
  *   PS Vita  — downloads the .vpk and unpacks it (utils/vita_install). The
- *              system's installer refuses the running title, so VitaPlex's
- *              quick menu plugin installs it from SceShell once VitaPlex
- *              has quit, and launches VitaPlex again (qm_protocol.h's
- *              QM_CMD_INSTALL_UPDATE); afterStart reports a failure. Falls
+ *              system's installer refuses the running title, so the shell
+ *              companion plugin installs it from SceShell once VitaPlex
+ *              has quit, and launches VitaPlex again
+ *              (SC_CMD_UPDATE_INSTALL); afterStart reports a failure. Falls
  *              back to a VitaShell install if the plugin can't be loaded.
  *              Up to build 2055 a bundled updater app (VPLXUPD01) did the
  *              install; afterStart removes it where it's left.
@@ -53,7 +53,7 @@ namespace app_update {
 void setSelfPath(const char* argv0);
 
 // Once the UI is up, whatever the update check's setting: on the Vita, what
-// the quick menu plugin made of an update it installed as VitaPlex quit (a
+// the shell companion plugin made of an update it installed as VitaPlex quit (a
 // dialog when it failed), and what an update leaves behind removed. A no-op
 // elsewhere.
 void afterStart();

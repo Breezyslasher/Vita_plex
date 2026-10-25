@@ -37,8 +37,8 @@
 
 #include <psp2/kernel/processmgr.h>
 
-#include "qm_link.h"  // the quick menu plugin, which carries downloads on (handOverToShell)
-#include "qm_protocol.h"   // QM_ART_SIZE, for smallCoverPath's covers
+#include "shell_companion.h"  // the SceShell plugin, which carries downloads on (handOverToShell)
+#include "utils/shell_companion_psv.hpp"
 #endif
 
 namespace vitaplex {
@@ -195,7 +195,7 @@ bool DownloadsManager::init() {
     // Downloads the quick menu plugin's status names are handed to it, should
     // VitaPlex have been ended before it saved them so (handOverToShell):
     // before validateDownloadedFiles, which counts them to go on with.
-    const std::string status = readWhole(QM_DOWNLOADS_STATUS);
+    const std::string status = readWhole(shellcomp::path(SC_DOWNLOADS_STATUS).c_str());
     for (size_t at = 0; at < status.size();) {
         size_t end = status.find('\n', at);
         if (end == std::string::npos) end = status.size();
@@ -222,8 +222,8 @@ bool DownloadsManager::init() {
     bool withShell = false;
     for (const auto& item : m_downloads) withShell = withShell || item.withShell;
     if (withShell) {
-        qmInit();
-        m_shellTakeRc = qmTakeDownloads();
+        shellcomp::init();
+        m_shellTakeRc = scDownloadsTakeBack();
         brls::Logger::info("DownloadsManager: SceShell asked for the downloads it carries on "
                            "({:#x})",
                            (unsigned)m_shellTakeRc);
@@ -373,22 +373,14 @@ void DownloadsManager::startDownloads() {
         brls::Logger::info("DownloadsManager: Download thread started");
 #ifdef __vita__
         // A pause asked for before this run began is not one for it.
-        sceIoRemove(QM_DOWNLOADS_PAUSE);
+        sceIoRemove(shellcomp::path(SC_DOWNLOADS_PAUSE).c_str());
         takeBackFromShell();
-        // The quick menu plugin loaded into SceShell now, off the UI thread,
+        // The shell companion plugin loaded into SceShell now, off the UI thread,
         // so that handing the downloads over as VitaPlex closes does not wait
         // for it: the load took 6 s there once, with a game starting (log of
         // 13:52:36), of the 10 s the system gives VitaPlex to close.
-        if (Application::getInstance().getSettings().vitaDownloadsAfterLeaving) {
-            qmInit();
-            if (!qmIsOpen()) {
-                char what[320];
-                const int rc = qmOpen(what, sizeof(what));
-                brls::Logger::info("DownloadsManager: SceShell, for downloads after leaving: {} "
-                                   "({:#x})",
-                                   what, (unsigned)rc);
-            }
-        }
+        if (Application::getInstance().getSettings().vitaDownloadsAfterLeaving)
+            shellcomp::open("DownloadsManager: for downloads after leaving");
 #endif
 
         while (m_downloading.load()) {
@@ -995,10 +987,10 @@ static std::string buildDirectDownloadUrl(const std::string& serverUrl, const st
 
 #ifdef __vita__
 // The download notification's question answered Yes, while VitaPlex
-// downloads: the quick menu plugin, which shows the notification, leaves
-// QM_DOWNLOADS_PAUSE (qm_protocol.h). Taken, so that it pauses once.
+// downloads: the shell companion plugin, which shows the notification, leaves
+// SC_DOWNLOADS_PAUSE (scDownloadPauseAsked). Taken, so that it pauses once.
 static bool pauseAskedFromShell() {
-    if (sceIoRemove(QM_DOWNLOADS_PAUSE) < 0) return false;
+    if (!scDownloadPauseAsked()) return false;
     brls::Logger::info("DownloadsManager: paused from the download notification");
     return true;
 }
@@ -2415,7 +2407,7 @@ std::string DownloadsManager::smallCoverPath(const std::string& thumbPath) {
 bool DownloadsManager::downloadSmallCover(const DownloadItem& item) {
     const std::string path = smallCoverPath(item.thumbPath);
     if (path.empty()) return false;
-    return fetchCoverPng(item, QM_ART_SIZE, path);
+    return fetchCoverPng(item, SC_ART_SIZE, path);
 }
 
 bool DownloadsManager::fetchCoverPng(const DownloadItem& item, int size, const std::string& path) {
@@ -2594,30 +2586,6 @@ void DownloadsManager::validateDownloadedFiles() {
 }
 
 #ifdef __vita__
-// A field of the list handed to SceShell: a tab or a line's end would split
-// it (qm_protocol.h).
-static std::string listField(std::string s) {
-    for (char& c : s)
-        if (c == '\t' || c == '\n' || c == '\r') c = ' ';
-    return s;
-}
-
-// A file written beside its name and moved in, as the state is
-// (saveStateUnlocked). true when it is there whole.
-static bool writeWhole(const char* path, const std::string& text) {
-    const std::string part = std::string(path) + ".part";
-    const SceUID fd = sceIoOpen(part.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
-    if (fd < 0) return false;
-    const int written = sceIoWrite(fd, text.c_str(), text.size());
-    sceIoClose(fd);
-    if (written != (int)text.size()) {
-        sceIoRemove(part.c_str());
-        return false;
-    }
-    sceIoRemove(path);
-    return sceIoRename(part.c_str(), path) >= 0;
-}
-
 static std::string readWhole(const char* path) {
     std::string text;
     const SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
@@ -2653,47 +2621,70 @@ bool DownloadsManager::handOverToShell() {
     // the file the server prepared when there is one, else added to the
     // queue as tryDownloadQueueApi adds it. An HLS transcode, which VitaPlex
     // falls back to when the queue fails, fails there too, and is left for
-    // VitaPlex.
+    // VitaPlex. The names and the token are the list's header lines, sent
+    // with every request (the plugin's PROTOCOL.md §5.2): the download queue
+    // is the client's, so the plugin asks it under VitaPlex's id.
     const auto& vc = platform::getVideoConstraints();
-    const SceUInt64 now = sceKernelGetSystemTimeWide();
-    char written[48];
-    snprintf(written, sizeof(written), "%llu.%06llu", (unsigned long long)(now / 1000000),
-             (unsigned long long)(now % 1000000));
-    std::string list = std::string("written=") + written + "\nnotify=1\nclient=" +
-                       PLEX_CLIENT_NAME + "\nplatform=" + listField(vc.plexPlatform) +
-                       "\ndevice=" + listField(vc.plexDevice) + "\n";
+    std::string headers = std::string("X-Plex-Client-Identifier: ") + PLEX_CLIENT_NAME +
+                          "\r\nX-Plex-Product: " + PLEX_CLIENT_NAME;
+    if (vc.plexPlatform && vc.plexPlatform[0])
+        headers += std::string("\r\nX-Plex-Platform: ") + vc.plexPlatform;
+    if (vc.plexDevice && vc.plexDevice[0])
+        headers += std::string("\r\nX-Plex-Device: ") + vc.plexDevice;
+    if (!token.empty()) headers += "\r\nX-Plex-Token: " + token;
+    // The items' fields, kept while scWriteDownloads reads them.
+    struct Fields {
+        std::string key, path, title, kind, a1, a2, a3;
+        uint64_t size = 0;
+    };
+    std::vector<Fields> fields;
     std::vector<std::string> keys;
     std::string firstTitle;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         for (const auto& item : m_downloads) {
-            if (keys.size() >= QM_DOWNLOADS_MAX) break;
+            if (keys.size() >= SC_MAX_DOWNLOADS) break;
             if (item.state != DownloadState::QUEUED && item.state != DownloadState::DOWNLOADING &&
                 item.state != DownloadState::TRANSCODING)
                 continue;
             if (item.localPath.empty()) continue;
-            list += "item=" + listField(item.ratingKey) + "\t" + listField(item.localPath) + "\t" +
-                    std::to_string(item.totalBytes) + "\t" + listField(item.title) + "\t" +
-                    listField(token) + "\t";
+            Fields f;
+            f.key = item.ratingKey;
+            f.path = item.localPath;
+            f.size = item.totalBytes > 0 ? (uint64_t)item.totalBytes : 0;
+            f.title = item.title;
+            f.a1 = server;
             if (!item.queueId.empty() && !item.queueItemId.empty()) {
-                list += "queue\t" + listField(server) + "\t" + listField(item.queueId) + "\t" +
-                        listField(item.queueItemId);
+                f.kind = "plexqueue";
+                f.a2 = item.queueId;
+                f.a3 = item.queueItemId;
             } else {
-                std::string query, profileExtra;
-                queueAddOf(item, query, profileExtra);
-                list += "add\t" + listField(server) + "\t" + listField(query) + "\t" +
-                        listField(profileExtra);
+                f.kind = "plexadd";
+                queueAddOf(item, f.a2, f.a3);
             }
-            list += "\n";
+            fields.push_back(std::move(f));
             keys.push_back(item.ratingKey);
             if (firstTitle.empty()) firstTitle = item.title;
         }
     }
-    list += "end\n";
     if (keys.empty()) return false;
-    if (!writeWhole(QM_DOWNLOADS_LIST, list)) {
+    std::vector<ScDownload> list(fields.size());
+    for (size_t i = 0; i < fields.size(); i++) {
+        ScDownload& d = list[i];
+        std::memset(&d, 0, sizeof(d));
+        d.id = fields[i].key.c_str();
+        d.file = fields[i].path.c_str();
+        d.size = fields[i].size;
+        d.title = fields[i].title.c_str();
+        d.kind = fields[i].kind.c_str();
+        d.args[0] = fields[i].a1.c_str();
+        d.args[1] = fields[i].a2.c_str();
+        d.args[2] = fields[i].a3.c_str();
+    }
+    shellcomp::init();
+    if (scWriteDownloads(1, headers.c_str(), list.data(), (uint32_t)list.size()) < 0) {
         brls::Logger::error("DownloadsManager: the downloads for SceShell not written to {}",
-                            QM_DOWNLOADS_LIST);
+                            shellcomp::path(SC_DOWNLOADS));
         return false;
     }
 
@@ -2716,18 +2707,13 @@ bool DownloadsManager::handOverToShell() {
     };
     markHandedOver(true);
 
-    qmInit();
-    if (!qmIsOpen()) {
-        char what[320];
-        const int rc = qmOpen(what, sizeof(what));
-        brls::Logger::info("DownloadsManager: SceShell: {} ({:#x})", what, (unsigned)rc);
-    }
-    const int rc = qmCarryDownloads();
+    shellcomp::open("DownloadsManager: SceShell");
+    const int rc = scDownloadsStart();
     if (rc < 0) {
-        brls::Logger::warning("DownloadsManager: VitaPlex's quick menu plugin did not take the "
+        brls::Logger::warning("DownloadsManager: the shell companion plugin did not take the "
                               "downloads ({:#x}); they go on when VitaPlex opens again",
                               (unsigned)rc);
-        sceIoRemove(QM_DOWNLOADS_LIST);
+        sceIoRemove(shellcomp::path(SC_DOWNLOADS).c_str());
         markHandedOver(false);
         return false;
     }
@@ -2758,12 +2744,13 @@ void DownloadsManager::takeBackFromShell() {
     if (handed == 0) return;
 
     // Nothing here writes to those files before SceShell has stopped
-    // (QM_CMD_TAKE_DOWNLOADS, sent as VitaPlex opened): its status says
+    // (SC_CMD_DL_TAKE_BACK, sent as VitaPlex opened): its status says
     // "running=0", or it has not been written in 40 s, longer than any one
     // request of SceShell's can take (5 s to resolve, 5 to connect, 10 to
     // send and 10 to receive), as it is written every 2 s while it runs: what
     // a status left from before the Vita restarted looks like.
-    std::string status = readWhole(QM_DOWNLOADS_STATUS);
+    const std::string statusPath = shellcomp::path(SC_DOWNLOADS_STATUS);
+    std::string status = readWhole(statusPath.c_str());
     if (m_shellTakeRc >= 0) {
         std::string lastWritten = noteValue(status, "written");
         int still = 0;
@@ -2776,7 +2763,7 @@ void DownloadsManager::takeBackFromShell() {
                 break;
             }
             sceKernelDelayThread(250 * 1000);
-            status = readWhole(QM_DOWNLOADS_STATUS);
+            status = readWhole(statusPath.c_str());
             const std::string w = noteValue(status, "written");
             still = w == lastWritten ? still + 250 : 0;
             lastWritten = w;
@@ -2811,7 +2798,8 @@ void DownloadsManager::takeBackFromShell() {
     }
 
     // Paused from the notification as SceShell carried them on: left paused,
-    // not gone on with as VitaPlex opens.
+    // not gone on with as VitaPlex opens. Waiting for power (SC_PAUSED_BATTERY)
+    // is not that: VitaPlex goes on with them.
     const bool paused = noteValue(status, "paused") == "1";
     int done = 0, going = 0;
     std::vector<std::string> covers;
@@ -2850,8 +2838,8 @@ void DownloadsManager::takeBackFromShell() {
         }
         saveStateUnlocked();
     }
-    sceIoRemove(QM_DOWNLOADS_LIST);
-    sceIoRemove(QM_DOWNLOADS_STATUS);
+    sceIoRemove(shellcomp::path(SC_DOWNLOADS).c_str());
+    sceIoRemove(statusPath.c_str());
     brls::Logger::info("DownloadsManager: taken back from SceShell: {} done there, {} to go on "
                        "with here{}",
                        done, going, paused ? ", paused from the notification" : "");

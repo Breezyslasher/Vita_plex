@@ -873,26 +873,33 @@ int main() {
     endif()
 
     # Music after leaving the app (utils/background_audio.hpp): the BGM port
-    # calls come from SceAppMgr_stub, linked above. VitaPlex hands its queue
-    # to SceShell through its quick menu plugin (qm_link.c), with the files
-    # handover.h lays out, and the quick menu's Music row goes through the
-    # same plugin, with the pipe and taiHEN calls the SDK leaves out in
-    # qm_link_stub.S, and the song's cover through qm_cover.c, which decodes
-    # with the stb_image borealis's nanovg builds. The music SceShell plays
-    # on is stopped as the app takes it back through the vendored
-    # libShellAudio, plus the one import stub vitasdk has no library for
-    # (lib/libshellaudio/README.md).
+    # calls come from SceAppMgr_stub, linked above. The quick menu's Music
+    # row, the queue handed to SceShell as VitaPlex goes, the downloads
+    # carried on and the updates installed all go through vita-shell-
+    # companion's SceShell plugin (lib/vita-shell-companion, a submodule
+    # pinned to a release; utils/shell_companion_psv.hpp): its client
+    # library (Apache-2.0) is built in here, with the pipe and taiHEN calls
+    # the SDK leaves out in sc_link_stub.S, and the song's cover through
+    # sc_cover.c, which decodes with the stb_image borealis's nanovg builds.
+    # The music SceShell plays on is stopped as the app takes it back
+    # through the vendored libShellAudio, plus the one import stub vitasdk
+    # has no library for (lib/libshellaudio/README.md).
+    set(SC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/vita-shell-companion)
     enable_language(ASM)
     target_sources(${PROJECT_NAME} PRIVATE
         src/utils/background_audio_psv.cpp
-        src/handover_psv/qm_cover.c
-        src/handover_psv/qm_link.c
-        src/handover_psv/qm_link_stub.S
+        src/utils/shell_companion_psv.cpp
+        ${SC_DIR}/client/shell_companion.c
+        ${SC_DIR}/client/sc_files.c
+        ${SC_DIR}/client/sc_cover.c
+        ${SC_DIR}/client/sc_link_stub.S
         lib/libshellaudio/ShellAudio.c
         lib/libshellaudio/shellsvc_stub.S)
     target_include_directories(${PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/handover_psv)
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/handover_psv
+        ${SC_DIR}/include
+        ${SC_DIR}/client)
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         VITAPLEX_TITLEID=\"${VITA_TITLEID}\")
 elseif(PLATFORM_SWITCH)
@@ -1363,10 +1370,10 @@ endif()
 # ---------------------------------------------------------------------------
 if(PLATFORM_PSV)
     # Updates: VitaPlex cannot be installed over while it runs (the system's
-    # installer refuses the running title), so it unpacks the update and its
-    # quick menu plugin, in SceShell, installs it once VitaPlex has quit and
-    # launches it again (utils/vita_install.hpp, qm_protocol.h's
-    # QM_CMD_INSTALL_UPDATE). Up to build 2055 a second app did that, the
+    # installer refuses the running title), so it unpacks the update and the
+    # shell companion plugin, in SceShell, installs it once VitaPlex has quit
+    # and launches it again (utils/vita_install.hpp, SC_CMD_UPDATE_INSTALL).
+    # Up to build 2055 a second app did that, the
     # updater stub (VPLXUPD01), carried inside VitaPlex.vpk as updater.vpk.
     vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE NOASLR)
 
@@ -1429,72 +1436,24 @@ if(PLATFORM_PSV)
         FILE resources/cacert.pem                         resources/cacert.pem
     )
 
-    # ── VitaPlex's quick menu plugin (src/qm_plugin_psv) ────────────────
-    # A module VitaPlex loads into SceShell (qm_link.c), for the song and
-    # working buttons in the quick menu's Music row, and to play the queue
-    # VitaPlex hands it as it goes, from inside SceShell. It is written
-    # against PAF, the Vita's UI library, whose headers
-    # scripts/vita/fetch_paf_headers.sh fetches; without
-    # -DVITAPLEX_PAF_INCLUDE_DIR it is left out of VitaPlex.vpk, which then
-    # has no Music row and no music once a game starts, as the CI's build
-    # never is. No C runtime: PAF's new and delete, the kernel's
-    # memcpy, and import stubs of its own (paf_stubs.S, taihen_stub.S). As
-    # vitasdk-paf-component's samples build: wchar_t is PAF's 16 bits, and
-    # the headers' __declspec(dllimport) goes. Always -O2, whatever the build
-    # type: what it imports (paf_stubs.S) is what the compiler leaves out of
-    # line, and at -O0 that is more. GCC 15 rejects template bodies in PAF's
-    # headers that nothing here instantiates; -Wno-template-body leaves those
-    # to instantiation, as older compilers did.
-    set(VITAPLEX_PAF_INCLUDE_DIR "" CACHE PATH
-        "PAF headers for the Vita quick menu plugin (scripts/vita/fetch_paf_headers.sh)")
-    set(VITAPLEX_QM_PLUGIN "")
-    if(VITAPLEX_PAF_INCLUDE_DIR AND EXISTS "${VITAPLEX_PAF_INCLUDE_DIR}/paf.h")
-        add_executable(vitaplex_qm
-            src/qm_plugin_psv/main.cpp
-            src/qm_plugin_psv/paf_stubs.S
-            src/qm_plugin_psv/taihen_stub.S)
-        target_include_directories(vitaplex_qm PRIVATE
-            ${VITAPLEX_PAF_INCLUDE_DIR}
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/handover_psv)
-        target_compile_options(vitaplex_qm PRIVATE
-            "$<$<COMPILE_LANGUAGE:CXX>:-O2;-fno-rtti;-fno-exceptions;-fno-builtin;-fshort-wchar;-fno-threadsafe-statics;-fno-sized-deallocation;-Wno-unused-function;-Wno-sign-compare;-Wno-template-body;-D__declspec(x)=>")
-        target_link_options(vitaplex_qm PRIVATE -nostartfiles -nostdlib)
-        # The title it installs VitaPlex's updates for and launches again.
-        target_compile_definitions(vitaplex_qm PRIVATE VITAPLEX_TITLEID=\"${VITA_TITLEID}\")
-        target_link_libraries(vitaplex_qm
-            SceLibKernel_stub
-            SceAppMgr_stub
-            SceIofilemgr_stub
-            SceKernelThreadMgr_stub
-            SceRtc_stub
-            SceSysmodule_stub  # the system's installer, for VitaPlex's updates
-            gcc)
-        # With no C runtime, nothing runs static constructors in it, and a
-        # global object that needs one stays all zeros (build 2023's white).
-        add_custom_command(TARGET vitaplex_qm POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -DOBJDUMP=${CMAKE_OBJDUMP} -DELF=$<TARGET_FILE:vitaplex_qm>
-                    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_no_static_init.cmake
-            VERBATIM)
-        # vita_create_self appends CONFIG and STRIPPED to VITA_ELF_CREATE_FLAGS
-        # in this scope, as it does its own to VITA_MAKE_FSELF_FLAGS: both
-        # start from nothing and are put back, or every SELF made after this
-        # one gets the plugin's exports (build 2021).
-        set(_qm_saved_fself "${VITA_MAKE_FSELF_FLAGS}")
-        set(_qm_saved_elf "${VITA_ELF_CREATE_FLAGS}")
-        set(VITA_MAKE_FSELF_FLAGS "")
-        set(VITA_ELF_CREATE_FLAGS "")
-        vita_create_self(vitaplex_qm.suprx vitaplex_qm
-            CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/src/qm_plugin_psv/exports.yml UNSAFE STRIPPED)
-        set(VITA_MAKE_FSELF_FLAGS "${_qm_saved_fself}")
-        set(VITA_ELF_CREATE_FLAGS "${_qm_saved_elf}")
-        # Beside it in the package: its licence, and where its source is.
-        set(VITAPLEX_QM_PLUGIN
-            FILE ${CMAKE_BINARY_DIR}/vitaplex_qm.suprx               module/vitaplex_qm.suprx
-            FILE src/qm_plugin_psv/LICENSE                           module/vitaplex_qm.LICENSE.txt
-            FILE src/qm_plugin_psv/NOTICE.txt                        module/vitaplex_qm.NOTICE.txt)
+    # ── vita-shell-companion's SceShell plugin ───────────────────────────
+    # The plugin itself (shell_companion.suprx) comes from the
+    # vita-shell-companion release matching the submodule, passed in with
+    # -DSC_PLUGIN_SUPRX=<path>; the CI downloads it. Every app that uses it
+    # ships the same file of a version, as the first one loaded in a boot is
+    # the one all of them talk to. Without it the VPK still builds, with no
+    # Music row and no music, downloads or updates carried on once VitaPlex
+    # has gone, unless another app has loaded the plugin this boot.
+    set(SC_PLUGIN_SUPRX "" CACHE FILEPATH "shell_companion.suprx to ship in the VPK")
+    set(VITAPLEX_SC_PLUGIN "")
+    if(SC_PLUGIN_SUPRX AND EXISTS "${SC_PLUGIN_SUPRX}")
+        set(VITAPLEX_SC_PLUGIN
+            FILE ${SC_PLUGIN_SUPRX}       module/shell_companion.suprx
+            FILE ${SC_DIR}/LICENSE        module/shell_companion-LICENSE.txt
+            FILE ${SC_DIR}/NOTICE.txt     module/shell_companion-NOTICE.txt)
+        message(STATUS "Shipping shell_companion.suprx from ${SC_PLUGIN_SUPRX}")
     else()
-        message(STATUS "Vita quick menu plugin left out: no PAF headers "
-                       "(-DVITAPLEX_PAF_INCLUDE_DIR, scripts/vita/fetch_paf_headers.sh)")
+        message(WARNING "SC_PLUGIN_SUPRX not set: the VPK won't carry shell_companion.suprx")
     endif()
 
     # VitaPlex itself, as a non-game application (gdc) with ElevenMPV-A's
@@ -1509,7 +1468,7 @@ if(PLATFORM_PSV)
         VERSION ${VITA_VERSION}
         NAME    ${VITA_APP_NAME}
         ${VITA_MAIN_VPK_FILES}
-        ${VITAPLEX_QM_PLUGIN})
+        ${VITAPLEX_SC_PLUGIN})
 
 elseif(PLATFORM_PS4)
     if(PS4)

@@ -517,7 +517,6 @@ jobs:
         # a future base swap doesn't fail the build again.
         run: |
           set -eu
-          # patch: scripts/vita/fetch_paf_headers.sh, for the quick menu plugin.
           pkgs_apk="cmake ninja git zstd tar pkgconf patch"
           pkgs_apt="cmake ninja-build git zstd tar pkg-config patch"
           if command -v apk >/dev/null 2>&1; then
@@ -655,23 +654,27 @@ jobs:
 
           git config --system --add safe.directory "$GITHUB_WORKSPACE"
 
-      # The PAF headers VitaPlex's quick menu plugin is built against
-      # (src/qm_plugin_psv/README.md), from two GitHub repositories at pinned
-      # commits. Tried three times: a clone that fails once is the network.
-      - name: Fetch PAF headers for the quick menu plugin
+      # vita-shell-companion's SceShell plugin, shipped in the VPK as
+      # module/shell_companion.suprx, taken from the plugin's release rather
+      # than built, so that every app ships the same file of a version: the
+      # first app to load it in a boot is the one all of them talk to. Keep
+      # SC_TAG on the release whose commit lib/vita-shell-companion is pinned
+      # to, so the client built into VitaPlex and the plugin match.
+      - name: Download shell_companion plugin
+        env:
+          SC_TAG: Alpha-0.0.2
         run: |
-          for try in 1 2 3; do
-            sh scripts/vita/fetch_paf_headers.sh "$GITHUB_WORKSPACE/build-paf" && exit 0
-            echo "fetch failed (try $try)"; sleep $((try * 10))
-          done
-          exit 1
+          mkdir -p build-sc
+          curl -fsSL --retry 4 --retry-all-errors -o build-sc/shell_companion.suprx \
+            "https://github.com/Breezyslasher/vita-shell-companion/releases/download/$SC_TAG/shell_companion.suprx"
+          ls -l build-sc/shell_companion.suprx
 
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_PSV=ON \
           -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
           -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}" \
-          -DVITAPLEX_PAF_INCLUDE_DIR="$GITHUB_WORKSPACE/build-paf/include"
+          -DSC_PLUGIN_SUPRX="$GITHUB_WORKSPACE/build-sc/shell_companion.suprx"
           cmake --build build
 
       - name: Upload VPK
@@ -679,17 +682,15 @@ jobs:
         with:
           name: VitaPlex-vita-${{ github.run_number }}
           path: build/VitaPlex.vpk
-      # The linked ELFs, with their symbols, for reading the Vita's crash
-      # dumps: VitaPlex's, and its quick menu plugin's, which runs in
-      # SceShell. Not the .velf: the conversion to it drops every section,
-      # the symbol table among them.
+      # The linked ELF, with its symbols, for reading the Vita's crash dumps.
+      # Not the .velf: the conversion to it drops every section, the symbol
+      # table among them. The plugin's is vita-shell-companion's release's.
       - name: Upload ELF
         uses: actions/upload-artifact@v4
         with:
           name: VitaPlex-elf-${{ github.run_number }}
           path: |
             build/VitaPlex
-            build/vitaplex_qm
 
   # ───────────────────────────────────────────────
   # Android — switchfin-style APK build

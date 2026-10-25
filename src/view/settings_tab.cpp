@@ -1163,10 +1163,10 @@ brls::Box* SettingsTab::createMusicSection() {
         auto* quickMenuInfo = new brls::Label();
         quickMenuInfo->setText("Shows the song in the Music row of the quick menu (hold PS) and "
                                "makes its play/pause, next and previous buttons work, here and "
-                               "for the music playing on in the background. Uses VitaPlex's "
-                               "quick menu plugin (GPL-3.0, based on ElevenMPV-A's by GrapheneCt), "
-                               "which also plays that music; it stays loaded until the Vita "
-                               "restarts.");
+                               "for the music playing on in the background. Uses the "
+                               "vita-shell-companion plugin (GPL-3.0, based on ElevenMPV-A's by "
+                               "GrapheneCt), which also plays that music and is shared with other "
+                               "apps; it stays loaded until the Vita restarts.");
         quickMenuInfo->setFontSize(14);
         quickMenuInfo->setMarginLeft(16);
         quickMenuInfo->setMarginTop(8);

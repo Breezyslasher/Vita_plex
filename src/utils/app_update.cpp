@@ -34,7 +34,8 @@
 #ifdef __PSV__
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
-#include "qm_protocol.h"
+#include "sc_protocol.h"
+#include "utils/shell_companion_psv.hpp"
 #include "utils/background_audio.hpp"
 #include "utils/vita_install.hpp"
 #endif
@@ -1226,12 +1227,13 @@ void startInstall(const ReleaseInfo rel) {
         }
 #else
         // VitaPlex can't be installed over while it is the running title (the
-        // system's installer refuses it), so its quick menu plugin installs
-        // the update from SceShell once VitaPlex has quit, and launches it
-        // again (qm_protocol.h's QM_CMD_INSTALL_UPDATE). VitaPlex unpacks it
-        // here first and forges its package head. Up to build 2055 a second
-        // app carried in VitaPlex.vpk did the install, the updater stub
-        // (VPLXUPD01), which VitaPlex installed and launched.
+        // system's installer refuses it), so the shell companion plugin
+        // installs the update from SceShell once VitaPlex has quit, and
+        // launches it again (SC_CMD_UPDATE_INSTALL). VitaPlex unpacks it to
+        // the plugin's SC_UPDATE_DIR first and forges its package head. Up to
+        // build 2055 a second app carried in VitaPlex.vpk did the install, the
+        // updater stub (VPLXUPD01), which VitaPlex installed and launched.
+        const std::string updateDir = shellcomp::path(SC_UPDATE_DIR);
         brls::sync([ui]() {
             if (!ui->dismissed->load()) stepActive(ui->install, "Unpacking\xE2\x80\xA6 0%", 0.0f);
         });
@@ -1250,7 +1252,7 @@ void startInstall(const ReleaseInfo rel) {
         };
         std::string err;
         int lastPct = -1;
-        const int rc = vita::stageVpk(path, QM_UPDATE_DIR, err,
+        const int rc = vita::stageVpk(path, updateDir, err,
             [ui, &lastPct](int phase, int done, int total) {
                 if (phase == vita::PHASE_EXTRACT && total > 0) {
                     const int pct = done * 100 / total;
@@ -1284,14 +1286,14 @@ void startInstall(const ReleaseInfo rel) {
             }
         });
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-        finishInstall(ui, [path]() {
+        finishInstall(ui, [path, updateDir]() {
             if (bgaudio::installUpdate()) {
                 brls::Application::quit();
                 return;
             }
-            vita::removeTree(QM_UPDATE_DIR);
+            vita::removeTree(updateDir);
             auto* d = new brls::Dialog(
-                "Update downloaded.\n\nVitaPlex's quick menu plugin, which installs it, could "
+                "Update downloaded.\n\nThe shell companion plugin, which installs it, could "
                 "not be loaded, so open VitaShell and install this file to finish:\n\n" + path);
             d->addButton("OK", []() {});
             d->open();
@@ -1908,18 +1910,27 @@ void afterStart() {
         for (const char* old : {"update_version.txt", "updater_stage", "updater_work"})
             vita::removeTree(platformPath(old));
 
-        // What the quick menu plugin made of the update it installed as
-        // VitaPlex quit (qm_protocol.h's QM_UPDATE_RESULT), read once.
+        // What the shell companion plugin made of the update it installed
+        // as VitaPlex quit (SC_UPDATE_RESULT), read once; or VitaPlex's own
+        // plugin, up to build 2095, under its names, as it installed this
+        // build over one of those.
+        const std::string resultFile = shellcomp::path(SC_UPDATE_RESULT);
+        const std::string oldResult = platformPath("update-result.txt");
         std::string text;
-        if (FILE* f = std::fopen(QM_UPDATE_RESULT, "rb")) {
-            char buf[256];
-            const size_t n = std::fread(buf, 1, sizeof(buf), f);
-            std::fclose(f);
-            text.assign(buf, n);
+        for (const std::string& file : {resultFile, oldResult}) {
+            if (FILE* f = std::fopen(file.c_str(), "rb")) {
+                char buf[256];
+                const size_t n = std::fread(buf, 1, sizeof(buf), f);
+                std::fclose(f);
+                text.assign(buf, n);
+                break;
+            }
         }
+        vita::removeTree(platformPath("update-stage"));
         if (text.empty()) return;
-        std::remove(QM_UPDATE_RESULT);
-        vita::removeTree(QM_UPDATE_DIR);
+        std::remove(resultFile.c_str());
+        std::remove(oldResult.c_str());
+        vita::removeTree(shellcomp::path(SC_UPDATE_DIR));
         unsigned long result = 1;
         std::string why;
         for (size_t at = 0; at < text.size();) {
@@ -1932,11 +1943,11 @@ void afterStart() {
         }
         const std::string vpk = platformPath("update.vpk");
         if (result == 0) {
-            brls::Logger::info("app_update: the quick menu plugin installed the update");
+            brls::Logger::info("app_update: the shell companion plugin installed the update");
             std::remove(vpk.c_str());
             return;
         }
-        brls::Logger::error("app_update: the quick menu plugin did not install the update "
+        brls::Logger::error("app_update: the shell companion plugin did not install the update "
                             "(0x{:08X}): {}", result, why);
         brls::sync([why, vpk]() {
             auto* d = new brls::Dialog(

@@ -22,8 +22,8 @@ enum InstallPhase {
 /// technique every Vita homebrew installer uses (VitaShell, VitaDB
 /// Downloader, …), which relies on the HENkaku-patched promoter present on
 /// every hacked Vita. VitaPlex cannot hand the folder to the installer
-/// itself, which refuses the title running: its quick menu plugin does, in
-/// SceShell, once VitaPlex has quit (qm_protocol.h's QM_CMD_INSTALL_UPDATE).
+/// itself, which refuses the title running: the shell companion plugin does,
+/// in SceShell, once VitaPlex has quit (SC_CMD_UPDATE_INSTALL).
 ///
 /// - `vpkPath`    : the downloaded `.vpk` (a plain ZIP).
 /// - `stageDir`   : a writable directory under `ux0:`, wiped and recreated by

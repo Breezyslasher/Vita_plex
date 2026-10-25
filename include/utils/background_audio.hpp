@@ -5,10 +5,10 @@
  * run on once it is left with PS: music playing goes on through mpv, on the
  * system's background-music (BGM) port, as ElevenMPV-A's does. The system
  * closes such an app to start a game, though, so as it does, the queue goes
- * to SceShell, which no app or game closes: VitaPlex's quick menu plugin
- * (src/qm_plugin_psv) plays it on there through the shell's music player,
- * which plays on beside games, and fetches the songs that are not on the
- * memory card as they come up (qm_protocol.h, handover.h). By the setting it
+ * to SceShell, which no app or game closes: vita-shell-companion's plugin
+ * (lib/vita-shell-companion) plays it on there through the shell's music
+ * player, which plays on beside games, and fetches the songs that are not on
+ * the memory card as they come up (handover.h). By the setting it
  * goes there as soon as the app is left. Opened again, VitaPlex takes the
  * music back where SceShell got to, once its player is ready to play it
  * (takeBackNow), and plays on from the songs' files SceShell had, where it
@@ -69,8 +69,8 @@ bool keepPlaying();
 // passed over, and three in a row stop the queue. Goes with each hand-over.
 void setOfflineSkip(bool on);
 
-// As VitaPlex quits to be updated, on the UI thread: its quick menu plugin is
-// asked to install the update unpacked to qm_protocol.h's QM_UPDATE_DIR once
+// As VitaPlex quits to be updated, on the UI thread: the shell companion plugin
+// is asked to install the update unpacked to its SC_UPDATE_DIR once
 // VitaPlex has gone, and to launch it again; then music playing goes to
 // SceShell by the setting, as when the system closes VitaPlex, and plays on
 // meanwhile. false when the plugin could not be asked, with nothing changed.
@@ -83,8 +83,8 @@ bool installUpdate();
 void onAudioPlayback(bool playing);
 void onPlayerShutdown();
 
-// The quick menu's Music row, through VitaPlex's quick menu plugin
-// (src/handover_psv/qm_link.h): the song on it and its three buttons working
+// The quick menu's Music row, through the shell companion plugin
+// (utils/shell_companion_psv.hpp): the song on it and its three buttons working
 // while VitaPlex plays. SceShell takes the row itself as it plays the queue
 // handed over. On or off, as saved.
 void setQuickMenuControls(bool on);

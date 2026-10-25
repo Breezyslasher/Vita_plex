@@ -5,8 +5,8 @@
     app: extract the ZIP and forge a fake-package `sce_sys/package/head.bin`,
     for ScePromoterUtility to promote (the HENkaku-patched promoter accepts
     self-signed packages on every hacked Vita). The promoter refuses the title
-    running, so VitaPlex's quick menu plugin promotes the folder from SceShell
-    once VitaPlex has quit (qm_protocol.h's QM_CMD_INSTALL_UPDATE).
+    running, so the shell companion plugin promotes the folder from SceShell
+    once VitaPlex has quit (SC_CMD_UPDATE_INSTALL).
 
     The fake-package technique — the `head.bin` template and the `fpkg_hmac`
     key derivation — is the de-facto interoperability standard shared by every

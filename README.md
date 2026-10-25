@@ -136,7 +136,10 @@ uses the [borealis](https://github.com/dragonflylee/borealis) UI library, both
 Apache-2.0. Media playback is provided by [libmpv](https://mpv.io) (LGPL-2.1+),
 which is linked dynamically.
 
-The PS Vita's package (`VitaPlex.vpk`) also carries VitaPlex's quick menu
-plugin, a program of its own licensed under the GNU GPL, version 3, based on
-the one of [ElevenMPV-A](https://github.com/GrapheneCt/ElevenMPV-A) by
-GrapheneCt, with its source in [src/qm_plugin_psv](src/qm_plugin_psv).
+The PS Vita's package (`VitaPlex.vpk`) also carries the SceShell plugin of
+[vita-shell-companion](https://github.com/Breezyslasher/vita-shell-companion),
+a program of its own licensed under the GNU GPL, version 3, based on the one of
+[ElevenMPV-A](https://github.com/GrapheneCt/ElevenMPV-A) by GrapheneCt, which
+began as VitaPlex's quick menu plugin. VitaPlex builds in its client library
+(Apache-2.0, `lib/vita-shell-companion`) and talks to the plugin only through
+pipes and files.

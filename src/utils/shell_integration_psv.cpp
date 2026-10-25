@@ -39,7 +39,7 @@
 #include <cstring>
 #include <string>
 
-#include "qm_link.h"
+#include "shell_companion.h"
 
 #if defined(VITAPLEX_HAVE_PSV_NOTIFY)
 #include <psp2/notificationutil.h>
@@ -177,7 +177,7 @@ void notify(const std::string& summary, const std::string& body) {
 }
 
 // Where the progress notification showing is: none, VitaPlex's own, or the
-// one the quick menu plugin shows for it. Chosen as one begins, and kept
+// one the shell companion plugin shows for it. Chosen as one begins, and kept
 // until it ends, so that a notification never moves half-way.
 enum class Progress { None, Own, Shell };
 Progress g_progressWhere = Progress::None;
@@ -195,14 +195,14 @@ void setProgress(double fraction, const std::string& title,
     // VitaPlex had closed, and SceShell had to begin a second one as it
     // carried the downloads on (builds 2063 to 2069). The plugin's is the one
     // notification throughout.
-    if (g_progressWhere == Progress::None && visible && qmIsOpen())
+    if (g_progressWhere == Progress::None && visible && scIsOpen())
         g_progressWhere = Progress::Shell;
     if (g_progressWhere == Progress::Shell) {
-        const uint32_t permille = fraction < 0.0 ? QM_PROGRESS_UNKNOWN
+        const uint32_t permille = fraction < 0.0 ? SC_PROGRESS_UNKNOWN
                                 : fraction > 1.0 ? 1000u
                                                  : (uint32_t)(fraction * 1000.0);
-        const int rc = visible ? qmDownloadProgress(title.c_str(), detail.c_str(), permille)
-                               : qmDownloadProgressEnd(title.c_str(), detail.c_str());
+        const int rc = visible ? scDownloadProgress(title.c_str(), detail.c_str(), permille)
+                               : scDownloadProgressEnd(title.c_str(), detail.c_str());
         if (rc < 0 && !g_shellFailLogged) {
             g_shellFailLogged = true;
             brls::Logger::info("shell: the plugin's notification not reached ({:#x})",

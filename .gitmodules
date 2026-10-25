@@ -1,3 +1,6 @@
 [submodule "lib/borealis"]
 	path = lib/borealis
 	url = https://github.com/dragonflylee/borealis.git
+[submodule "lib/vita-shell-companion"]
+	path = lib/vita-shell-companion
+	url = https://github.com/Breezyslasher/vita-shell-companion.git
