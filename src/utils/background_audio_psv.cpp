@@ -1061,90 +1061,6 @@ std::string coverUrl(const std::string& server, const std::string& thumb) {
            "&minSize=1&upscale=1&format=png&url=" + HttpClient::urlEncode(thumb);
 }
 
-// The server's scheme, host and port, from its URL, for the companion
-// protocol's timeline.
-void splitServer(const std::string& server, std::string& scheme, std::string& host,
-                 std::string& port) {
-    const std::size_t colonSlash = server.find("://");
-    scheme = colonSlash == std::string::npos ? "http" : server.substr(0, colonSlash);
-    std::string rest = colonSlash == std::string::npos ? server : server.substr(colonSlash + 3);
-    const std::size_t slash = rest.find('/');
-    if (slash != std::string::npos) rest.resize(slash);
-    const std::size_t colon = rest.rfind(':');
-    if (colon != std::string::npos && rest.find(']') == std::string::npos) {
-        host = rest.substr(0, colon);
-        port = rest.substr(colon + 1);
-    } else {
-        host = rest;
-        port = scheme == "https" ? "443" : "80";
-    }
-}
-
-// The remote control's lines (the plugin's PROTOCOL.md §4.4): while the shell
-// plays the queue, VitaPlex goes on as a Plex player on the network, which
-// Plex's apps find (GDM) and control through the companion protocol, as
-// plex-mpv-shim and the other open players answer it. Only the queue's own
-// songs can be played. Untested against Plex's apps.
-std::vector<std::pair<std::string, std::string>> plexControlLines(const std::string& server) {
-    std::string scheme, host, port;
-    splitServer(server, scheme, host, port);
-    const std::string machine = PlexClient::getInstance().getMachineIdentifier();
-    const std::string id = PLEX_CLIENT_ID, name = "VitaPlex (PS Vita)";
-    const std::string gdm =
-        "Content-Type: plex/media-player\r\nResource-Identifier: " + id + "\r\nName: " + name +
-        "\r\nPort: 32500\r\nProduct: VitaPlex\r\nVersion: 1\r\nProtocol: plex\r\n"
-        "Protocol-Version: 1\r\nProtocol-Capabilities: timeline,playback\r\n"
-        "Device-Class: handheld\r\n";
-    std::string serverAttrs;
-    if (!machine.empty())
-        serverAttrs = " machineIdentifier=\"" + machine + "\" address=\"" + host + "\" port=\"" +
-                      port + "\" protocol=\"" + scheme + "\"";
-    return {
-        {"control.port", "32500"},
-        {"control.headers",
-         "Content-Type: text/xml\r\nAccess-Control-Allow-Origin: *\r\n"
-         "Access-Control-Expose-Headers: X-Plex-Client-Identifier\r\nX-Plex-Client-Identifier: " +
-             id},
-        {"control.reply.ok", "<Response code=\"200\" status=\"OK\"/>"},
-        {"control.reply.resources",
-         "<MediaContainer><Player title=\"" + name +
-             "\" protocol=\"plex\" protocolVersion=\"1\" protocolCapabilities=\"timeline,playback\" "
-             "machineIdentifier=\"" + id +
-             "\" product=\"VitaPlex\" platform=\"PlayStation Vita\" deviceClass=\"handheld\"/>"
-             "</MediaContainer>"},
-        {"control.reply.timeline",
-         "<MediaContainer commandID=\"{param:commandID}\" location=\"fullScreenMusic\">"
-         "<Timeline type=\"music\" state=\"{state}\" time=\"{positionMs}\" "
-         "duration=\"{durationMs}\" ratingKey=\"{id}\" key=\"/library/metadata/{id}\"" +
-             serverAttrs +
-             "/><Timeline type=\"video\" state=\"stopped\"/>"
-             "<Timeline type=\"photo\" state=\"stopped\"/></MediaContainer>"},
-        {"control.route", "/resources||resources"},
-        {"control.route", "/player/playback/play|play|ok"},
-        {"control.route", "/player/playback/pause|pause|ok"},
-        {"control.route", "/player/playback/stop|stop|ok"},
-        {"control.route", "/player/playback/skipNext|next|ok"},
-        {"control.route", "/player/playback/skipPrevious|previous|ok"},
-        {"control.route", "/player/playback/stepForward|forward|ok"},
-        {"control.route", "/player/playback/stepBack|back|ok"},
-        {"control.route", "/player/playback/seekTo|seekTo:offset|ok"},
-        {"control.route", "/player/playback/skipTo|skipTo:key|ok"},
-        {"control.route", "/player/playback/playMedia|skipTo:key,seekTo:offset|ok"},
-        {"control.route", "/player/timeline/subscribe|subscribe:port|ok"},
-        {"control.route", "/player/timeline/unsubscribe|unsubscribe|ok"},
-        {"control.route", "/player/timeline/poll|wait|timeline"},
-        {"control.notFound", "ok"},
-        {"control.discovery.port", "32412"},
-        {"control.discovery.group", "239.0.0.250"},
-        {"control.discovery.match", "M-SEARCH"},
-        {"control.discovery.reply", "HTTP/1.0 200 OK\r\n" + gdm + "\r\n"},
-        {"control.discovery.hello", "239.0.0.250:32413|HELLO * HTTP/1.0\r\n" + gdm + "\r\n"},
-        {"control.discovery.bye",
-         "BYE * HTTP/1.0\r\nResource-Identifier: " + id + "\r\n\r\n"},
-        {"control.push", "http://{subscriberIp}:{subscriberPort}/:/timeline|POST|timeline|text/xml"},
-    };
-}
-
 // The written= of a file of the plugin's queue, as scWriteQueue wrote it: the
 // status names the queue it plays by it, and VitaPlex's own copy carries the
 // same. "" when it cannot be read.
@@ -1264,12 +1180,8 @@ bool writeQueue(std::string& what, std::string& key) {
     sq.state.url = timeline.c_str();
     sq.stateEveryS = 10;
     sq.played.url = scrobble.c_str();
-    const auto control = server.empty() ? std::vector<std::pair<std::string, std::string>>()
-                                        : plexControlLines(server);
-    std::vector<ScHeadLine> extra;
-    for (const auto& kv : control) extra.push_back({kv.first.c_str(), kv.second.c_str()});
-    sq.extra = extra.empty() ? nullptr : extra.data();
-    sq.extraCount = (uint32_t)extra.size();
+    // No remote control (the plugin's control.* lines) yet: Plex's companion
+    // protocol is to be tried in VitaPlex itself first.
     if (scWriteQueue(&sq, tracks.data(), (uint32_t)tracks.size()) < 0) return false;
 
     const std::string written = writtenOf(shellcomp::path(SC_QUEUE));
