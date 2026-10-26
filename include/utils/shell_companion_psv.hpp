@@ -26,10 +26,6 @@ void init();
 // where it can be.
 bool open(const char* who);
 
-// Whether the plugin open was in SceShell before this process opened it, not
-// loaded by it: false before it is open.
-bool wasInShell();
-
 // Whether the plugin that answered VitaPlex's HELLO has cap (its
 // scPluginHas: "update.vpk" ...). false before it is open, and for a plugin
 // older than 0.2.0, which says nothing of what it has.

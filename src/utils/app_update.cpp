@@ -15,7 +15,6 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <ctime>
 #include <thread>
 #include <cstdint>
 #include <memory>
@@ -36,6 +35,7 @@
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
 #include "sc_protocol.h"
+#include "shell_companion.h"
 #include "utils/shell_companion_psv.hpp"
 #include "utils/background_audio.hpp"
 #include "utils/vita_install.hpp"
@@ -582,33 +582,6 @@ void stepDone(StepRow& r, const std::string& text) {
     r.track->setVisibility(brls::Visibility::GONE);
 }
 
-#ifdef __PSV__
-// Put down as VitaPlex hands its VPK to the plugin and quits, with the time
-// (time()): the plugin unpacks it before it installs, which can take most of
-// a minute (42.5 s for 12.7 MB, plugin log b6eb0d98), and the system's
-// installer refuses a VitaPlex opened again meanwhile (0x80101114). Gone
-// once the plugin's result is read, or kUpdatePendingSecs on.
-const char* const kUpdatePending = "update-pending.txt";
-constexpr long kUpdatePendingSecs = 5 * 60;
-
-void markUpdatePending() {
-    if (FILE* f = std::fopen(platformPath(kUpdatePending).c_str(), "w")) {
-        std::fprintf(f, "%ld\n", (long)std::time(nullptr));
-        std::fclose(f);
-    }
-}
-
-// Seconds since markUpdatePending, or -1 for none.
-long updatePendingAge() {
-    FILE* f = std::fopen(platformPath(kUpdatePending).c_str(), "r");
-    if (!f) return -1;
-    long at = 0;
-    const int n = std::fscanf(f, "%ld", &at);
-    std::fclose(f);
-    if (n != 1) return -1;
-    return (long)std::time(nullptr) - at;
-}
-#endif
 
 void finishInstall(std::shared_ptr<ProgressUi> ui, std::function<void()> then) {
     brls::sync([ui, then]() {
@@ -1280,7 +1253,6 @@ void startInstall(const ReleaseInfo rel) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1500));
             finishInstall(ui, [path]() {
                 if (bgaudio::installUpdateVpk(path)) {
-                    markUpdatePending();
                     brls::Application::quit();
                     return;
                 }
@@ -1988,23 +1960,17 @@ void afterStart() {
         }
         vita::removeTree(platformPath("update-stage"));
         if (text.empty()) {
-            // The plugin still at the update VitaPlex handed it: VitaPlex,
-            // opened again before it is installed, closes for it. Only with
-            // the plugin in SceShell from before: loaded just now (a reboot
-            // since), it has no update to install.
-            const long age = updatePendingAge();
-            if (age < 0) return;
-            if (age > kUpdatePendingSecs || !shellcomp::open("app_update") ||
-                !shellcomp::wasInShell()) {
-                brls::Logger::info("app_update: an update handed over {}s ago left no result; "
-                                   "no longer waited for",
-                                   age);
-                std::remove(platformPath(kUpdatePending).c_str());
-                return;
-            }
-            brls::Logger::info("app_update: opened {}s after handing over its update, which the "
-                               "plugin is still installing; closing for it",
-                               age);
+            // The plugin still at the update VitaPlex handed it (its
+            // sc-update-status.txt): VitaPlex, opened again meanwhile, closes
+            // for it, as the installer refuses a title that is running
+            // (0x80101114, plugin log b6eb0d98).
+            shellcomp::init();
+            char state[16];
+            int percent = -1;
+            if (!scUpdateInProgress(state, sizeof(state), &percent)) return;
+            brls::Logger::info("app_update: opened while the plugin installs its update ({}, {}%); "
+                               "closing for it",
+                               state, percent);
             brls::sync([]() {
                 auto* d = new brls::Dialog(
                     "The update is still being installed.\n\nVitaPlex closes now so that it can "
@@ -2016,7 +1982,6 @@ void afterStart() {
             brls::sync([]() { brls::Application::quit(); });
             return;
         }
-        std::remove(platformPath(kUpdatePending).c_str());
         std::remove(resultFile.c_str());
         std::remove(oldResult.c_str());
         vita::removeTree(shellcomp::path(SC_UPDATE_DIR));

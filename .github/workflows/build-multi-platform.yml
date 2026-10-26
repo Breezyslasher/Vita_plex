@@ -662,7 +662,7 @@ jobs:
       # to, so the client built into VitaPlex and the plugin match.
       - name: Download shell_companion plugin
         env:
-          SC_TAG: Alpha-0.0.4
+          SC_TAG: Alpha-0.0.5
         run: |
           mkdir -p build-sc
           curl -fsSL --retry 4 --retry-all-errors -o build-sc/shell_companion.suprx \
