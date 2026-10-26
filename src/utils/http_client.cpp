@@ -355,6 +355,8 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
     // Set timeout - use up to 60 second connect timeout for slow connections
     int timeout = req.timeout > 0 ? req.timeout : m_timeout;
     int connectTimeout = timeout > 60 ? 60 : (timeout > 30 ? 30 : 15);
+    if (req.connectTimeout > 0 && req.connectTimeout < connectTimeout)
+        connectTimeout = req.connectTimeout;
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, connectTimeout);
 

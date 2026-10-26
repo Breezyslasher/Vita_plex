@@ -982,6 +982,9 @@ static std::string plexDirectFallbackUrl(const std::string& url) {
     return "http://" + ip + ":" + port;
 }
 
+// How long connectToServer waits to reach each address it tries.
+static constexpr int kProbeConnectSecs = 10;
+
 bool PlexClient::connectToServer(const std::string& url) {
     // Use connection timeout from settings (default 3 minutes for slow connections)
     int timeout = Application::getInstance().getSettings().connectionTimeout;
@@ -1020,6 +1023,11 @@ bool PlexClient::connectToServer(const std::string& url, int timeoutSeconds) {
         req.method = "GET";
         req.headers["Accept"] = "application/json";
         req.timeout = timeoutSeconds;
+        // Reaching the server is quick or not at all: the setting's time is
+        // for one that answers slowly. Left at what it implied (60 s at the
+        // default 180), a server that was off held the start-up, which runs
+        // before the first frame, for minutes, the LAN fallback after it.
+        req.connectTimeout = kProbeConnectSecs;
 
         HttpResponse resp = client.request(req);
         if (resp.statusCode == 200) {
