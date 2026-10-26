@@ -8,6 +8,7 @@
 #include <borealis.hpp>
 
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 
 #include "shell_companion.h"
@@ -27,6 +28,7 @@ std::once_flag g_initOnce;
 // load it once, and the logged answer is the one this process got.
 std::mutex g_openMutex;
 bool g_infoLogged = false;
+bool g_wasInShell = false;
 
 }  // namespace
 
@@ -47,6 +49,8 @@ bool open(const char* who) {
     const int rc = scOpen(what, sizeof(what));
     brls::Logger::info("{}: shell companion: {} ({:#x})", who, what, (unsigned)rc);
     if (rc < 0) return false;
+    // scOpen says so in its message alone.
+    g_wasInShell = std::strstr(what, "was in SceShell already") != nullptr;
     if (!g_infoLogged) {
         g_infoLogged = true;
         ScPluginInfo info;
@@ -61,6 +65,11 @@ bool open(const char* who) {
                                who);
     }
     return true;
+}
+
+bool wasInShell() {
+    std::lock_guard<std::mutex> lock(g_openMutex);
+    return scIsOpen() && g_wasInShell;
 }
 
 bool has(const char* cap) {
