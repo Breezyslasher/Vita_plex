@@ -75,6 +75,11 @@ void setOfflineSkip(bool on);
 // SceShell by the setting, as when the system closes VitaPlex, and plays on
 // meanwhile. false when the plugin could not be asked, with nothing changed.
 bool installUpdate();
+// The same with the update's VPK as it was downloaded, which the plugin
+// unpacks itself once VitaPlex has gone (its caps "update.vpk", 0.3.0 on):
+// nothing is unpacked here. false when the plugin could not be asked, or is
+// one that cannot (shellcomp::has), with nothing changed.
+bool installUpdateVpk(const std::string& vpkPath);
 
 // Ends the process.
 [[noreturn]] void exitProcess(int code);
@@ -116,6 +121,7 @@ inline int outsideMusic() { return 0; }
 inline bool keepPlaying() { return false; }
 inline void setOfflineSkip(bool) {}
 inline bool installUpdate() { return false; }
+inline bool installUpdateVpk(const std::string&) { return false; }
 inline void onAudioPlayback(bool) {}
 inline void onPlayerShutdown() {}
 inline void setQuickMenuControls(bool) {}

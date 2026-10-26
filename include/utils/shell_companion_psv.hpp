@@ -26,6 +26,11 @@ void init();
 // where it can be.
 bool open(const char* who);
 
+// Whether the plugin that answered VitaPlex's HELLO has cap (its
+// scPluginHas: "update.vpk" ...). false before it is open, and for a plugin
+// older than 0.2.0, which says nothing of what it has.
+bool has(const char* cap);
+
 // A file in VitaPlex's data folder, as the plugin names them (SC_QUEUE,
 // SC_DOWNLOADS_STATUS ...).
 std::string path(const char* name);

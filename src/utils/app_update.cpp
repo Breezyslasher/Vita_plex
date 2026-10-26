@@ -1234,6 +1234,35 @@ void startInstall(const ReleaseInfo rel) {
         // build 2055 a second app carried in VitaPlex.vpk did the install, the
         // updater stub (VPLXUPD01), which VitaPlex installed and launched.
         const std::string updateDir = shellcomp::path(SC_UPDATE_DIR);
+        // A plugin of 0.3.0 on (caps "update.vpk") unpacks the VPK itself,
+        // once VitaPlex has gone: nothing is unpacked here, and VitaPlex
+        // closes at once. Asked off the UI thread, as opening the plugin can
+        // load it. An older one, loaded by another app this boot, gets the
+        // folder unpacked here as before.
+        if (shellcomp::open("app_update") && shellcomp::has("update.vpk")) {
+            brls::Logger::info("app_update: the plugin unpacks and installs {} itself", path);
+            brls::sync([ui]() {
+                if (!ui->dismissed->load()) {
+                    stepDone(ui->install, "Downloaded");
+                    stepActive(ui->relaunch, "Closing to install \xC2\xB7 reopens by itself",
+                               -1.0f);
+                }
+            });
+            std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+            finishInstall(ui, [path]() {
+                if (bgaudio::installUpdateVpk(path)) {
+                    brls::Application::quit();
+                    return;
+                }
+                auto* d = new brls::Dialog(
+                    "Update downloaded.\n\nThe shell companion plugin, which installs it, could "
+                    "not be asked, so open VitaShell and install this file to finish:\n\n" + path);
+                d->addButton("OK", []() {});
+                d->open();
+            });
+            s_busy = false;
+            return;
+        }
         brls::sync([ui]() {
             if (!ui->dismissed->load()) stepActive(ui->install, "Unpacking\xE2\x80\xA6 0%", 0.0f);
         });

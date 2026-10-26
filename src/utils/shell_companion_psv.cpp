@@ -63,6 +63,11 @@ bool open(const char* who) {
     return true;
 }
 
+bool has(const char* cap) {
+    ScPluginInfo info;
+    return scIsOpen() && scPluginInfo(&info) == 0 && scPluginHas(&info, cap);
+}
+
 std::string path(const char* name) {
     init();
     char out[256];

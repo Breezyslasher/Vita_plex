@@ -1744,6 +1744,24 @@ bool installUpdate() {
     return true;
 }
 
+bool installUpdateVpk(const std::string& vpkPath) {
+    if (!shellPluginOpen()) {
+        brls::Logger::warning("[bgaudio] update: the shell companion plugin is not there to "
+                              "install it");
+        return false;
+    }
+    const int rc = scUpdateInstallVpk(vpkPath.c_str());
+    brls::Logger::info("[bgaudio] update: the plugin asked to unpack and install {} once VitaPlex "
+                       "has gone: {}",
+                       vpkPath, rc == -2 ? std::string("not sent, the plugin can't") : hex(rc));
+    if (rc < 0) return false;
+    // As onRequestQuit does as the system closes VitaPlex.
+    quickMenuRelease("the app quits to be updated");
+    releasePort("quitting to be updated");
+    if (!handOver("VitaPlex quits to be updated")) dropReadySong();
+    return true;
+}
+
 bool keepPlaying() { return g_keepPlaying; }
 
 void exitProcess(int code) {
