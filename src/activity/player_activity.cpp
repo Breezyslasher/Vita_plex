@@ -129,7 +129,10 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
     bool serverOk = false;
     // Whether the server already shuffled this queue; shuffling again would override an authoritative order.
     bool serverShuffled = false;
-    if (!tracks.empty() && !PlexClient::getInstance().getServerUrl().empty()) {
+    // Not offline: the server is not there to ask, and the request waited
+    // out its timeout on the UI thread (15 s, log 3ffa60d4).
+    if (!tracks.empty() && !PlexClient::getInstance().getServerUrl().empty() &&
+        !Application::getInstance().isOfflineMode()) {
         PlexClient& client = PlexClient::getInstance();
         PlexClient::PlayQueueContainer pq;
 
