@@ -202,6 +202,10 @@ public:
         int outSampleRate = 0;
     };
     Snapshot snapshot();
+    // The same without waiting: false, *out untouched, while another thread
+    // holds the pump lock (stuck in libmpv, say). For the Vita's watcher,
+    // which must never wait on the player (background_audio_psv.cpp).
+    bool trySnapshot(Snapshot* out);
 
     // OSD
     void showOSD(const std::string& text, double durationSec = 2.0);

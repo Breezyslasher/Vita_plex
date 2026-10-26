@@ -1387,6 +1387,17 @@ MpvPlayer::Snapshot MpvPlayer::snapshot() {
     return s;
 }
 
+bool MpvPlayer::trySnapshot(Snapshot* out) {
+    std::unique_lock<std::recursive_mutex> pump(m_pumpMutex, std::try_to_lock);
+    if (!pump.owns_lock()) return false;
+    out->state = m_state.load();
+    out->initialized = m_mpv != nullptr;
+    out->audioOnly = m_audioOnly;
+    out->position = m_playbackInfo.position;
+    out->outSampleRate = m_playbackInfo.outSampleRate;
+    return true;
+}
+
 double MpvPlayer::getPosition() const {
     if (!m_mpv) return 0.0;
 

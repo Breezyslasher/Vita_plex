@@ -178,6 +178,8 @@ void dropReadySong();
 std::atomic<bool> g_qmEnabled{false};   // the setting
 std::atomic<bool> g_qmActive{false};    // the plugin has the row for this process
 std::atomic<bool> g_qmGone{false};      // handed over or quitting: not taken again
+// Left for the LiveArea or another app, and not in front again since.
+std::atomic<bool> g_away{false};
 // Held for each quickMenuTick, and as the queue goes to SceShell, so that no
 // heartbeat (SC_CMD_ROW_ACTIVATE) of this process's follows SC_CMD_MUSIC_PLAY:
 // the plugin leaves its music to any process that takes the row.
@@ -343,7 +345,17 @@ void onDeactivate(SceInt64 now) {
     // (patches/psv_platform.cpp), the queue going on all the same: it went
     // round 96 times in 4 s away (log 4e8bcb05).
     vitaplex_set_app_away(true);
-    const MpvPlayer::Snapshot s = MpvPlayer::getInstance().snapshot();
+    g_away = true;
+    // Never waiting on the player: the watcher is what answers the system's
+    // request to quit, and a UI thread stuck in libmpv holding the pump lock
+    // kept it from that, so that no app would open (build 2100, log
+    // e2a33297: the music froze as PS was pressed).
+    MpvPlayer::Snapshot s;
+    if (!MpvPlayer::getInstance().trySnapshot(&s)) {
+        brls::Logger::warning("[bgaudio] deactivated (left for the LiveArea or another app): "
+                              "the player is busy (its pump held), so left as it is");
+        return;
+    }
     brls::Logger::info("[bgaudio] deactivated (left for the LiveArea or another app): {}",
                        describeMpv(s));
     if (!mpvPlays(s)) return;
@@ -369,6 +381,7 @@ void onDeactivate(SceInt64 now) {
 // In front again: the main loop at its own pace.
 void onActivate() {
     vitaplex_set_app_away(false);
+    g_away = false;
     brls::Logger::info("[bgaudio] activated (in front again)");
 }
 
@@ -522,6 +535,32 @@ void quickMenuTick(SceInt64 now) {
     }
 }
 
+// The player's pump held for long, as the watcher sees it each tick: logged
+// once as it passes kPlayerStuckUs and again as it ends, with whether VitaPlex
+// was away. A UI thread stuck in libmpv shows here, the music frozen.
+constexpr SceInt64 kPlayerStuckUs = 3 * 1000000;
+
+void watchPlayer(SceInt64 now) {
+    static SceInt64 lastFree = 0;
+    static bool reported = false;
+    MpvPlayer::Snapshot s;
+    if (MpvPlayer::getInstance().trySnapshot(&s)) {
+        if (reported)
+            brls::Logger::info("[bgaudio] the player answers again after {:.1f}s: {}",
+                               (now - lastFree) / 1e6, describeMpv(s));
+        lastFree = now;
+        reported = false;
+        return;
+    }
+    if (lastFree == 0) lastFree = now;
+    if (!reported && now - lastFree > kPlayerStuckUs) {
+        reported = true;
+        brls::Logger::warning("[bgaudio] the player's pump held for {:.1f}s{}: the UI thread "
+                              "is stuck in it",
+                              (now - lastFree) / 1e6, g_away ? ", VitaPlex away" : "");
+    }
+}
+
 int watcherMain(SceSize, void*) {
     const SceUID cb = sceKernelCreateCallback("VitaPlexBgAudioPower", 0, powerCallback, nullptr);
     const int rcCb = cb >= 0 ? scePowerRegisterCallback(cb) : cb;
@@ -549,6 +588,7 @@ int watcherMain(SceSize, void*) {
                                   (now - handedAt) / 1e6);
             exitProcess(0);
         }
+        watchPlayer(now);
         quickMenuTick(now);
     }
     return 0;
