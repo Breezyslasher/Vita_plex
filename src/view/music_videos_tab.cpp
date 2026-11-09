@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 
 #include "app/application.hpp"
@@ -64,6 +65,22 @@ std::string field(std::string s) {
     for (char& c : s)
         if (c == '\t' || c == '\n' || c == '\r') c = ' ';
     return s;
+}
+
+// One of each video. An artist in several music libraries is an artist in
+// each, with the same videos under other keys: the same when the artist's
+// name, the title and the length are, whatever the key. The first is kept.
+void dropDuplicates(std::vector<MediaItem>& videos) {
+    std::set<std::string> seen;
+    std::vector<MediaItem> out;
+    out.reserve(videos.size());
+    for (auto& v : videos) {
+        const std::string same = lower(v.grandparentTitle) + "\t" + lower(v.title) + "\t" +
+                                 std::to_string(v.duration);
+        if (!seen.insert(same).second) continue;
+        out.push_back(std::move(v));
+    }
+    videos.swap(out);
 }
 
 bool loadCache(const std::string& serverId, std::vector<MediaItem>& out) {
@@ -244,6 +261,7 @@ void MusicVideosTab::onFocusGained() {
             if (have) {
                 brls::Logger::info("MusicVideosTab: {} video(s) from the last scan", cached.size());
                 m_all = std::move(cached);
+                dropDuplicates(m_all);   // a file from before they were dropped
                 applyView();
             } else {
                 startScan();
@@ -349,6 +367,16 @@ void MusicVideosTab::startScan() {
             std::lock_guard<std::mutex> lock(scan->mutex);
             videos = std::move(scan->found);
         }
+        // In the artists' order, so that which of two the same is kept does
+        // not depend on which worker came first.
+        std::stable_sort(videos.begin(), videos.end(), [](const MediaItem& a, const MediaItem& b) {
+            return std::atoi(a.ratingKey.c_str()) < std::atoi(b.ratingKey.c_str());
+        });
+        const size_t before = videos.size();
+        dropDuplicates(videos);
+        if (videos.size() != before)
+            brls::Logger::info("MusicVideosTab: {} duplicate(s) dropped (an artist in several "
+                               "libraries)", before - videos.size());
         // Whole only if every artist answered: a scan cut short by a server
         // out of reach is shown, but not kept in place of the last whole one.
         const bool complete = listed && scan->failed == 0;
@@ -377,7 +405,7 @@ void MusicVideosTab::onScanDone(std::vector<MediaItem>&& videos, bool complete) 
     // The artist shown alone may have none now.
     bool artistStillThere = m_artistKey.empty();
     for (const auto& v : m_all)
-        if (v.grandparentRatingKey == m_artistKey) artistStillThere = true;
+        if (lower(v.grandparentTitle) == m_artistKey) artistStillThere = true;
     if (!artistStillThere) {
         m_artistKey.clear();
         m_artistName.clear();
@@ -393,7 +421,7 @@ void MusicVideosTab::applyView() {
     std::vector<MediaItem> view;
     view.reserve(m_all.size());
     for (const auto& v : m_all)
-        if (m_artistKey.empty() || v.grandparentRatingKey == m_artistKey) view.push_back(v);
+        if (m_artistKey.empty() || lower(v.grandparentTitle) == m_artistKey) view.push_back(v);
 
     const SortOpt& sort = kSorts[s_sort];
     std::stable_sort(view.begin(), view.end(), [&sort](const MediaItem& a, const MediaItem& b) {
@@ -468,8 +496,9 @@ void MusicVideosTab::showArtistMenu() {
     };
     std::map<std::string, Entry> byKey;
     for (const auto& v : m_all) {
-        Entry& e = byKey[v.grandparentRatingKey];
-        e.key = v.grandparentRatingKey;
+        // By name: the same artist in two libraries is one here.
+        Entry& e = byKey[lower(v.grandparentTitle)];
+        e.key = lower(v.grandparentTitle);
         e.name = v.grandparentTitle;
         e.count++;
     }

@@ -50,7 +50,7 @@ private:
     RecyclingGrid* m_grid = nullptr;
 
     std::vector<MediaItem> m_all;     // every video; grandparentTitle its artist
-    std::string m_artistKey;          // the artist shown alone, "" for all
+    std::string m_artistKey;          // the artist shown alone (its name, lower case), "" for all
     std::string m_artistName;
     bool m_loaded = false;
     std::shared_ptr<Scan> m_scan;     // the scan running, if one is
