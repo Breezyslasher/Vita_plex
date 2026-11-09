@@ -27,7 +27,7 @@ public:
     MusicVideosTab();
     ~MusicVideosTab() override;
 
-    void onFocusGained() override;
+    void willAppear(bool resetState = false) override;
 
 private:
     // What a scan shares with its threads, which may outlive the tab.

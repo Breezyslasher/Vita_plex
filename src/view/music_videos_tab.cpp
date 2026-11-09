@@ -256,8 +256,11 @@ MusicVideosTab::~MusicVideosTab() {
     if (m_scan) m_scan->cancel = true;
 }
 
-void MusicVideosTab::onFocusGained() {
-    brls::Box::onFocusGained();
+// As the tab is shown, not as it gains focus: focus goes from the sidebar
+// straight to one of its chips, which is not the tab gaining it, and the tab
+// then stood empty for good (build 2114).
+void MusicVideosTab::willAppear(bool resetState) {
+    brls::Box::willAppear(resetState);
     if (m_loaded) return;
     m_loaded = true;
 
