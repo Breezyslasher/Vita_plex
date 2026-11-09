@@ -1182,7 +1182,7 @@ jobs:
         include:
         - { target: ios,  cmake_flag: PLATFORM_IOS,  platform_for_toolchain: SIMULATORARM64,      sdk: iphonesimulator }
         - { target: tvos, cmake_flag: PLATFORM_TVOS, platform_for_toolchain: SIMULATORARM64_TVOS, sdk: appletvsimulator }
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       # Pin to a release whose asset names match the loop below. All eight
       # frameworks MUST come from the same release so libmpv and its ffmpeg
@@ -1427,7 +1427,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - { tag: Silicon, arch: arm64, target: "11.0", runner: macos-14 }
+        - { tag: Silicon, arch: arm64, target: "11.0", runner: macos-15 }
         - { tag: Intel, arch: x86_64, target: "11.0", runner: macos-15-intel }
     runs-on: ${{ matrix.runner }}
     steps:
