@@ -1853,6 +1853,7 @@ bool PlexClient::fetchExtras(const std::string& ratingKey, std::vector<MediaItem
         item.mediaType = parseMediaType(item.type);
         item.duration = extractJsonInt(obj, "duration");
         item.subtype = extractJsonValue(obj, "subtype");
+        item.extraType = extractJsonInt(obj, "extraType");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
             items.push_back(item);

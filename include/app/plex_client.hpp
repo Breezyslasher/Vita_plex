@@ -95,6 +95,11 @@ struct MediaItem {
     // Album subtype (album, single, ep, compilation, soundtrack, live, etc.)
     std::string subtype;
 
+    // An extra's kind, as /extras gives it: 1 trailer, 2 deleted scene,
+    // 3 interview, 4 music video, 5 behind the scenes, 6 scene or featurette
+    // ...; 0 when the server gave none.
+    int extraType = 0;
+
     // Stream info
     std::string streamUrl;
     std::string videoCodec;
