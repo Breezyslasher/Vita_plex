@@ -32,7 +32,9 @@ constexpr int kFields = 7;   // ratingKey, title, artist, artistKey, thumb, dura
 // Artists asked at once. Each asks the server for one artist's extras; a
 // Vita has few threads to spare.
 #ifdef __PSV__
-constexpr int kWorkers = 3;
+// Two on the Vita: its sockets and threads are few, and the downloads, the
+// covers and the music's own requests go on beside the scan.
+constexpr int kWorkers = 2;
 // Artists in one request, once the server is seen to answer for several at
 // once (Scan::batch): their whole metadata comes with their extras, which a
 // Vita has less memory for.
