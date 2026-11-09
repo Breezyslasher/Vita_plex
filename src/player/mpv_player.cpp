@@ -842,6 +842,12 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
     m_expectedDurationMs.store(expectedDurationMs);
     m_streamRefused.store(false);
 
+    // The picture back for this file, should the last have had it turned off.
+    if (m_videoDisabled) {
+        m_videoDisabled = false;
+        if (m_mpv && !m_audioOnly) mpv_set_property_string(m_mpv, "vid", "auto");
+    }
+
     // A terminated core accepts commands and never runs them, so rebuild
     // it before loading rather than queueing into a dead handle. init()
     // re-attaches the Android surface via rebindIfReady().
@@ -1256,6 +1262,15 @@ void MpvPlayer::setVideoTrack(int track) {
 
     int64_t vid = track;
     mpv_set_property_async(m_mpv, 0, "vid", MPV_FORMAT_INT64, &vid);
+}
+
+void MpvPlayer::setVideoEnabled(bool enabled) {
+    if (m_audioOnly) return;   // no picture either way
+    if (enabled == !m_videoDisabled) return;
+    m_videoDisabled = !enabled;
+    if (!m_mpv || m_stopping) return;
+    mpv_set_property_string(m_mpv, "vid", enabled ? "auto" : "no");
+    brls::Logger::info("MpvPlayer: picture {}", enabled ? "on" : "off (the sound plays on)");
 }
 
 void MpvPlayer::disableSubtitles() {

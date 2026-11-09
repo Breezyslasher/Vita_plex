@@ -5,6 +5,7 @@
 #include "activity/player_activity.hpp"
 #include "app/application.hpp"
 #include "app/video_queue.hpp"
+#include "app/video_background.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/music_queue.hpp"
@@ -39,6 +40,18 @@
 #endif
 
 namespace vitaplex {
+
+namespace {
+// PlayerActivity::resumeNextAt's, taken by the load it is for.
+std::string s_resumeKey;
+int s_resumeMs = 0;
+// The place to start mediaKey at if one was asked for, else -1.
+int takeForcedResume(const std::string& mediaKey) {
+    if (s_resumeKey.empty() || s_resumeKey != mediaKey) return -1;
+    s_resumeKey.clear();
+    return s_resumeMs;
+}
+}  // namespace
 
 // Base temp path for streamed audio (mpv's HTTP handling crashes on Vita); extension added from the real file type.
 
@@ -337,6 +350,9 @@ brls::View* PlayerActivity::createContentView() {
 void PlayerActivity::onContentAvailable() {
     brls::Logger::debug("PlayerActivity content available");
 
+    // A video playing on with its player left gives way to what this plays.
+    VideoBackground::getInstance().stop();
+
     // CENTERED so D-pad up/down always move focus; the default NATURAL cannot reach a row that is off screen.
     if (queueScroll)
         queueScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
@@ -489,6 +505,8 @@ void PlayerActivity::onContentAvailable() {
             brls::Application::popActivity();
             return true;
         }
+        // A video, with "Keep Video Audio Playing": its sound plays on.
+        if (canKeepVideoPlaying()) m_keepVideoPlaying = true;
         brls::Application::popActivity();
         return true;
     });
@@ -1047,6 +1065,25 @@ void PlayerActivity::willDisappear(bool resetState) {
     scePowerSetGpuClockFrequency(166);
     scePowerSetGpuXbarClockFrequency(111);
 #endif
+
+    // Back from a video that is to play on: mpv is left as it is, and
+    // VideoBackground keeps its place and its end from here.
+    if (m_keepVideoPlaying && canKeepVideoPlaying()) {
+        brls::Logger::info("PlayerActivity: leaving the video playing on (its sound)");
+        m_updateTimer.stop();
+        if (m_alive) m_alive->store(false);
+        if (videoView) videoView->setVideoVisible(false);
+        VideoBackground::Session session;
+        session.ratingKey = m_mediaKey;
+        session.title = titleLabel ? titleLabel->getFullText() : std::string();
+        session.isLocalFile = m_isLocalFile;
+        session.baseOffsetMs = m_transcodeBaseOffsetMs;
+        session.durationMs = m_mediaDurationMs > 0
+            ? m_mediaDurationMs
+            : m_transcodeBaseOffsetMs + (int)(MpvPlayer::getInstance().getDuration() * 1000);
+        VideoBackground::getInstance().begin(session);
+        return;
+    }
 
     // If background music is enabled and we're in queue mode, don't stop playback
     if (m_isQueueMode && Application::getInstance().getSettings().backgroundMusic && !m_destroying) {
@@ -1724,6 +1761,9 @@ void PlayerActivity::loadMedia() {
                 m_pendingSeek = dlItem.viewOffset / 1000.0;
             }
         }
+        // Opened again from the background: where the sound was.
+        const int forcedLocal = takeForcedResume(m_mediaKey);
+        if (forcedLocal >= 0) m_pendingSeek = forcedLocal / 1000.0;
 
         if (!player.isInitialized()) {
             // Defer MPV init + load to after activity transition completes
@@ -1879,6 +1919,9 @@ void PlayerActivity::loadMedia() {
                 resumeOffset = item.viewOffset;
             }
         }
+        // Opened again from the background: where the sound was.
+        const int forced = takeForcedResume(m_mediaKey);
+        if (forced >= 0) resumeOffset = forced;
 
         // Watch party: open at the host's timecode so playback starts in sync, with no corrective seek.
         if (SyncLoungeSession::instance().isConnected()) {
@@ -2499,6 +2542,23 @@ void PlayerActivity::updateProgress() {
         m_isPlaying = actuallyPlaying;
         updatePlayPauseLabel();
     }
+}
+
+void PlayerActivity::resumeNextAt(const std::string& mediaKey, int timeMs) {
+    s_resumeKey = mediaKey;
+    s_resumeMs = timeMs;
+}
+
+bool PlayerActivity::canKeepVideoPlaying() const {
+    if (m_isQueueMode || m_isDirectFile || m_mediaKey.empty() || m_loadingMedia) return false;
+    if (!Application::getInstance().getSettings().backgroundVideo) return false;
+    if (m_mediaType != MediaType::MOVIE && m_mediaType != MediaType::EPISODE &&
+        m_mediaType != MediaType::CLIP)
+        return false;
+    if (SyncLoungeSession::instance().isConnected()) return false;   // the party follows the player
+    MpvPlayer& player = MpvPlayer::getInstance();
+    return player.isInitialized() && !player.isAudioOnly() &&
+           (player.isPlaying() || player.isPaused());
 }
 
 // The next video of the video queue, in this player: false when there is

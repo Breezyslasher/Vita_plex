@@ -10,6 +10,7 @@
 #include "view/settings_tab.hpp"
 #include "view/livetv_tab.hpp"
 #include "view/music_videos_tab.hpp"
+#include "app/video_background.hpp"
 #include "view/downloads_tab.hpp"
 #include "view/media_detail_view.hpp"
 #include "view/sidebar_editor.hpp"
@@ -253,6 +254,8 @@ void MainActivity::onContentAvailable() {
         brls::View* rootBox = tabFrame->getParent();
         if (rootBox) {
             rootBox->registerAction("", brls::ControllerButton::BUTTON_B, [](brls::View* view) {
+                // A video playing on with its player left: back into it.
+                if (VideoBackground::getInstance().reopen()) return true;
                 MusicQueue& queue = MusicQueue::getInstance();
                 if (!queue.isEmpty() && queue.getCurrentIndex() >= 0) {
                     auto* playerActivity = PlayerActivity::createResumeQueue();
@@ -331,6 +334,8 @@ static brls::Box* withMusicBack(brls::View* content) {
     content->registerAction(
         "Now Playing", brls::ControllerButton::BUTTON_B,
         [](brls::View*) {
+            // A video playing on with its player left: back into it.
+            if (VideoBackground::getInstance().reopen()) return true;
             MusicQueue& queue = MusicQueue::getInstance();
             if (!queue.isEmpty() && queue.getCurrentIndex() >= 0) {
                 brls::Application::pushActivity(PlayerActivity::createResumeQueue());

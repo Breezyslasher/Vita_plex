@@ -224,6 +224,7 @@ struct AppSettings {
     // song on a handheld is where that shows.
     bool lyricsWordByWord = true;
     bool backgroundMusic = true;       // Allow leaving player without stopping music
+    bool backgroundVideo = false;      // Back from a video leaves its sound playing (app/video_background.hpp)
     // Vita only: what music playing does as the user leaves the app
     // (bgaudio::OutsideMusic). 0 stops it; 1 plays on in the app through the
     // system's background-music port, handed to SceShell, through the

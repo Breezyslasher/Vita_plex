@@ -1080,6 +1080,23 @@ brls::Box* SettingsTab::createMusicSection() {
     });
     box->addView(m_backgroundMusicToggle);
 
+    // A video's sound playing on once its player is left with Back.
+    auto* backgroundVideoToggle = new brls::BooleanCell();
+    backgroundVideoToggle->init("Keep Video Audio Playing", settings.backgroundVideo,
+                                [&settings](bool value) {
+        settings.backgroundVideo = value;
+        Application::getInstance().saveSettings();
+    });
+    box->addView(backgroundVideoToggle);
+    auto* backgroundVideoInfo = new brls::Label();
+    backgroundVideoInfo->setText("Back from a film, an episode or a music video leaves its sound "
+                                 "playing while you browse. Back from a tab opens the player "
+                                 "again where it is.");
+    backgroundVideoInfo->setFontSize(14);
+    backgroundVideoInfo->setMarginLeft(16);
+    backgroundVideoInfo->setMarginBottom(10);
+    box->addView(backgroundVideoInfo);
+
     // Shuffle-by-default toggle. Exists mainly for remote controllers: the
     // framework MediaSession has no onSetShuffleMode callback, so Android Auto
     // head units and watch media browsers can't toggle shuffle themselves.

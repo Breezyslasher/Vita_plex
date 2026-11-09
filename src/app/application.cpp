@@ -4,6 +4,7 @@
 
 #include "utils/frame_profiler.hpp"
 #include "app/application.hpp"
+#include "app/video_background.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/plex_palette.hpp"
@@ -136,6 +137,8 @@ void Application::run() {
 }
 
 void Application::shutdown() {
+    // A video playing on with its player left: stopped, its place saved.
+    VideoBackground::getInstance().stop();
     DownloadsManager::getInstance().noteAppClosing();
     saveSettings();
     m_initialized = false;
@@ -623,6 +626,7 @@ bool Application::loadSettings() {
     }
     m_settings.audioPassthrough = extractBool("audioPassthrough", false);
     m_settings.backgroundMusic = extractBool("backgroundMusic", true);
+    m_settings.backgroundVideo = extractBool("backgroundVideo", false);
     // Absent from a file saved before it existed: the default stands.
     if (content.find("\"vitaOutsideMusic\":") != std::string::npos) {
         const int outside = extractInt("vitaOutsideMusic");
@@ -782,6 +786,7 @@ bool Application::saveSettings() {
     json += "  \"lyricsWordByWord\": " + b(m_settings.lyricsWordByWord) + ",\n";
     json += "  \"audioPassthrough\": " + b(m_settings.audioPassthrough) + ",\n";
     json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + ",\n";
+    json += "  \"backgroundVideo\": " + b(m_settings.backgroundVideo) + ",\n";
     json += "  \"vitaOutsideMusic\": " + std::to_string(m_settings.vitaOutsideMusic) + ",\n";
     json += "  \"vitaOfflineSkip\": " + b(m_settings.vitaOfflineSkip) + ",\n";
     json += "  \"vitaDownloadsAfterLeaving\": " + b(m_settings.vitaDownloadsAfterLeaving) + ",\n";

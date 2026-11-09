@@ -300,6 +300,7 @@ set(APP_SOURCES
     src/app/downloads_manager.cpp
     src/app/music_queue.cpp
     src/app/video_queue.cpp
+    src/app/video_background.cpp
     src/app/music_controller.cpp
     src/app/hint_icons.cpp
     src/app/synclounge_client.cpp

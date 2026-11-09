@@ -30,6 +30,11 @@ public:
     // Play local downloaded file
     PlayerActivity(const std::string& mediaKey, bool isLocalFile);
 
+    // The next player opened for mediaKey starts at timeMs, whatever the
+    // resume setting: VideoBackground opening the player again where the
+    // sound is.
+    static void resumeNextAt(const std::string& mediaKey, int timeMs);
+
     // Play direct file path (for debug/testing)
     static PlayerActivity* createForDirectFile(const std::string& filePath);
 
@@ -111,6 +116,11 @@ private:
     void reloadAlbumArt();
     void playNextEpisode();         // Auto-play next episode in season/show
     bool playQueuedVideo();         // The video queue's next, if it has one
+    // Whether Back leaves this video playing (VideoBackground): a film, an
+    // episode or a clip of the library or the downloads, playing or paused,
+    // with the setting on.
+    bool canKeepVideoPlaying() const;
+    bool m_keepVideoPlaying = false;   // Back was pressed so: willDisappear hands mpv over
 
     // Queue list overlay (Direction-A side sheet)
     void showQueueOverlay();

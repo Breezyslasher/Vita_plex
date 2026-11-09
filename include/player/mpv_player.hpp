@@ -81,6 +81,7 @@ public:
     bool init();
     void shutdown();
     bool isInitialized() const { return m_mpv != nullptr; }
+    bool m_videoDisabled = false;   // setVideoEnabled(false) since the last load
 
     // Playback control
     //
@@ -146,6 +147,10 @@ public:
     void setSubtitleTrack(int track);
     void setAudioTrack(int track);
     void setVideoTrack(int track);
+    // The picture off or on while a video plays on (vid=no / vid=auto): off
+    // while nobody sees it (app/video_background.hpp), so that it is not
+    // decoded. On again by itself as the next file is loaded.
+    void setVideoEnabled(bool enabled);
     void cycleSubtitle();
     void cycleAudio();
     void toggleSubtitles();
