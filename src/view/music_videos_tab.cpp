@@ -32,9 +32,14 @@ constexpr int kFields = 7;   // ratingKey, title, artist, artistKey, thumb, dura
 // Artists asked at once. Each asks the server for one artist's extras; a
 // Vita has few threads to spare.
 #ifdef __PSV__
-constexpr int kWorkers = 2;
+constexpr int kWorkers = 3;
+// Artists in one request, once the server is seen to answer for several at
+// once (Scan::batch): their whole metadata comes with their extras, which a
+// Vita has less memory for.
+constexpr size_t kBatch = 20;
 #else
-constexpr int kWorkers = 4;
+constexpr int kWorkers = 6;
+constexpr size_t kBatch = 40;
 #endif
 // Artists asked for a page.
 constexpr int kArtistPage = 200;
@@ -152,6 +157,11 @@ struct MusicVideosTab::Scan {
     std::atomic<int> done{0};
     std::atomic<int> failed{0};
     std::atomic<int> workers{0};
+    // Whether the server gives several artists' extras in one request
+    // (PlexClient::fetchExtrasForItems): 0 not known, 1 it does, -1 it does
+    // not. Known once a video found the slow way came back that way too.
+    std::atomic<int> batch{0};
+    std::atomic<bool> probing{false};
     std::mutex mutex;
     std::vector<MediaItem> found;     // under mutex
 };
@@ -282,7 +292,14 @@ void MusicVideosTab::startScan() {
 
     std::weak_ptr<bool> aliveWeak = m_alive;
     const std::string serverId = PlexClient::getInstance().getMachineIdentifier();
-    asyncRun([this, aliveWeak, scan, serverId]() {
+    // A video of the last scan and its artist, to try the quick way with.
+    std::string probeArtist, probeVideo;
+    if (!m_all.empty()) {
+        probeArtist = m_all.front().grandparentRatingKey;
+        probeVideo = m_all.front().ratingKey;
+    }
+    const bool firstScan = m_all.empty();
+    asyncRun([this, aliveWeak, scan, serverId, probeArtist, probeVideo, firstScan]() {
         PlexClient& client = PlexClient::getInstance();
 
         // Every artist of every music library.
@@ -314,50 +331,126 @@ void MusicVideosTab::startScan() {
         const int total = (int)scan->artists.size();
         brls::Logger::info("MusicVideosTab: asking {} artist(s) for their music videos", total);
 
-        // Each worker takes the next artist until none is left.
+        // Rescanning: the last scan's first video tells at once whether the
+        // server answers for several artists in one request.
+        if (!probeArtist.empty() && !scan->cancel) {
+            std::map<std::string, std::vector<MediaItem>> byArtist;
+            bool same = false;
+            if (client.fetchExtrasForItems({probeArtist}, byArtist))
+                for (const auto& extra : byArtist[probeArtist])
+                    if (extra.ratingKey == probeVideo) same = true;
+            if (same) scan->batch = 1;
+            brls::Logger::info("MusicVideosTab: several artists in one request: {}",
+                               same ? "yes, as the last scan's video shows" : "not shown yet");
+        }
+
+        // Each worker takes the next artists until none is left.
         const int workers = std::min(kWorkers, std::max(total, 1));
         scan->workers = workers;
         for (int w = 0; w < workers; w++) {
             asyncRun([scan]() {
                 PlexClient& client = PlexClient::getInstance();
-                for (;;) {
-                    const size_t i = scan->next.fetch_add(1);
-                    if (scan->cancel || i >= scan->artists.size()) break;
-                    const MediaItem& artist = scan->artists[i];
+                // An artist's music videos, into the scan's list.
+                auto keep = [&scan](const MediaItem& artist, std::vector<MediaItem>& extras) {
+                    std::lock_guard<std::mutex> lock(scan->mutex);
+                    for (auto& extra : extras) {
+                        if (!extra.isMusicVideoExtra()) continue;
+                        extra.grandparentTitle = artist.title;
+                        extra.grandparentRatingKey = artist.ratingKey;
+                        extra.type = "clip";
+                        extra.mediaType = MediaType::CLIP;
+                        extra.trimForGrid();
+                        scan->found.push_back(std::move(extra));
+                    }
+                };
+                // One artist asked by itself; its first music video's key.
+                auto askOne = [&](const MediaItem& artist) -> std::string {
                     std::vector<MediaItem> extras;
                     if (!client.fetchExtras(artist.ratingKey, extras)) {
                         scan->failed++;
-                    } else {
-                        std::lock_guard<std::mutex> lock(scan->mutex);
-                        for (auto& extra : extras) {
-                            if (!extra.isMusicVideoExtra()) continue;
-                            extra.grandparentTitle = artist.title;
-                            extra.grandparentRatingKey = artist.ratingKey;
-                            extra.type = "clip";
-                            extra.mediaType = MediaType::CLIP;
-                            extra.trimForGrid();
-                            scan->found.push_back(std::move(extra));
-                        }
+                        return "";
                     }
+                    std::string video;
+                    for (const auto& extra : extras)
+                        if (video.empty() && extra.isMusicVideoExtra()) video = extra.ratingKey;
+                    keep(artist, extras);
+                    return video;
+                };
+                for (;;) {
+                    if (scan->cancel) break;
+                    if (scan->batch == 1) {
+                        // Several artists in one request.
+                        const size_t first = scan->next.fetch_add(kBatch);
+                        if (first >= scan->artists.size()) break;
+                        const size_t last = std::min(first + kBatch, scan->artists.size());
+                        std::vector<std::string> keys;
+                        for (size_t i = first; i < last; i++)
+                            keys.push_back(scan->artists[i].ratingKey);
+                        std::map<std::string, std::vector<MediaItem>> byArtist;
+                        const bool ok = client.fetchExtrasForItems(keys, byArtist);
+                        for (size_t i = first; i < last && !scan->cancel; i++) {
+                            const MediaItem& artist = scan->artists[i];
+                            auto it = byArtist.find(artist.ratingKey);
+                            // An artist the answer left out is asked by itself.
+                            if (ok && it != byArtist.end()) keep(artist, it->second);
+                            else askOne(artist);
+                            scan->done++;
+                        }
+                        continue;
+                    }
+                    const size_t i = scan->next.fetch_add(1);
+                    if (i >= scan->artists.size()) break;
+                    const MediaItem& artist = scan->artists[i];
+                    const std::string video = askOne(artist);
                     scan->done++;
+                    // The first artist found with a video: does the server
+                    // give it in a request for two artists as well? Then the
+                    // rest are asked many at a time.
+                    if (!video.empty() && scan->batch == 0 && !scan->probing.exchange(true)) {
+                        std::vector<std::string> keys = {artist.ratingKey};
+                        const MediaItem& other = scan->artists[i > 0 ? i - 1 : scan->artists.size() - 1];
+                        if (other.ratingKey != artist.ratingKey) keys.push_back(other.ratingKey);
+                        std::map<std::string, std::vector<MediaItem>> byArtist;
+                        bool same = false;
+                        if (client.fetchExtrasForItems(keys, byArtist))
+                            for (const auto& extra : byArtist[artist.ratingKey])
+                                if (extra.ratingKey == video) same = true;
+                        scan->batch = same ? 1 : -1;
+                        brls::Logger::info("MusicVideosTab: several artists in one request: {}",
+                                           same ? "yes" : "no, one request an artist");
+                    }
                 }
                 scan->workers--;
             });
         }
 
         // Progress to the tab twice a second while they work.
-        while (scan->workers > 0) {
+        // On a first scan, what is found so far goes to the grid every few
+        // seconds too; a rescan keeps the last scan's list until it is done.
+        int shown = 0;
+        for (int tick = 1; scan->workers > 0; tick++) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             if (scan->cancel) continue;
             int found;
+            std::vector<MediaItem> soFar;
             {
                 std::lock_guard<std::mutex> lock(scan->mutex);
                 found = (int)scan->found.size();
+                if (firstScan && tick % 8 == 0 && found != shown) {
+                    soFar = scan->found;
+                    shown = found;
+                }
             }
             const int done = scan->done;
-            brls::sync([this, aliveWeak, done, total, found]() {
+            brls::sync([this, aliveWeak, done, total, found, soFar = std::move(soFar)]() mutable {
                 auto alive = aliveWeak.lock();
-                if (alive && *alive) onScanProgress(done, total, found);
+                if (!alive || !*alive || !m_scan) return;
+                onScanProgress(done, total, found);
+                if (!soFar.empty()) {
+                    dropDuplicates(soFar);
+                    m_all = std::move(soFar);
+                    applyView();
+                }
             });
         }
         if (scan->cancel) return;

@@ -1867,6 +1867,103 @@ bool PlexClient::fetchExtras(const std::string& ratingKey, std::vector<MediaItem
     return true;
 }
 
+namespace {
+// The end of the JSON object or array opening at `open` (one past its closing
+// bracket), brackets inside strings left alone; npos if it does not close.
+size_t jsonSpanEnd(const std::string& json, size_t open) {
+    int depth = 0;
+    bool inString = false;
+    for (size_t i = open; i < json.size(); i++) {
+        const char c = json[i];
+        if (inString) {
+            if (c == '\\') i++;
+            else if (c == '"') inString = false;
+            continue;
+        }
+        if (c == '"') inString = true;
+        else if (c == '{' || c == '[') depth++;
+        else if (c == '}' || c == ']') {
+            if (--depth == 0) return i + 1;
+        }
+    }
+    return std::string::npos;
+}
+
+// The objects of the array that follows `"<key>":` at or after `from`, each
+// as [start, end); none when the key is not there.
+std::vector<std::pair<size_t, size_t>> jsonArrayObjects(const std::string& json,
+                                                        const std::string& key, size_t from,
+                                                        size_t limit) {
+    std::vector<std::pair<size_t, size_t>> out;
+    const size_t keyPos = json.find("\"" + key + "\"", from);
+    if (keyPos == std::string::npos || keyPos >= limit) return out;
+    const size_t open = json.find('[', keyPos);
+    if (open == std::string::npos || open >= limit) return out;
+    const size_t close = jsonSpanEnd(json, open);
+    if (close == std::string::npos) return out;
+    for (size_t i = open + 1; i < close;) {
+        const size_t obj = json.find('{', i);
+        if (obj == std::string::npos || obj >= close) break;
+        const size_t end = jsonSpanEnd(json, obj);
+        if (end == std::string::npos) break;
+        out.push_back({obj, end});
+        i = end;
+    }
+    return out;
+}
+}  // namespace
+
+bool PlexClient::fetchExtrasForItems(const std::vector<std::string>& ratingKeys,
+                                     std::map<std::string, std::vector<MediaItem>>& extrasByItem) {
+    extrasByItem.clear();
+    if (ratingKeys.empty()) return true;
+    std::string ids;
+    for (const auto& key : ratingKeys) {
+        if (!ids.empty()) ids += ",";
+        ids += key;
+    }
+    brls::Logger::debug("fetchExtrasForItems: {} item(s)", ratingKeys.size());
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = buildApiUrl("/library/metadata/" + ids + "?includeExtras=1");
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+    if (resp.statusCode != 200) {
+        brls::Logger::error("Failed to fetch extras of {} item(s): {}", ratingKeys.size(),
+                            resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
+
+    const std::string& body = resp.body;
+    for (const auto& span : jsonArrayObjects(body, "Metadata", 0, body.size())) {
+        const std::string owner = extractJsonValueRange(body, span.first, span.second, "ratingKey");
+        if (owner.empty()) continue;
+        std::vector<MediaItem>& extras = extrasByItem[owner];
+        const size_t extrasPos = body.find("\"Extras\"", span.first);
+        if (extrasPos == std::string::npos || extrasPos >= span.second) continue;
+        for (const auto& e : jsonArrayObjects(body, "Metadata", extrasPos, span.second)) {
+            const std::string obj = body.substr(e.first, e.second - e.first);
+            MediaItem item;
+            item.ratingKey = extractJsonValue(obj, "ratingKey");
+            item.key = extractJsonValue(obj, "key");
+            item.title = extractJsonValue(obj, "title");
+            item.summary = extractJsonValue(obj, "summary");
+            item.thumb = extractJsonValue(obj, "thumb");
+            item.type = extractJsonValue(obj, "type");
+            item.mediaType = parseMediaType(item.type);
+            item.duration = extractJsonInt(obj, "duration");
+            item.subtype = extractJsonValue(obj, "subtype");
+            item.extraType = extractJsonInt(obj, "extraType");
+            item.year = extractJsonInt(obj, "year");
+            if (!item.ratingKey.empty() && !item.title.empty()) extras.push_back(std::move(item));
+        }
+    }
+    return true;
+}
+
 bool PlexClient::fetchArtistHubs(const std::string& ratingKey, std::vector<Hub>& hubs) {
     brls::Logger::debug("fetchArtistHubs: ratingKey={}", ratingKey);
 

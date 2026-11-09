@@ -6,6 +6,7 @@
 #pragma once
 
 #include <string>
+#include <map>
 #include <string_view>
 #include <vector>
 #include <functional>
@@ -447,6 +448,13 @@ public:
 
     // Extras (trailers, deleted scenes, featurettes, etc.)
     bool fetchExtras(const std::string& ratingKey, std::vector<MediaItem>& items);
+    // The extras of several items in one request
+    // (/library/metadata/<a>,<b>,...?includeExtras=1): for each ratingKey
+    // that came back, its extras, as fetchExtras gives them. Not every server
+    // is known to answer so: a caller checks it against fetchExtras once
+    // before it relies on it. false when the request failed.
+    bool fetchExtrasForItems(const std::vector<std::string>& ratingKeys,
+                             std::map<std::string, std::vector<MediaItem>>& extrasByItem);
     // Related / recommended items — the server's "Related" hubs, flattened
     // into a single de-duplicated list of playable movies/shows.
     bool fetchRelated(const std::string& ratingKey, std::vector<MediaItem>& items);
