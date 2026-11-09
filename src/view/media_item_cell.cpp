@@ -354,6 +354,10 @@ void MediaItemCell::setItem(const MediaItem& item) {
                      item.parentIndex, item.index);
             m_subtitleLabel->setText(subtitle);
             m_subtitleLabel->setVisibility(brls::Visibility::VISIBLE);
+        } else if (item.mediaType == MediaType::CLIP && !item.grandparentTitle.empty()) {
+            // A music video listed away from its artist's page: the artist.
+            m_subtitleLabel->setText(item.grandparentTitle);
+            m_subtitleLabel->setVisibility(brls::Visibility::VISIBLE);
         } else if (item.mediaType == MediaType::MUSIC_TRACK) {
             // Show track number for music
             if (item.index > 0) {

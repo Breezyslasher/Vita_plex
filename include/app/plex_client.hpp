@@ -99,6 +99,20 @@ struct MediaItem {
     // 3 interview, 4 music video, 5 behind the scenes, 6 scene or featurette
     // ...; 0 when the server gave none.
     int extraType = 0;
+    // Whether this extra of an artist is a music video: extraType 4. An
+    // artist's other extras (interviews, behind the scenes ...) are clips
+    // too, so a clip counts only when the server gave no extraType.
+    bool isMusicVideoExtra() const {
+        if (extraType == 4) return true;
+        if (subtype.size() == 10) {
+            static const char* const kName = "musicvideo";
+            bool same = true;
+            for (size_t i = 0; i < 10 && same; i++)
+                same = (subtype[i] | 0x20) == kName[i];
+            if (same) return true;
+        }
+        return extraType == 0 && mediaType == MediaType::CLIP;
+    }
 
     // Stream info
     std::string streamUrl;

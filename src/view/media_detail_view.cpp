@@ -2038,14 +2038,7 @@ void MediaDetailView::loadMusicCategories() {
         std::vector<MediaItem> allExtras;
         if (client.fetchExtras(m_item.ratingKey, allExtras)) {
             for (const auto& extra : allExtras) {
-                // Music videos are extraType 4. An artist's other extras
-                // (interviews, behind the scenes ...) are clips too, so a
-                // clip goes in only when the server gave no extraType.
-                std::string subtype = extra.subtype;
-                for (char& c : subtype) c = tolower(c);
-                constexpr int kExtraMusicVideo = 4;
-                if (extra.extraType == kExtraMusicVideo || subtype == "musicvideo" ||
-                    (extra.extraType == 0 && extra.mediaType == MediaType::CLIP)) {
+                if (extra.isMusicVideoExtra()) {
                     musicVideos.push_back(extra);
                 }
             }

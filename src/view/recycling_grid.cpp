@@ -28,15 +28,22 @@ namespace {
 // `sidebarMaxWidth` rather than the live sidebar width so this can
 // run before MainActivity has populated the sidebar, and so a
 // later collapse / expand doesn't strand us with the wrong count.
-int computeColumns() {
+int computeColumns(bool landscape = false) {
     const auto& ic = vitaplex::platform::getImageConstraints();
     float vw = vitaplex::platform::viewportWidth();
     int reserve = ic.sidebarMaxWidth + 20;        // sidebar + small padding
     int available = (int)vw - reserve;
-    int cellW = ic.posterWidth + ic.gridCellSpacing;
+    int cellW = (landscape ? ic.landscapeWidth : ic.posterWidth) + ic.gridCellSpacing;
     if (cellW <= 0 || available <= 0) return ic.gridColumns;
     int fit = available / cellW;
-    if (fit < ic.gridColumns) fit = ic.gridColumns;  // never less than the
+    // Landscape cells (clips) are wider than the posters gridColumns was
+    // designed for: as many as take the room that many posters do.
+    int minCols = ic.gridColumns;
+    if (landscape) {
+        minCols = ic.gridColumns * (ic.posterWidth + ic.gridCellSpacing) / cellW;
+        if (minCols < 2) minCols = 2;
+    }
+    if (fit < minCols) fit = minCols;               // never less than the
                                                     // platform-designed minimum
     if (fit > 12) fit = 12;                          // sanity cap — even
                                                     // an 8K display shouldn't shove 20 covers in a row
@@ -64,7 +71,7 @@ RecyclingGrid::RecyclingGrid() {
     platform::onOrientationChanged([this, aliveWeak]() {
         auto alive = aliveWeak.lock();
         if (!alive || !alive->load()) return;
-        int newCols = computeColumns();
+        int newCols = computeColumns(m_landscapeCells);
         if (newCols == m_columns) return;
         m_columns = newCols;
         if (!m_items.empty()) rebuildGrid();
@@ -73,6 +80,13 @@ RecyclingGrid::RecyclingGrid() {
 
 RecyclingGrid::~RecyclingGrid() {
     if (m_alive) m_alive->store(false);
+}
+
+void RecyclingGrid::setLandscapeCells(bool landscape) {
+    if (m_landscapeCells == landscape) return;
+    m_landscapeCells = landscape;
+    m_columns = computeColumns(landscape);
+    if (!m_items.empty()) rebuildGrid();
 }
 
 void RecyclingGrid::setDataSource(const std::vector<MediaItem>& items) {

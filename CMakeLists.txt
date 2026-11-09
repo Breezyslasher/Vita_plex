@@ -316,6 +316,7 @@ set(APP_SOURCES
     src/view/search_tab.cpp
     src/view/settings_tab.cpp
     src/view/livetv_tab.cpp
+    src/view/music_videos_tab.cpp
     src/view/livetv_actions.cpp
     src/utils/app_update.cpp
     src/view/media_detail_view.cpp

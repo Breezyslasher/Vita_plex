@@ -23,6 +23,10 @@ public:
     RecyclingGrid();
     ~RecyclingGrid() override;
 
+    // The grid holds landscape cells (clips, episodes) rather than posters:
+    // fewer columns, so that a row of them fits. Before setDataSource.
+    void setLandscapeCells(bool landscape);
+
     void setDataSource(const std::vector<MediaItem>& items);
     // Append additional items (called when next page arrives from server)
     void appendItems(const std::vector<MediaItem>& newItems);
@@ -87,6 +91,7 @@ private:
     std::vector<MediaItemCell*> m_cells;
 
     int m_columns = 6;
+    bool m_landscapeCells = false;
     int m_visibleRows = 3;
     size_t m_renderedCount = 0;
 

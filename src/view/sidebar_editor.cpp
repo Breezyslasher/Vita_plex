@@ -242,6 +242,11 @@ private:
         for (const auto& sec : sections)
             universe.push_back({ "lib:" + sec.key, sec.title });
         universe.push_back({ "search", "Search" });
+        for (const auto& sec : sections) {
+            if (sec.type != "artist") continue;
+            universe.push_back({ "musicvideos", "Music Videos" });
+            break;
+        }
         if (hasLiveTV) universe.push_back({ "livetv", "Live TV" });
         universe.push_back({ "downloads", "Downloads" });
 

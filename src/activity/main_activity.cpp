@@ -9,6 +9,7 @@
 #include "view/search_tab.hpp"
 #include "view/settings_tab.hpp"
 #include "view/livetv_tab.hpp"
+#include "view/music_videos_tab.hpp"
 #include "view/downloads_tab.hpp"
 #include "view/media_detail_view.hpp"
 #include "view/sidebar_editor.hpp"
@@ -73,7 +74,7 @@ void MainActivity::applySidebarSizingForViewport() {
     int sidebarWidth = ic.sidebarMinWidth;
 
     std::vector<std::string> standardTabs =
-        {"Home", "Library", "Music", "Search", "Live TV", "Downloads", "Settings"};
+        {"Home", "Library", "Music", "Search", "Music Videos", "Live TV", "Downloads", "Settings"};
     for (const auto& tab : standardTabs) {
         sidebarWidth = std::max(sidebarWidth, calculateTextWidth(tab));
     }
@@ -462,6 +463,11 @@ void MainActivity::buildSidebarTabs() {
     std::vector<std::string> defaultOrder;
     for (const auto& sec : sections) defaultOrder.push_back("lib:" + sec.key);
     defaultOrder.push_back("search");
+    // Music videos are extras of a music library's artists: offered with one.
+    bool hasMusicLibrary = false;
+    for (const auto& sec : sections)
+        if (sec.type == "artist") hasMusicLibrary = true;
+    if (hasMusicLibrary) defaultOrder.push_back("musicvideos");
     if (hasLiveTV) defaultOrder.push_back("livetv");
     defaultOrder.push_back("downloads");
 
@@ -500,6 +506,7 @@ void MainActivity::buildSidebarTabs() {
             // (via Settings ▸ Interface ▸ Manage Hidden Libraries).
             if (id != "search" && sidebarCsvHas(settings.hiddenSidebarItems, id)) continue;
             if (id == "search")         tabFrame->addTab("Search",    []() { return withMusicBack(new SearchTab()); });
+            else if (id == "musicvideos") tabFrame->addTab("Music Videos", []() { return withMusicBack(new MusicVideosTab()); });
             else if (id == "livetv")    tabFrame->addTab("Live TV",   []() { return new LiveTVTab(); });
             else if (id == "downloads") tabFrame->addTab("Downloads", []() { return new DownloadsTab(); });
         }

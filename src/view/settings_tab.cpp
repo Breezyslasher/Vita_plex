@@ -741,7 +741,7 @@ brls::Box* SettingsTab::createUISection() {
         };
         int hiddenCount = (int)tokens(settings.hiddenLibraries).size();
         for (const auto& t : tokens(settings.hiddenSidebarItems))
-            if (t == "livetv" || t == "downloads") hiddenCount++;
+            if (t == "livetv" || t == "downloads" || t == "musicvideos") hiddenCount++;
         m_hiddenLibrariesCell->setDetailText(
             hiddenCount > 0 ? std::to_string(hiddenCount) + " hidden" : "None hidden");
     }
@@ -1925,6 +1925,12 @@ void SettingsTab::onManageHiddenLibraries() {
         it.selected = (hiddenLibs.find(section.key) != hiddenLibs.end());
         items.push_back(it);
     }
+    for (const auto& section : sections) {
+        if (section.type != "artist") continue;
+        items.push_back({ "musicvideos", "Music Videos",
+                          hiddenItems.find("musicvideos") != hiddenItems.end() });
+        break;
+    }
     if (PlexClient::getInstance().hasLiveTV()) {
         items.push_back({ "livetv", "Live TV",
                           hiddenItems.find("livetv") != hiddenItems.end() });
@@ -1947,7 +1953,7 @@ void SettingsTab::onManageHiddenLibraries() {
             // hiddenSidebarItems from scratch also drops any stale "search".)
             std::string newLibs, newItems;
             for (const auto& k : hiddenSelected) {
-                bool builtin = (k == "livetv" || k == "downloads");
+                bool builtin = (k == "livetv" || k == "downloads" || k == "musicvideos");
                 std::string& dst = builtin ? newItems : newLibs;
                 if (!dst.empty()) dst += ",";
                 dst += k;
