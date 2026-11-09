@@ -110,6 +110,7 @@ private:
     // and when a track that could not load at first (lost connection) plays.
     void reloadAlbumArt();
     void playNextEpisode();         // Auto-play next episode in season/show
+    bool playQueuedVideo();         // The video queue's next, if it has one
 
     // Queue list overlay (Direction-A side sheet)
     void showQueueOverlay();

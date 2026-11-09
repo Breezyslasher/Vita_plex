@@ -4,6 +4,7 @@
 #include <mutex>
 #include "activity/player_activity.hpp"
 #include "app/application.hpp"
+#include "app/video_queue.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/music_queue.hpp"
@@ -122,6 +123,10 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
                                                 const std::string& playlistId) {
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isQueueMode = true;
+
+    // Music starting: the videos waiting are let go, as a video starting
+    // lets the music queue go. The two are never both in use.
+    VideoQueue::getInstance().clear();
 
     MusicQueue& queue = MusicQueue::getInstance();
 
@@ -2463,6 +2468,10 @@ void PlayerActivity::updateProgress() {
                 brls::Logger::info("PlayerActivity: Auto-deleted download after watch: {}", m_mediaKey);
             }
 
+            // A video queued to follow comes before the next episode: the
+            // queue is what the user asked for after this.
+            if (playQueuedVideo()) return;
+
             // Auto-play next episode if enabled and this is an episode
             if (Application::getInstance().getSettings().autoPlayNext
                 && m_mediaType == MediaType::EPISODE
@@ -2490,6 +2499,32 @@ void PlayerActivity::updateProgress() {
         m_isPlaying = actuallyPlaying;
         updatePlayPauseLabel();
     }
+}
+
+// The next video of the video queue, in this player: false when there is
+// none. As playNextEpisode loads its episode.
+bool PlayerActivity::playQueuedVideo() {
+    VideoQueueItem next;
+    if (!VideoQueue::getInstance().popNext(next)) return false;
+    brls::Logger::info("PlayerActivity: playing the queued video {} ({}), {} more waiting",
+                       next.ratingKey, next.title, VideoQueue::getInstance().size());
+    const std::string nextKey = next.ratingKey;
+    brls::sync([this, nextKey]() {
+        MpvPlayer::getInstance().stop();
+
+        m_mediaKey = nextKey;
+        m_isLocalFile = false;   // a queued video is the server's
+        m_endHandled = false;
+        m_introSkipped = false;
+        m_creditsSkipped = false;
+        m_markers.clear();
+        m_activeMarkerType.clear();
+        m_skipButtonVisible = false;
+        if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+
+        loadMedia();
+    });
+    return true;
 }
 
 void PlayerActivity::playNextEpisode() {
@@ -2652,7 +2687,7 @@ void PlayerActivity::setupVideoMediaSession() {
                 case T::Play:        if (!m_isPlaying) togglePlayPause(); break;
                 case T::Pause:       if (m_isPlaying)  togglePlayPause(); break;
                 case T::Toggle:      togglePlayPause(); break;
-                case T::Next:        playNextEpisode(); break;
+                case T::Next:        if (!playQueuedVideo()) playNextEpisode(); break;
                 case T::Previous: {
                     double pos = MpvPlayer::getInstance().getPosition();
                     seek(-(int)(pos + 1.0));   // restart current item

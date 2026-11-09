@@ -10,6 +10,7 @@
 #include "view/progress_dialog.hpp"
 #include "activity/player_activity.hpp"
 #include "app/application.hpp"
+#include "app/video_queue.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/music_queue.hpp"
 #include "app/hint_icons.hpp"
@@ -2182,6 +2183,12 @@ void MediaDetailView::loadMusicCategories() {
                         return true;
                     });
                     cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+                    // Its menu, to queue it (START, as the grids' cells).
+                    cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                        [capturedMv](brls::View*) {
+                            showClipContextMenu(capturedMv);
+                            return true;
+                        });
 
                     mvContent->addView(cell);
                 }
@@ -3722,6 +3729,9 @@ void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
         return true;
     }});
 
+    // Queue it to play after what is playing (app/video_queue.hpp).
+    addVideoQueueRows(rows, capturedEpisode);
+
     // Mark as watched/unwatched
     if (episode.watched) {
         rows.push_back({ "hide.png", "Mark as Unwatched", "", false, false,
@@ -3760,6 +3770,56 @@ void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
     }
     showOptionsPopover(anchor, contextLine, episode.title, std::move(rows));
 }
+void MediaDetailView::addVideoQueueRows(std::vector<OptionRow>& rows, const MediaItem& video) {
+    VideoQueueItem item;
+    item.ratingKey = video.ratingKey;
+    item.title = video.title;
+    auto added = [](const std::string& how) {
+        const size_t waiting = VideoQueue::getInstance().size();
+        brls::Application::notify(how + " \xC2\xB7 " + std::to_string(waiting) +
+                                  (waiting == 1 ? " video waiting" : " videos waiting"));
+    };
+    rows.push_back({ "", "Play Next", "", false, false, [item, added](brls::View*) {
+        VideoQueue::getInstance().addNext(item);
+        added("Plays next");
+        return true;
+    }});
+    rows.push_back({ "", "Add to Queue", "", false, false, [item, added](brls::View*) {
+        VideoQueue::getInstance().add(item);
+        added("Added to the queue");
+        return true;
+    }});
+    const size_t waiting = VideoQueue::getInstance().size();
+    if (waiting == 0) return;
+    rows.push_back({ "play.png", "Play Queue", std::to_string(waiting), false, false,
+        [](brls::View*) {
+        VideoQueueItem first;
+        if (VideoQueue::getInstance().popNext(first))
+            Application::getInstance().pushPlayerActivity(first.ratingKey);
+        return true;
+    }});
+    rows.push_back({ "", "Clear Queue", std::to_string(waiting), false, false,
+        [](brls::View*) {
+        VideoQueue::getInstance().clear();
+        brls::Application::notify("Queue cleared");
+        return true;
+    }});
+}
+
+void MediaDetailView::showClipContextMenu(const MediaItem& clip) {
+    brls::View* anchor = brls::Application::getCurrentFocus();
+    const std::string key = clip.ratingKey;
+    std::vector<OptionRow> rows;
+    rows.push_back({ "play.png", "Play", "", true, false, [key](brls::View*) {
+        Application::getInstance().pushPlayerActivity(key);
+        return true;
+    }});
+    addVideoQueueRows(rows, clip);
+    rows.push_back({ "cross.png", "Cancel", "", false, true, [](brls::View*) { return true; }});
+    // The artist, where the clip came with one (the Music Videos tab).
+    showOptionsPopover(anchor, clip.grandparentTitle, clip.title, std::move(rows));
+}
+
 bool MediaDetailView::hasContextMenu(const MediaItem& item) {
     // A Live TV programme's ratingKey is an EPG key, so the library menus
     // below don't apply — but a broadcast still has actions (Watch Now /
@@ -3774,6 +3834,7 @@ bool MediaDetailView::hasContextMenu(const MediaItem& item) {
         case MediaType::MUSIC_ARTIST:
         case MediaType::MUSIC_ALBUM:
         case MediaType::MUSIC_TRACK:
+        case MediaType::CLIP:
             return true;
         default:
             return false;
@@ -3793,6 +3854,7 @@ void MediaDetailView::showContextMenuFor(const MediaItem& item) {
         case MediaType::MUSIC_ARTIST: showArtistContextMenuStatic(item); break;
         case MediaType::MUSIC_ALBUM:  showAlbumContextMenuStatic(item);  break;
         case MediaType::MUSIC_TRACK:  showTrackContextMenuStatic(item);  break;
+        case MediaType::CLIP:         showClipContextMenu(item);         break;
         default: break;
     }
 }
