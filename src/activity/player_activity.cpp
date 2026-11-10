@@ -4727,7 +4727,14 @@ void PlayerActivity::wireVideoOsd() {
     if (brls::View* v = getView("player/osd_bottom")) v->setVisibility(brls::Visibility::VISIBLE);
     if (brls::View* v = getView("player/subs_pill")) v->setVisibility(brls::Visibility::VISIBLE);
 
-    tap(box("player/back_btn"),   [] { brls::Application::popActivity(); });
+    // As the Back button leaves: a video that is to play on does (the
+    // on-screen arrow stopped it, where Back did not; build 2118).
+    tap(box("player/back_btn"),   [this] {
+        if (canKeepVideoPlaying()) m_keepVideoPlaying = true;
+        brls::Logger::info("PlayerActivity: the on-screen back leaves the player ({})",
+                           m_keepVideoPlaying ? "the video plays on" : "playback stops");
+        brls::Application::popActivity();
+    });
     tap(box("player/speed_btn"),  [this] { cycleSpeed(); });
     tap(box("player/subs_pill"),  [this] { showTrackOverlay(TrackSelectMode::SUBTITLE); });
     tap(box("player/next_btn"),   [this] {
