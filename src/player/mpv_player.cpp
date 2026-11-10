@@ -845,7 +845,10 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
     // The picture back for this file, should the last have had it turned off.
     if (m_videoDisabled) {
         m_videoDisabled = false;
-        if (m_mpv && !m_audioOnly) mpv_set_property_string(m_mpv, "vid", "auto");
+        if (m_mpv && !m_audioOnly) {
+            const char* value = "auto";
+            mpv_set_property_async(m_mpv, 0, "vid", MPV_FORMAT_STRING, &value);
+        }
     }
 
     // A terminated core accepts commands and never runs them, so rebuild
@@ -1269,7 +1272,10 @@ void MpvPlayer::setVideoEnabled(bool enabled) {
     if (enabled == !m_videoDisabled) return;
     m_videoDisabled = !enabled;
     if (!m_mpv || m_stopping) return;
-    mpv_set_property_string(m_mpv, "vid", enabled ? "auto" : "no");
+    // Asked without waiting for it, as setVideoTrack asks: the UI thread
+    // must not wait on mpv's core while that tears a video output down.
+    const char* value = enabled ? "auto" : "no";
+    mpv_set_property_async(m_mpv, 0, "vid", MPV_FORMAT_STRING, &value);
     brls::Logger::info("MpvPlayer: picture {}", enabled ? "on" : "off (the sound plays on)");
 }
 

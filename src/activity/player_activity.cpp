@@ -507,6 +507,8 @@ void PlayerActivity::onContentAvailable() {
         }
         // A video, with "Keep Video Audio Playing": its sound plays on.
         if (canKeepVideoPlaying()) m_keepVideoPlaying = true;
+        brls::Logger::info("PlayerActivity: Back leaves the player ({})",
+                           m_keepVideoPlaying ? "the video plays on" : "playback stops");
         brls::Application::popActivity();
         return true;
     });
