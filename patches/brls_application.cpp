@@ -883,7 +883,13 @@ bool Application::setInputType(InputType type)
     if (type == InputType::GAMEPAD)
     {
         Application::setDrawCoursor(false);
-        Application::currentFocus->onFocusGained();
+        // VitaPlex patch: there may be no focus. pushActivity clears it when
+        // the new activity has nothing to take it yet (the video player with
+        // its controls hidden), and a button pressed after a touch then came
+        // here with none: a null pointer on Android's Back, after the screen
+        // had been touched, with a video open (builds 2118 to 2121).
+        if (Application::currentFocus)
+            Application::currentFocus->onFocusGained();
     }
 
     return true;
