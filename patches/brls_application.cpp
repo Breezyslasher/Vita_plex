@@ -964,8 +964,21 @@ bool Application::handleAction(const ActionType type, const int button, const bo
 
     while (hintParent)
     {
-        for (auto& action : hintParent->getActions())
+        // A listener may change the very list it was called from (register
+        // its button again, hide or show what it sits on) or take the view
+        // away under it (pop its activity): walked through a reference to
+        // that list, the next step read an action that was no longer there
+        // (a null pointer, VitaPlex Android build 2118, Back with a video
+        // playing). So a copy of the list, which keeps its actions alive,
+        // and the parent read before any listener runs.
+        const std::vector<std::shared_ptr<Action>> actions = hintParent->getActions();
+        View* const nextParent = hintParent->getParent();
+
+        for (const auto& action : actions)
         {
+            if (!action)
+                continue;
+
             if (action->getType() != type)
                 continue;
 
@@ -990,7 +1003,12 @@ bool Application::handleAction(const ActionType type, const int button, const bo
             }
         }
 
-        hintParent = hintParent->getParent();
+        // The button taken: nothing further up can take it again, and the
+        // views up there may have gone with what the listener did.
+        if (!consumedButtons.empty())
+            return true;
+
+        hintParent = nextParent;
     }
 
     return !consumedButtons.empty();
