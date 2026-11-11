@@ -42,7 +42,7 @@
   </tr>
   <tr>
     <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/music_palyer_ui_mobile.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/music_queue_mobile.png" width="400"/></td>
   </tr>
 </table>
 <table>
@@ -55,7 +55,7 @@
   </tr>
   <tr>
     <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/music_palyer_ui_mobile.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/music_lyrics_mobile.png" width="400"/></td>
   </tr>
 </table>
 <table>
