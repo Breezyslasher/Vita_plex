@@ -16,6 +16,8 @@
 
 #ifdef __ANDROID__
 
+#include <set>
+
 #include <SDL2/SDL.h>
 #include <jni.h>
 
@@ -255,6 +257,51 @@ std::vector<BrowseRow> loadChildrenOf(PlexClient& client, const std::string& rat
     return rows;
 }
 
+// An artist: its albums (/children), then its singles, EPs, compilations and
+// the rest, which /children leaves out (PlexClient::artistReleaseCategories),
+// each with its kind beside its year. One list, not a folder a kind: a car's
+// screen is better with fewer levels to go through.
+std::vector<BrowseRow> loadArtist(PlexClient& client, const std::string& artistKey) {
+    std::vector<BrowseRow> rows = loadChildrenOf(client, artistKey, false);
+
+    MediaItem artist;
+    if (!client.fetchMediaDetails(artistKey, artist) || artist.librarySectionKey.empty())
+        return rows;
+
+    std::set<std::string> seen;
+    for (const auto& r : rows) seen.insert(r.id);
+    std::vector<BrowseRow> typed;
+    for (const auto& cat : PlexClient::artistReleaseCategories()) {
+        for (const char* filter : cat.filters) {
+            std::vector<MediaItem> items;
+            if (!client.fetchArtistAlbumsByFilter(artist.librarySectionKey, artistKey, filter,
+                                                  items))
+                continue;
+            for (const auto& it : items) {
+                const std::string id = "album/" + it.ratingKey;
+                if (!seen.insert(id).second) continue;
+                BrowseRow r;
+                r.id       = id;
+                r.title    = it.title;
+                r.subtitle = it.year > 0 ? std::string(cat.label) + " \xC2\xB7 " +
+                                               std::to_string(it.year)
+                                         : std::string(cat.label);
+                r.iconUri  = artUri(client, it.thumb);
+                r.flags    = FLAG_BROWSABLE | FLAG_PLAYABLE;
+                typed.push_back(std::move(r));
+            }
+        }
+    }
+    // /children can hold the typed releases too: shown once, with their kind.
+    std::set<std::string> typedIds;
+    for (const auto& r : typed) typedIds.insert(r.id);
+    std::vector<BrowseRow> out;
+    for (auto& r : rows)
+        if (!typedIds.count(r.id)) out.push_back(std::move(r));
+    for (auto& r : typed) out.push_back(std::move(r));
+    return out;
+}
+
 std::vector<BrowseRow> loadPlaylists(PlexClient& client) {
     std::vector<BrowseRow> rows;
     std::vector<Playlist> playlists;
@@ -304,7 +351,7 @@ std::vector<BrowseRow> resolveNode(const std::string& parentId) {
     if (startsWith(parentId, "lib/"))
         return loadArtists(client, suffixAfter(parentId, "lib/"));
     if (startsWith(parentId, "artist/"))
-        return loadChildrenOf(client, suffixAfter(parentId, "artist/"), false);
+        return loadArtist(client, suffixAfter(parentId, "artist/"));
     if (startsWith(parentId, "album/"))
         return loadChildrenOf(client, suffixAfter(parentId, "album/"), true);
     if (startsWith(parentId, "playlist/"))

@@ -1913,6 +1913,24 @@ std::vector<std::pair<size_t, size_t>> jsonArrayObjects(const std::string& json,
 }
 }  // namespace
 
+const std::vector<PlexClient::ReleaseCategory>& PlexClient::artistReleaseCategories() {
+    // One query per value: Plex's comma / IN form is unreliable here.
+    static const std::vector<ReleaseCategory> kCategories = {
+        {"Singles & EPs", {"album.format=Single", "album.format=EP"}},
+        {"Compilations",  {"album.subformat=Compilation"}},
+        {"Soundtracks",   {"album.subformat=Soundtrack"}},
+        {"Live",          {"album.subformat=Live"}},
+        {"Remixes",       {"album.subformat=Remix"}},
+        {"Demos",         {"album.subformat=Demo"}},
+        {"DJ Mixes",      {"album.subformat=DJ-mix"}},
+        {"Mixtapes",      {"album.subformat=Mixtape/Street"}},
+        {"Spoken Word",   {"album.subformat=Spokenword"}},
+        {"Interviews",    {"album.subformat=Interview"}},
+        {"Audiobooks",    {"album.subformat=Audiobook"}},
+    };
+    return kCategories;
+}
+
 bool PlexClient::fetchExtrasForItems(const std::vector<std::string>& ratingKeys,
                                      std::map<std::string, std::vector<MediaItem>>& extrasByItem) {
     extrasByItem.clear();

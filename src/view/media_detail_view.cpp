@@ -2064,28 +2064,20 @@ void MediaDetailView::loadMusicCategories() {
         std::vector<MediaItem> children;
         client.fetchChildren(m_item.ratingKey, children);
 
-        // Typed releases, the way the official client splits them. Plex follows
-        // MusicBrainz: Single / EP are primary types (album.format); everything
-        // else is a secondary type (album.subformat). One query per value —
-        // Plex's comma/IN form is unreliable. Empty categories hide themselves.
+        // Typed releases (PlexClient::artistReleaseCategories). Empty
+        // categories hide themselves.
         struct AlbumCat {
             std::string label;
             std::vector<std::string> filters;   // OR'd together (e.g. Single + EP)
             std::vector<MediaItem> items;
         };
-        std::vector<AlbumCat> cats = {
-            {"Singles & EPs", {"album.format=Single", "album.format=EP"}, {}},
-            {"Compilations",  {"album.subformat=Compilation"},            {}},
-            {"Soundtracks",   {"album.subformat=Soundtrack"},             {}},
-            {"Live",          {"album.subformat=Live"},                   {}},
-            {"Remixes",       {"album.subformat=Remix"},                  {}},
-            {"Demos",         {"album.subformat=Demo"},                   {}},
-            {"DJ Mixes",      {"album.subformat=DJ-mix"},                 {}},
-            {"Mixtapes",      {"album.subformat=Mixtape/Street"},         {}},
-            {"Spoken Word",   {"album.subformat=Spokenword"},             {}},
-            {"Interviews",    {"album.subformat=Interview"},              {}},
-            {"Audiobooks",    {"album.subformat=Audiobook"},              {}},
-        };
+        std::vector<AlbumCat> cats;
+        for (const auto& rc : PlexClient::artistReleaseCategories()) {
+            AlbumCat c;
+            c.label = rc.label;
+            for (const char* f : rc.filters) c.filters.push_back(f);
+            cats.push_back(std::move(c));
+        }
         if (!sectionKey.empty()) {
             for (auto& c : cats) {
                 for (const auto& f : c.filters) {

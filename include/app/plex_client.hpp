@@ -441,6 +441,17 @@ public:
     // EMPTY filter to get every release type the artist owns (regular albums plus
     // all typed releases) in a single query. Needs the artist's library section
     // id and numeric id (the artist ratingKey).
+    // An artist's releases other than its albums, the way the official
+    // client splits them: Plex follows MusicBrainz, so Single / EP are primary
+    // types (album.format) and the rest secondary ones (album.subformat). Each
+    // category is one fetchArtistAlbumsByFilter per filter, OR'd together.
+    // Shared by the artist page and Android's media browser (Android Auto).
+    struct ReleaseCategory {
+        const char* label;
+        std::vector<const char*> filters;
+    };
+    static const std::vector<ReleaseCategory>& artistReleaseCategories();
+
     bool fetchArtistAlbumsByFilter(const std::string& sectionKey,
                                    const std::string& artistRatingKey,
                                    const std::string& filter,
