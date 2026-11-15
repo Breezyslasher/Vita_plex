@@ -240,6 +240,7 @@ public class VitaPlexActivity extends SDLActivity
         // A deep link that cold-started us. Native isn't up yet, so it is held
         // until the UI asks for it (takePendingDeepLink).
         rememberDeepLink(getIntent());
+        handlePlayFromSearch(getIntent());
 
         // Android 13+ gates notifications behind a runtime grant; ask once so the
         // music media notification can be posted. Denial is non-fatal (the
@@ -329,12 +330,35 @@ public class VitaPlexActivity extends SDLActivity
         super.onNewIntent(intent);
         // singleInstance, so a second link arrives here rather than in onCreate.
         rememberDeepLink(intent);
+        handlePlayFromSearch(intent);
         // Unlike a cold start there is a running UI, so nudge it to collect the
         // link now instead of waiting for the next thing that happens to poll.
         try {
             nativeDeepLink();
         } catch (Throwable t) {
             Log.w(TAG, "nativeDeepLink unavailable", t);
+        }
+    }
+
+    /**
+     * The Assistant's "play <x> on VitaPlex" (MEDIA_PLAY_FROM_SEARCH): played
+     * as the media session's onPlayFromSearch plays it, through the browser
+     * service, which matches the words against the music library. An empty
+     * query asks for "some music": native resumes what is queued.
+     */
+    private void handlePlayFromSearch(Intent intent) {
+        if (intent == null
+                || !android.provider.MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH.equals(intent.getAction()))
+            return;
+        try {
+            String query = intent.getStringExtra(android.app.SearchManager.QUERY);
+            Log.i(TAG, "play from search: \"" + (query != null ? query : "") + "\"");
+            // The browser service may not be bound yet: it is given this
+            // activity's context to load the library and reach the server with.
+            LibraryBrowserService.ensureNativeForSearch(this);
+            LibraryBrowserService.playFromSearch(query != null ? query.trim() : "");
+        } catch (Throwable t) {
+            Log.w(TAG, "play from search failed", t);
         }
     }
 

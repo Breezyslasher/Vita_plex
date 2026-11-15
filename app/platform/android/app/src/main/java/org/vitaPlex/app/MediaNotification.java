@@ -730,6 +730,22 @@ public final class MediaNotification {
                 } catch (Throwable t) { Log.w(TAG, "setRepeat", t); }
             }
         });
+
+        // What the session can do, from its first moment: Android Auto and the
+        // Assistant read the actions off the playback state to learn that "play
+        // <x> on VitaPlex" can be sent here. With no state until something had
+        // played, the Assistant took VitaPlex for a device to cast to and asked
+        // which one.
+        sSession.setPlaybackState(new PlaybackStateCompat.Builder()
+            .setState(PlaybackStateCompat.STATE_NONE, 0, 0f)
+            .setActions(PlaybackStateCompat.ACTION_PLAY
+                | PlaybackStateCompat.ACTION_PLAY_PAUSE
+                | PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID
+                | PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH
+                | PlaybackStateCompat.ACTION_PREPARE
+                | PlaybackStateCompat.ACTION_PREPARE_FROM_MEDIA_ID
+                | PlaybackStateCompat.ACTION_PREPARE_FROM_SEARCH)
+            .build());
     }
 
     private static void ensureChannel(Context ctx) {
