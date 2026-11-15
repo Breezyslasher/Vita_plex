@@ -72,6 +72,21 @@ struct BrowseRow {
     int flags = FLAG_BROWSABLE;
 };
 
+// A library the user hid (Settings, Manage Hidden Libraries): left out of the
+// browser and its searches, as it is out of the sidebar and Home.
+bool isHiddenLibrary(const std::string& sectionKey) {
+    if (sectionKey.empty()) return false;
+    const std::string& csv = Application::getInstance().getSettings().hiddenLibraries;
+    size_t at = 0;
+    while (at <= csv.size()) {
+        size_t end = csv.find(',', at);
+        if (end == std::string::npos) end = csv.size();
+        if (csv.compare(at, end - at, sectionKey) == 0 && end - at == sectionKey.size()) return true;
+        at = end + 1;
+    }
+    return false;
+}
+
 bool startsWith(const std::string& s, const std::string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 }
@@ -191,6 +206,7 @@ std::vector<BrowseRow> loadRoot(PlexClient& client) {
     if (client.fetchLibrarySections(sections)) {
         for (const auto& s : sections) {
             if (s.type != "artist") continue;  // music libraries only
+            if (isHiddenLibrary(s.key)) continue;
             BrowseRow r;
             r.id      = "lib/" + s.key;
             r.title   = s.title;
@@ -537,6 +553,7 @@ std::string resolveSearchQuery(PlexClient& client, const std::string& query) {
     const MediaItem* best = nullptr;
     int bestScore = 0;
     for (const auto& m : results) {
+        if (isHiddenLibrary(m.librarySectionKey)) continue;
         const int s = score(m);
         if (s > bestScore) { bestScore = s; best = &m; }
     }
@@ -703,6 +720,7 @@ Java_org_VitaPlex_app_SearchSuggestionProvider_nativeSearchSuggestions(JNIEnv* e
     for (const auto& m : results) {
         if (flat.size() >= kMaxRows * 4) break;
         if (m.ratingKey.empty()) continue;
+        if (isHiddenLibrary(m.librarySectionKey)) continue;
         // People and other non-playable hits have nothing to open.
         if (m.type == "person" || m.type == "tag") continue;
 
