@@ -253,7 +253,7 @@
              GLOBAL_SEARCH so only that app can. -->
         <provider
             android:name="org.VitaPlex.app.SearchSuggestionProvider"
-            android:authorities="org.VitaPlex.app.search"
+            android:authorities="${applicationId}.search"
             android:exported="true"
             android:readPermission="android.permission.GLOBAL_SEARCH" />
 

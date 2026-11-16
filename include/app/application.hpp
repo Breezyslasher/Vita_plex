@@ -33,7 +33,15 @@
 
 // Plex client identification
 #define PLEX_CLIENT_ID "vita-plex-client-001"
-#define PLEX_CLIENT_NAME "VitaPlex"
+// The app's name where a user reads it: VitaStream in the Google Play build
+// (VITAPLEX_STORE_BUILD, Android's "play" flavour), whose listing cannot use
+// Plex's trademark, else VitaPlex. Also the product name the Plex server shows.
+#ifdef VITAPLEX_STORE_BUILD
+#define APP_DISPLAY_NAME "VitaStream"
+#else
+#define APP_DISPLAY_NAME "VitaPlex"
+#endif
+#define PLEX_CLIENT_NAME APP_DISPLAY_NAME
 #define PLEX_CLIENT_VERSION VITA_PLEX_VERSION
 
 // NOTE: per-platform Plex transcode identification and limits

@@ -3,6 +3,9 @@
     <string name="search_hint">Search your Plex library</string>
     <string name="search_settings_description">Movies, shows and music from your Plex server</string>
     <string name="tile_music_label">VitaPlex music</string>
+    <!-- The search provider's authority, ${applicationId}.search: kept here
+         for res/xml/searchable.xml, which cannot read the app id itself. -->
+    <string name="search_authority" translatable="false">org.VitaPlex.app.search</string>
     <string name="widget_description">Now playing, with transport controls</string>
     <string name="widget_nothing_playing">Nothing playing</string>
 </resources>

@@ -628,7 +628,7 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativeLoadChildren(JNIEnv* env, jcla
         if (!ensureClientReady()) {
             std::vector<BrowseRow> row(1);
             row[0].id    = "__signed_out__";
-            row[0].title = "Sign in to VitaPlex to browse your library";
+            row[0].title = "Sign in to " APP_DISPLAY_NAME " to browse your library";
             row[0].flags = 0;  // neither browsable nor playable
             deliverRows((int)token, row);
             return;

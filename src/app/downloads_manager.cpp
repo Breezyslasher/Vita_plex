@@ -808,8 +808,8 @@ void DownloadsManager::noteAppClosing() {
                        "when it opens again",
                        left);
     shell::setProgress(0.0, title.empty() ? "Downloads" : title,
-                       left > 1 ? std::to_string(left) + " paused until VitaPlex opens again"
-                                : "Paused until VitaPlex opens again",
+                       left > 1 ? std::to_string(left) + " paused until " APP_DISPLAY_NAME " opens again"
+                                : "Paused until " APP_DISPLAY_NAME " opens again",
                        false);
 }
 

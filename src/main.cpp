@@ -122,7 +122,7 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     style.addMetric("brls/sidebar/padding_right", 20.0f);
 
     // Create window
-    brls::Application::createWindow("VitaPlex");
+    brls::Application::createWindow(APP_DISPLAY_NAME);
 
     // Set theme colors (Plex-like)
     brls::Application::getPlatform()->getThemeVariant();
