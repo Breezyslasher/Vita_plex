@@ -700,12 +700,15 @@ jobs:
     if: ${{ inputs.platform == 'android' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: Android
     runs-on: ubuntu-latest
+    env:
+      HAS_PLAY_KEY: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 != '' }}
     steps:
     - uses: actions/checkout@v4
       with:
         submodules: recursive
-    # Gradle 8.1.1 cannot run on the runner's default Java once that is
-    # newer than 19 ("Unsupported class file major version 69", build 2108).
+    # Java 17 for the Android Gradle plugin, which cannot run on the runner's
+    # default Java once that is newer than it supports ("Unsupported class
+    # file major version 69", build 2108).
     - uses: actions/setup-java@v4
       with:
         distribution: temurin
@@ -783,14 +786,38 @@ jobs:
         # Pass the CI-resolved version through to the native cmake build (via
         # build.gradle) so the in-app Settings version matches the APK
         # versionName instead of the possibly-stale VERSION file.
-        cd app/platform/android && ./gradlew assembleRelease \
+        cd app/platform/android && ./gradlew assembleGithubRelease \
           -PappVersion="${{ needs.resolve-version.outputs.version_number }}" \
           -PappDisplayVersion="${{ needs.resolve-version.outputs.version }}"
     - name: Upload dist
       uses: actions/upload-artifact@v4
       with:
         name: VitaPlex-android-${{ github.run_number }}
-        path: app/platform/android/app/build/outputs/apk/release/*.apk
+        path: app/platform/android/app/build/outputs/apk/github/release/*.apk
+    # The Google Play app bundle: only once the upload key is in the
+    # repository's secrets (ANDROID_UPLOAD_KEYSTORE_BASE64, the keystore file
+    # in base64, and VITAPLEX_KEYSTORE_PASSWORD, VITAPLEX_KEY_ALIAS,
+    # VITAPLEX_KEY_PASSWORD). Without it the step is left out.
+    - name: Build Google Play bundle
+      if: ${{ env.HAS_PLAY_KEY == 'true' }}
+      env:
+        KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+        VITAPLEX_KEYSTORE_PASSWORD: ${{ secrets.VITAPLEX_KEYSTORE_PASSWORD }}
+        VITAPLEX_KEY_ALIAS: ${{ secrets.VITAPLEX_KEY_ALIAS }}
+        VITAPLEX_KEY_PASSWORD: ${{ secrets.VITAPLEX_KEY_PASSWORD }}
+      run: |
+        export VITAPLEX_KEYSTORE="${{ runner.temp }}/upload.jks"
+        echo "$KEYSTORE_B64" | base64 -d > "$VITAPLEX_KEYSTORE"
+        cd app/platform/android && ./gradlew bundlePlayRelease \
+          -PappVersion="${{ needs.resolve-version.outputs.version_number }}" \
+          -PappDisplayVersion="${{ needs.resolve-version.outputs.version }}"
+        rm -f "$VITAPLEX_KEYSTORE"
+    - name: Upload Google Play bundle
+      if: ${{ env.HAS_PLAY_KEY == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: VitaPlex-play-bundle-${{ github.run_number }}
+        path: app/platform/android/app/build/outputs/bundle/playRelease/*.aab
 
   # ───────────────────────────────────────────────
   # AppImage — portable Linux (x86_64 + aarch64)

@@ -2016,6 +2016,16 @@ void afterStart() {
 }
 
 void checkForUpdates(bool manual) {
+#ifdef VITAPLEX_STORE_BUILD
+    // The store's build: the store updates the app, and installing an update
+    // itself is not allowed there.
+    if (manual) {
+        auto* d = new brls::Dialog("Updates come from the store this app was installed from.");
+        d->addButton("OK", []() {});
+        d->open();
+    }
+    return;
+#endif
     bool expected = false;
     if (!s_busy.compare_exchange_strong(expected, true)) return;
 

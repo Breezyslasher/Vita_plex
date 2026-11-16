@@ -3,6 +3,7 @@
      com.gamemaker.game
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="org.VitaPlex.app"
     android:versionCode="2"
     android:versionName="0.6.3"
@@ -91,7 +92,12 @@
 
          An example Java class can be found in README-android.md
     -->
+    <!-- enableOnBackInvokedCallback="false": the Back key reaches the app
+         as a key, as it did before Android 16. Targeting API 36, the system
+         otherwise takes Back itself (predictive back) and SDL, and so every
+         screen's Back, never sees it. -->
     <application android:label="@string/app_name"
+        android:enableOnBackInvokedCallback="false"
         android:icon="@mipmap/ic_launcher"
         android:banner="@drawable/banner"
         android:allowBackup="true"

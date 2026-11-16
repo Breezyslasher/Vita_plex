@@ -21,6 +21,13 @@ set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
 
+# The Google Play build (app/build.gradle's "play" flavour): no updater of its
+# own, as Play updates the app (utils/app_update).
+option(VITAPLEX_STORE_BUILD "Build for an app store, which updates the app itself" OFF)
+if (VITAPLEX_STORE_BUILD)
+    add_compile_definitions(VITAPLEX_STORE_BUILD=1)
+endif()
+
 link_directories(${MPV_PREFIX}/lib)
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -L${MPV_PREFIX}/lib")
 

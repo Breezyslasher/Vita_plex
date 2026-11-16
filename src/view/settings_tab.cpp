@@ -1265,7 +1265,9 @@ brls::Box* SettingsTab::createNetworkSection() {
         });
     box->addView(m_connectionTimeoutSelector);
 
-    // In-app updates: manual check now, plus the startup check toggle.
+    // In-app updates: manual check now, plus the startup check toggle. Not in
+    // a store's build, which the store updates (utils/app_update).
+#ifndef VITAPLEX_STORE_BUILD
     auto* checkUpdatesCell = new brls::DetailCell();
     checkUpdatesCell->setText("Check for Updates");
     checkUpdatesCell->setDetailText(VITA_PLEX_DISPLAY_VERSION);
@@ -1283,6 +1285,7 @@ brls::Box* SettingsTab::createNetworkSection() {
             Application::getInstance().saveSettings();
         });
     box->addView(autoUpdateToggle);
+#endif
 
     // Network diagnostic — opens a dialog showing WiFi info, internet
     // reachability, and Plex server latency. Was previously under the

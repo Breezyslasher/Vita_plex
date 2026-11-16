@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The Google Play build's changes to src/main/AndroidManifest.xml, merged
+    over it. Play updates the app itself and does not allow an app to install
+    updates on its own, so the updater's permission and the provider that
+    hands it the downloaded APK are taken out (the native updater is left out
+    too: VITAPLEX_STORE_BUILD, app/build.gradle).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:node="remove" />
+
+    <application>
+        <provider
+            android:name="org.libsdl.app.ApkProvider"
+            tools:node="remove" />
+    </application>
+</manifest>
