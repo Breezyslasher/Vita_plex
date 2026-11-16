@@ -53,7 +53,7 @@ android {
             // a name without Plex's trademark in it, for a store listing. The
             // GitHub build stays org.VitaPlex.app. (The Java package, and so
             // the JNI names, are the namespace's, org.VitaPlex.app, either way.)
-            applicationId "org.vitastream.app"
+            applicationId "io.github.breezyslasher.vitastream"
             externalNativeBuild {
                 cmake {
                     arguments "-DVITAPLEX_STORE_BUILD=ON"

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The Google Play build's names (app id org.vitastream.app), over
+<!-- The Google Play build's names (app id io.github.breezyslasher.vitastream), over
      src/main/res/values/strings.xml. -->
 <resources>
     <string name="app_name">VitaStream</string>
     <string name="tile_music_label">VitaStream music</string>
-    <string name="search_authority" translatable="false">org.vitastream.app.search</string>
+    <string name="search_authority" translatable="false">io.github.breezyslasher.vitastream.search</string>
 </resources>
