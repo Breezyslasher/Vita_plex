@@ -16,6 +16,7 @@
 
 #ifdef __ANDROID__
 
+#include <atomic>
 #include <set>
 
 #include <SDL2/SDL.h>
@@ -380,8 +381,22 @@ std::vector<BrowseRow> resolveNode(const std::string& parentId) {
 // default track action. Runs on a worker thread (it does network I/O), hopping
 // to the UI loop only to touch the queue. Shared by the media-id and the
 // voice-search entry points below.
-void playMediaId(const std::string& mediaId) {
+// Requests to play from outside the app (Android Auto, the Assistant): each
+// takes the next number, and only the newest is carried out. With the app
+// closed, every tap and spoken request waits for it to start, and all of them
+// then started at once, each in a player of its own, fighting over the one
+// player underneath: five in 1.3 s, and no music (log 67c6ed49).
+std::atomic<uint64_t> g_playRequest{0};
+
+bool superseded(uint64_t request, const std::string& what) {
+    if (request == g_playRequest.load()) return false;
+    brls::Logger::info("MediaBrowser: {} passed over: a newer request came", what);
+    return true;
+}
+
+void playMediaId(const std::string& mediaId, uint64_t request) {
     if (!ensureClientReady()) return;
+    if (superseded(request, mediaId)) return;
 
     PlexClient& client = PlexClient::getInstance();
     std::vector<MediaItem> tracks;
@@ -446,7 +461,8 @@ void playMediaId(const std::string& mediaId) {
         return;
     }
 
-    brls::sync([tracks, startIndex, singlePick]() {
+    brls::sync([tracks, startIndex, singlePick, request, mediaId]() {
+        if (superseded(request, mediaId)) return;
         MusicQueue& queue = MusicQueue::getInstance();
         TrackDefaultAction action =
             vitaplex::Application::getInstance().getSettings().trackDefaultAction;
@@ -647,7 +663,8 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromMediaId(JNIEnv* env, j
     if (raw) env->ReleaseStringUTFChars(jMediaId, raw);
 
     brls::Logger::info("MediaBrowser: playFromMediaId({})", mediaId);
-    asyncRun([mediaId]() { playMediaId(mediaId); });
+    const uint64_t request = ++g_playRequest;
+    asyncRun([mediaId, request]() { playMediaId(mediaId, request); });
 }
 
 /**
@@ -667,9 +684,11 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromSearch(JNIEnv* env, jc
     if (raw) env->ReleaseStringUTFChars(jQuery, raw);
 
     brls::Logger::info("MediaBrowser: playFromSearch({})", query);
+    const uint64_t request = ++g_playRequest;
 
-    asyncRun([query]() {
+    asyncRun([query, request]() {
         if (!ensureClientReady()) return;
+        if (superseded(request, "\"" + query + "\"")) return;
 
         if (query.empty()) {
             brls::sync([]() {
@@ -684,7 +703,7 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromSearch(JNIEnv* env, jc
             brls::Logger::warning("MediaBrowser: no music match for \"{}\"", query);
             return;
         }
-        playMediaId(mediaId);
+        playMediaId(mediaId, request);
     });
 }
 

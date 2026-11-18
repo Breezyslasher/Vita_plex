@@ -432,6 +432,7 @@ public final class MediaNotification {
                     CUSTOM_REPEAT, rt, repIcon).build());
             }
         }
+        sStartingSince = 0;   // real playback published: no longer starting
         sSession.setPlaybackState(psb.build());
         // Publish the modes themselves, so a controller can display the current
         // state instead of guessing — the other half of what custom actions
@@ -681,12 +682,14 @@ public final class MediaNotification {
             // A media id picked in Android Auto / Assistant / Wear. The ids come
             // from LibraryBrowserService's tree, so it owns resolving them.
             @Override public void onPlayFromMediaId(String mediaId, Bundle extras) {
+                showStarting();
                 LibraryBrowserService.playFromMediaId(mediaId);
             }
             // Spoken requests: "play <album> on VitaPlex". Prepare-variants are
             // the same work minus the play, and clients treat a missing
             // onPrepare* as "this session can't be warmed up" — so answer both.
             @Override public void onPlayFromSearch(String query, Bundle extras) {
+                showStarting();
                 LibraryBrowserService.playFromSearch(query);
             }
             // Prepare means "get ready", not "start". The expensive part of a
@@ -736,16 +739,59 @@ public final class MediaNotification {
         // <x> on VitaPlex" can be sent here. With no state until something had
         // played, the Assistant took VitaPlex for a device to cast to and asked
         // which one.
-        sSession.setPlaybackState(new PlaybackStateCompat.Builder()
-            .setState(PlaybackStateCompat.STATE_NONE, 0, 0f)
-            .setActions(PlaybackStateCompat.ACTION_PLAY
-                | PlaybackStateCompat.ACTION_PLAY_PAUSE
-                | PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID
-                | PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH
-                | PlaybackStateCompat.ACTION_PREPARE
-                | PlaybackStateCompat.ACTION_PREPARE_FROM_MEDIA_ID
-                | PlaybackStateCompat.ACTION_PREPARE_FROM_SEARCH)
-            .build());
+        sSession.setPlaybackState(idleState(PlaybackStateCompat.STATE_NONE));
+    }
+
+    private static final long IDLE_ACTIONS = PlaybackStateCompat.ACTION_PLAY
+        | PlaybackStateCompat.ACTION_PLAY_PAUSE
+        | PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID
+        | PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH
+        | PlaybackStateCompat.ACTION_PREPARE
+        | PlaybackStateCompat.ACTION_PREPARE_FROM_MEDIA_ID
+        | PlaybackStateCompat.ACTION_PREPARE_FROM_SEARCH;
+
+    private static PlaybackStateCompat idleState(int state) {
+        return new PlaybackStateCompat.Builder()
+            .setState(state, 0, 0f)
+            .setActions(IDLE_ACTIONS)
+            .build();
+    }
+
+    // Set by showStarting, cleared as the native side publishes real playback.
+    private static long sStartingSince = 0;
+    private static final long STARTING_TIMEOUT_MS = 30000;
+
+    /**
+     * A play request from Android Auto or the Assistant has arrived: say so
+     * at once. With the app closed it has to start and reach the server
+     * first, and a session that showed nothing for those seconds was taken
+     * by Android Auto for a failure, with an error on the car's screen
+     * (log 67c6ed49). Connecting is what a car shows as loading. Should the
+     * request come to nothing, the session goes back to idle after 30 s.
+     */
+    static void showStarting() {
+        if (sSession == null) return;
+        try {
+            PlaybackStateCompat cur = sSession.getController().getPlaybackState();
+            if (cur != null && (cur.getState() == PlaybackStateCompat.STATE_PLAYING
+                    || cur.getState() == PlaybackStateCompat.STATE_BUFFERING)) return;
+            sSession.setActive(true);
+            sSession.setPlaybackState(idleState(PlaybackStateCompat.STATE_CONNECTING));
+            final long since = System.currentTimeMillis();
+            sStartingSince = since;
+            sMain.postDelayed(new Runnable() {
+                @Override public void run() {
+                    if (sSession == null || sStartingSince != since) return;
+                    PlaybackStateCompat now = sSession.getController().getPlaybackState();
+                    if (now != null && now.getState() == PlaybackStateCompat.STATE_CONNECTING) {
+                        Log.w(TAG, "a play request came to nothing in 30 s");
+                        sSession.setPlaybackState(idleState(PlaybackStateCompat.STATE_NONE));
+                    }
+                }
+            }, STARTING_TIMEOUT_MS);
+        } catch (Throwable t) {
+            Log.w(TAG, "showStarting failed", t);
+        }
     }
 
     private static void ensureChannel(Context ctx) {

@@ -356,6 +356,8 @@ public class VitaPlexActivity extends SDLActivity
             // The browser service may not be bound yet: it is given this
             // activity's context to load the library and reach the server with.
             LibraryBrowserService.ensureNativeForSearch(this);
+            MediaNotification.getSession(this);
+            MediaNotification.showStarting();
             LibraryBrowserService.playFromSearch(query != null ? query.trim() : "");
         } catch (Throwable t) {
             Log.w(TAG, "play from search failed", t);
