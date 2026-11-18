@@ -531,27 +531,63 @@ void playMediaId(const std::string& mediaId, uint64_t request) {
     });
 }
 
-// Turn a spoken query into something playable.
-//
-// Assistant hands over free text ("play <album> by <artist>"), so this searches
-// the library and picks the best music hit, preferring the broadest thing that
-// matched: an artist or album gives a full listening session, a bare track only
-// gives three minutes. An exact title match wins over a partial one at the same
-// type, so "play Kid A" doesn't land on a compilation that merely mentions it.
-//
-// Returns a browse-tree media id for playMediaId(), or empty when nothing in
-// the music library matched.
-std::string resolveSearchQuery(PlexClient& client, const std::string& query) {
+std::string lowerCase(std::string s) {
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+// Words of three letters or more, lowercased, punctuation dropped.
+std::vector<std::string> wordsOf(const std::string& text) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : text + " ") {
+        if (std::isalnum((unsigned char)c)) {
+            cur += (char)std::tolower((unsigned char)c);
+        } else {
+            if (cur.size() >= 3) out.push_back(cur);
+            cur.clear();
+        }
+    }
+    return out;
+}
+
+// How many of the spoken artist's words appear in the item's artist name.
+// Speech recognition often mangles names ("Daniel rustige"), so this only
+// ranks results; it never rules one out.
+int artistWordsMatched(const MediaItem& m, const std::string& artistHint) {
+    std::string owner;
+    if (m.type == "track")       owner = m.grandparentTitle;
+    else if (m.type == "album")  owner = m.parentTitle;
+    else if (m.type == "artist") owner = m.title;
+    const std::string have = lowerCase(owner);
+    int n = 0;
+    for (const auto& w : wordsOf(artistHint))
+        if (have.find(w) != std::string::npos) n++;
+    return n;
+}
+
+// One search against the library. With no artist hint, the broadest music hit
+// wins (an artist or album is a whole listening session, a track three
+// minutes). With a hint, from "<title> by <artist>", the title is what was
+// asked for, so the item whose title matches wins, the artist breaks ties.
+std::string resolveOneSearch(PlexClient& client, const std::string& query,
+                             const std::string& artistHint) {
     std::vector<MediaItem> results;
     if (!client.search(query, results) || results.empty()) return {};
 
-    auto lower = [](std::string s) {
-        for (char& c : s) c = (char)std::tolower((unsigned char)c);
-        return s;
-    };
-    const std::string want = lower(query);
+    const std::string want = lowerCase(query);
 
-    // Higher is better. Type first (an artist beats a track), exactness second.
+    // 3 exact, 2 starts with, 1 contains either way, 0 none.
+    auto exactness = [&](const MediaItem& m) {
+        const std::string t = lowerCase(m.title);
+        if (t == want) return 3;
+        if (startsWith(t, want)) return 2;
+        if (t.find(want) != std::string::npos ||
+            (!t.empty() && want.find(t) != std::string::npos)) return 1;
+        return 0;
+    };
+
+    // Higher is better; -1 means not a candidate.
     auto score = [&](const MediaItem& m) -> int {
         int base;
         if (m.type == "artist")        base = 40;
@@ -559,11 +595,13 @@ std::string resolveSearchQuery(PlexClient& client, const std::string& query) {
         else if (m.type == "playlist") base = 20;
         else if (m.type == "track")    base = 10;
         else                           return -1;   // movies, shows: not music
-        const std::string t = lower(m.title);
-        if (t == want) return base + 3;
-        if (startsWith(t, want)) return base + 2;
-        if (t.find(want) != std::string::npos) return base + 1;
-        return base;
+        const int ex = exactness(m);
+        if (artistHint.empty()) return base + ex;
+
+        // "<title> by <artist>": the title has to match something, and an
+        // artist named like the title is not what was asked for.
+        if (ex == 0 || m.type == "artist") return -1;
+        return ex * 100 + artistWordsMatched(m, artistHint) * 10 + base / 10;
     };
 
     const MediaItem* best = nullptr;
@@ -585,6 +623,39 @@ std::string resolveSearchQuery(PlexClient& client, const std::string& query) {
     if (client.fetchChildren(best->ratingKey, albums) && !albums.empty())
         return "album/" + albums.front().ratingKey;
     return {};
+}
+
+// Turn a spoken query into something playable.
+//
+// Assistant hands over free text. "In the Air Tonight Phil Collins" finds the
+// song as it is, but Plex's search matches the whole phrase, so "Leaders of
+// History by Daniel Rossiter" finds nothing, and a misheard artist name sinks
+// it even more. So when the whole phrase finds nothing and it has a " by ",
+// search the part before it (the title), using the part after it only to rank;
+// failing that, the part after it on its own ("music by <artist>").
+//
+// Returns a browse-tree media id for playMediaId(), or empty when nothing in
+// the music library matched.
+std::string resolveSearchQuery(PlexClient& client, const std::string& query) {
+    std::string id = resolveOneSearch(client, query, "");
+    if (!id.empty()) return id;
+
+    const std::string low = lowerCase(query);
+    const size_t by = low.rfind(" by ");
+    if (by == std::string::npos) return {};
+
+    const std::string title  = query.substr(0, by);
+    const std::string artist = query.substr(by + 4);
+    if (!wordsOf(title).empty()) {
+        brls::Logger::info("MediaBrowser: trying the title \"{}\" (artist \"{}\")", title, artist);
+        id = resolveOneSearch(client, title, artist);
+        if (!id.empty()) return id;
+    }
+    if (!wordsOf(artist).empty()) {
+        brls::Logger::info("MediaBrowser: trying the artist \"{}\"", artist);
+        id = resolveOneSearch(client, artist, "");
+    }
+    return id;
 }
 
 }  // namespace
