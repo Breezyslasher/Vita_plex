@@ -899,6 +899,68 @@ std::string findArtistSongs(PlexClient& client, const std::string& artist) {
     return searchWithSpellings(client, artist, "", "artist");
 }
 
+// How alike two words are, 0 to 1, by edit distance: "constitution" and
+// "continuation" come out near 0.67, "amalee" and "emily" lower.
+double wordLikeness(const std::string& a, const std::string& b) {
+    if (a == b) return 1.0;
+    if (a.empty() || b.empty()) return 0.0;
+    std::vector<size_t> prev(b.size() + 1), cur(b.size() + 1);
+    for (size_t j = 0; j <= b.size(); j++) prev[j] = j;
+    for (size_t i = 1; i <= a.size(); i++) {
+        cur[0] = i;
+        for (size_t j = 1; j <= b.size(); j++) {
+            const size_t sub = prev[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1);
+            cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, sub});
+        }
+        std::swap(prev, cur);
+    }
+    const double longest = (double)std::max(a.size(), b.size());
+    return 1.0 - (double)prev[b.size()] / longest;
+}
+
+// How well a spoken title fits a real one, 0 to 1: each word counts by how
+// alike it is to its closest word in the title (from 0.6 up; less is a
+// different word), over the longer of the two.
+double titleLikeness(const std::string& spoken, const std::string& title) {
+    const std::vector<std::string> said = wordsOf(matchKey(spoken));
+    const std::vector<std::string> real = wordsOf(matchKey(title));
+    if (said.empty() || real.empty()) return 0.0;
+    double sum = 0.0;
+    for (const auto& w : said) {
+        double best = 0.0;
+        for (const auto& r : real) best = std::max(best, wordLikeness(w, r));
+        if (best >= 0.6) sum += best;
+    }
+    return sum / (double)std::max(said.size(), real.size());
+}
+
+// The artist's song that the spoken title sounds most like, for when the
+// title was misheard ("The World's Constitution" for "The World's
+// Continuation"). artistId is an artistsongs/<section>/<artist> id.
+std::string closestArtistTrack(PlexClient& client, const std::string& artistId,
+                               const std::string& spokenTitle) {
+    const std::string rest = suffixAfter(artistId, "artistsongs/");
+    const size_t slash = rest.find('/');
+    if (slash == std::string::npos) return {};
+    const std::vector<MediaItem> tracks =
+        fetchArtistTracks(client, rest.substr(0, slash), rest.substr(slash + 1));
+
+    const MediaItem* best = nullptr;
+    double bestScore = 0.0;
+    for (const auto& t : tracks) {
+        const double sc = titleLikeness(spokenTitle, t.title);
+        if (sc > bestScore) { bestScore = sc; best = &t; }
+    }
+    if (!best || bestScore < 0.5) {
+        brls::Logger::info("MediaBrowser: no song of {} tracks sounds like \"{}\"",
+                           tracks.size(), spokenTitle);
+        return {};
+    }
+    brls::Logger::info("MediaBrowser: \"{}\" sounds most like \"{}\" ({:.2f})", spokenTitle,
+                       best->title, bestScore);
+    return "track/" + best->ratingKey;
+}
+
 // Turn a spoken query into something playable.
 //
 // Assistant hands over free text. Plex's search matches the whole phrase, so
@@ -912,6 +974,8 @@ std::string findArtistSongs(PlexClient& client, const std::string& artist) {
 //  5. "<title> by <artist>" / "<title> from <album>": the title, ranked by
 //     how much of the rest matches; then the part after on its own.
 //  6. Each of those with near spellings.
+//  7. The artist named at the end or the start ("the world's continuation
+//     amalee"), then their song that sounds most like the rest.
 //
 // Returns a media id for playMediaId(), with kShufflePrefix when shuffle was
 // asked for, or empty when nothing in the music library matched.
@@ -963,6 +1027,13 @@ std::string resolveSearchQuery(PlexClient& client, const std::string& query) {
         brls::Logger::info("MediaBrowser: trying the {} \"{}\"",
                            byArtist ? "artist" : "album", hint);
         id = searchWithSpellings(client, hint, "", byArtist ? "artist" : "album");
+        // A song was asked for by an artist that was found: their closest
+        // song, and all of their songs only when none comes close.
+        if (byArtist && startsWith(id, "artistsongs/") && !title.empty() &&
+            q.kind != "album" && q.kind != "playlist") {
+            const std::string track = closestArtistTrack(client, id, title);
+            if (!track.empty()) return done(track);
+        }
         if (!id.empty()) return done(id);
     }
 
@@ -971,6 +1042,39 @@ std::string resolveSearchQuery(PlexClient& client, const std::string& query) {
             brls::Logger::info("MediaBrowser: trying \"{}\"", v);
             id = resolveOneSearch(client, v, "", q.kind);
             if (!id.empty()) return done(id);
+        }
+
+        // An artist at the end or the start, and a song of theirs that
+        // sounds like the rest. Up to three words for the artist, the
+        // shortest first.
+        if (q.kind.empty() || q.kind == "track") {
+            std::vector<std::string> words;
+            {
+                std::string cur;
+                for (char c : q.text + " ") {
+                    if (c == ' ') { if (!cur.empty()) words.push_back(cur); cur.clear(); }
+                    else cur += c;
+                }
+            }
+            auto join = [&](size_t from, size_t to) {
+                std::string out;
+                for (size_t i = from; i < to; i++) out += (out.empty() ? "" : " ") + words[i];
+                return out;
+            };
+            for (size_t n = 1; n <= 3 && n < words.size(); n++) {
+                const std::pair<std::string, std::string> splits[] = {
+                    {join(words.size() - n, words.size()), join(0, words.size() - n)},
+                    {join(0, n), join(n, words.size())}};
+                for (const auto& sp : splits) {
+                    if (wordsOf(sp.first).empty() || wordsOf(sp.second).empty()) continue;
+                    const std::string artist = resolveOneSearch(client, sp.first, "", "artist");
+                    if (!startsWith(artist, "artistsongs/")) continue;
+                    brls::Logger::info("MediaBrowser: artist \"{}\", song \"{}\"", sp.first,
+                                       sp.second);
+                    const std::string track = closestArtistTrack(client, artist, sp.second);
+                    if (!track.empty()) return done(track);
+                }
+            }
         }
     }
     return {};
