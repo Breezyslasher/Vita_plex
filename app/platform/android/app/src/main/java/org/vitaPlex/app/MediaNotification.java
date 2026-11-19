@@ -690,7 +690,7 @@ public final class MediaNotification {
             // onPrepare* as "this session can't be warmed up" — so answer both.
             @Override public void onPlayFromSearch(String query, Bundle extras) {
                 showStarting();
-                LibraryBrowserService.playFromSearch(query);
+                LibraryBrowserService.playFromSearch(query, extras);
             }
             // Prepare means "get ready", not "start". The expensive part of a
             // cold request is loading the native library and reconnecting to

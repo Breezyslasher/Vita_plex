@@ -961,6 +961,61 @@ std::string closestArtistTrack(PlexClient& client, const std::string& artistId,
     return "track/" + best->ratingKey;
 }
 
+// What the Assistant itself made of the request, when it says: the type it
+// took it to be (EXTRA_MEDIA_FOCUS) and the names it heard for each part.
+struct SpokenFields {
+    std::string focus;     // "artist", "album", "track", "playlist", "genre" or ""
+    std::string title;
+    std::string artist;
+    std::string album;
+    std::string playlist;
+    bool any() const {
+        return !title.empty() || !artist.empty() || !album.empty() || !playlist.empty();
+    }
+};
+
+// A request the Assistant has already split up: search for each part as it
+// was heard. Empty when that finds nothing; the words as said are tried next.
+std::string resolveSpokenFields(PlexClient& client, const SpokenFields& f) {
+    if (!f.any()) return {};
+    brls::Logger::info("MediaBrowser: Assistant heard focus=\"{}\" title=\"{}\" artist=\"{}\" "
+                       "album=\"{}\" playlist=\"{}\"",
+                       f.focus, f.title, f.artist, f.album, f.playlist);
+    std::string id;
+
+    if (f.focus == "playlist" || (!f.playlist.empty() && f.focus.empty())) {
+        const std::string name = !f.playlist.empty() ? f.playlist : f.title;
+        if (!name.empty()) {
+            id = findPlaylist(client, name);
+            if (id.empty()) id = searchWithSpellings(client, name, "", "playlist");
+        }
+        return id;
+    }
+
+    if (f.focus == "artist" || (f.focus.empty() && f.title.empty() && f.album.empty())) {
+        if (!f.artist.empty()) id = findArtistSongs(client, f.artist);
+        return id;
+    }
+
+    if (f.focus == "album" || (f.focus.empty() && f.title.empty() && !f.album.empty())) {
+        const std::string name = !f.album.empty() ? f.album : f.title;
+        if (!name.empty()) id = searchWithSpellings(client, name, f.artist, "album");
+        return id;
+    }
+
+    // A song, said or taken to be one.
+    if (!f.title.empty()) {
+        id = searchWithSpellings(client, f.title, f.artist + " " + f.album, "track");
+        if (!id.empty()) return id;
+        if (!f.artist.empty()) {
+            const std::string artist = findArtistSongs(client, f.artist);
+            if (startsWith(artist, "artistsongs/"))
+                id = closestArtistTrack(client, artist, f.title);
+        }
+    }
+    return id;
+}
+
 // Turn a spoken query into something playable.
 //
 // Assistant hands over free text. Plex's search matches the whole phrase, so
@@ -974,15 +1029,23 @@ std::string closestArtistTrack(PlexClient& client, const std::string& artistId,
 //  5. "<title> by <artist>" / "<title> from <album>": the title, ranked by
 //     how much of the rest matches; then the part after on its own.
 //  6. Each of those with near spellings.
+// All of that comes after the Assistant's own reading, when it sent one.
+//
 //  7. The artist named at the end or the start ("the world's continuation
 //     amalee"), then their song that sounds most like the rest.
 //
 // Returns a media id for playMediaId(), with kShufflePrefix when shuffle was
 // asked for, or empty when nothing in the music library matched.
-std::string resolveSearchQuery(PlexClient& client, const std::string& query) {
+std::string resolveSearchQuery(PlexClient& client, const std::string& query,
+                               const SpokenFields& fields) {
     const SpokenQuery q = parseSpokenQuery(query);
     const std::string prefix = q.shuffle ? kShufflePrefix : "";
     auto done = [&](const std::string& id) { return id.empty() ? id : prefix + id; };
+
+    // The Assistant's own split first ("title: The World's Continuation,
+    // artist: AmaLee"), then the guesses below from the words alone.
+    if (const std::string id = resolveSpokenFields(client, fields); !id.empty())
+        return done(id);
 
     if (q.text.empty() || isGenericMusic(q.text)) {
         brls::Logger::info("MediaBrowser: \"{}\" -> a mix of the library", query);
@@ -1170,22 +1233,33 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromMediaId(JNIEnv* env, j
  * fail. Resuming what's already queued is the least surprising answer.
  */
 JNIEXPORT void JNICALL
-Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromSearch(JNIEnv* env, jclass,
-                                                                 jstring jQuery) {
-    const char* raw = jQuery ? env->GetStringUTFChars(jQuery, nullptr) : nullptr;
-    std::string query = raw ? raw : "";
-    if (raw) env->ReleaseStringUTFChars(jQuery, raw);
+Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromSearch(
+    JNIEnv* env, jclass, jstring jQuery, jstring jFocus, jstring jTitle, jstring jArtist,
+    jstring jAlbum, jstring jPlaylist) {
+    auto str = [env](jstring js) {
+        const char* raw = js ? env->GetStringUTFChars(js, nullptr) : nullptr;
+        std::string out = raw ? raw : "";
+        if (raw) env->ReleaseStringUTFChars(js, raw);
+        return out;
+    };
+    const std::string query = str(jQuery);
+    SpokenFields fields;
+    fields.focus    = str(jFocus);
+    fields.title    = str(jTitle);
+    fields.artist   = str(jArtist);
+    fields.album    = str(jAlbum);
+    fields.playlist = str(jPlaylist);
 
     brls::Logger::info("MediaBrowser: playFromSearch({})", query);
     const uint64_t request = ++g_playRequest;
 
-    asyncRun([query, request]() {
+    asyncRun([query, fields, request]() {
         if (!ensureClientReady()) return;
         if (superseded(request, "\"" + query + "\"")) return;
 
         // "Play music": resume what is queued, or with nothing queued, a
         // random mix of the library.
-        if (query.empty()) {
+        if (query.empty() && !fields.any()) {
             brls::sync([request]() {
                 if (!MusicQueue::getInstance().isEmpty()) {
                     MusicController::getInstance().playPause(true);
@@ -1198,7 +1272,8 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromSearch(JNIEnv* env, jc
             return;
         }
 
-        const std::string mediaId = resolveSearchQuery(PlexClient::getInstance(), query);
+        const std::string mediaId =
+            resolveSearchQuery(PlexClient::getInstance(), query, fields);
         if (mediaId.empty()) {
             brls::Logger::warning("MediaBrowser: no music match for \"{}\"", query);
             return;

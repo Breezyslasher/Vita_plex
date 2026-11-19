@@ -358,7 +358,8 @@ public class VitaPlexActivity extends SDLActivity
             LibraryBrowserService.ensureNativeForSearch(this);
             MediaNotification.getSession(this);
             MediaNotification.showStarting();
-            LibraryBrowserService.playFromSearch(query != null ? query.trim() : "");
+            LibraryBrowserService.playFromSearch(query != null ? query.trim() : "",
+                    intent.getExtras());
         } catch (Throwable t) {
             Log.w(TAG, "play from search failed", t);
         }
