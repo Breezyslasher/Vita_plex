@@ -402,6 +402,42 @@ std::string lowerCase(std::string s) {
     return s;
 }
 
+// A title or spoken phrase reduced to what speech can carry, for comparing
+// the two: lowercase, apostrophes gone (' ` and the curly ones Plex titles
+// often use, so "Don't" and "dont" are the same), "&" read as "and", other
+// punctuation as a space ("AC/DC" is "ac dc"), spaces collapsed. Letters
+// outside ASCII (Beyoncé) are kept as they are.
+std::string matchKey(const std::string& text) {
+    std::string out;
+    bool space = true;  // drops leading spaces and runs of them
+    auto put = [&](const std::string& piece) {
+        for (char c : piece) {
+            if (c == ' ') {
+                if (!space) out += ' ';
+                space = true;
+            } else {
+                out += c;
+                space = false;
+            }
+        }
+    };
+    for (size_t i = 0; i < text.size(); i++) {
+        const unsigned char c = (unsigned char)text[i];
+        // U+2018 / U+2019, the curly apostrophes: E2 80 98 / E2 80 99.
+        if (c == 0xE2 && i + 2 < text.size() && (unsigned char)text[i + 1] == 0x80 &&
+            ((unsigned char)text[i + 2] == 0x98 || (unsigned char)text[i + 2] == 0x99)) {
+            i += 2;
+            continue;
+        }
+        if (c == '\'' || c == '`') continue;
+        if (c == '&') { put(" and "); continue; }
+        if (c >= 0x80 || std::isalnum(c)) { put(std::string(1, (char)std::tolower(c))); continue; }
+        put(" ");
+    }
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+
 // Prefix on a media id from a voice request that asked for shuffle.
 const char* const kShufflePrefix = "shuffle:";
 
@@ -415,7 +451,7 @@ std::vector<MediaItem> fetchArtistTracks(PlexClient& client, const std::string& 
     auto byArtist = [&](const MediaItem& t) {
         return t.type == "track" &&
                (t.grandparentRatingKey == artistKey ||
-                lowerCase(t.grandparentTitle) == lowerCase(artist.title));
+                matchKey(t.grandparentTitle) == matchKey(artist.title));
     };
 
     // One request for the lot. The results are checked against the artist, so
@@ -740,11 +776,9 @@ std::vector<std::string> nearSpellings(const std::string& term) {
     }
     if (allShort && parts > 1) add(joined);
 
-    // Punctuation dropped: "don't stop" -> "dont stop".
-    std::string plain;
-    for (char c : term)
-        if (std::isalnum((unsigned char)c) || c == ' ') plain += c;
-    add(plain);
+    // Punctuation dropped: "don't stop" -> "dont stop", "simon & garfunkel"
+    // -> "simon and garfunkel".
+    add(matchKey(term));
     return out;
 }
 
@@ -756,9 +790,9 @@ int hintWordsMatched(const MediaItem& m, const std::string& hint) {
     if (m.type == "track")       owner = m.grandparentTitle + " " + m.parentTitle;
     else if (m.type == "album")  owner = m.parentTitle;
     else if (m.type == "artist") owner = m.title;
-    const std::string have = lowerCase(owner);
+    const std::string have = matchKey(owner);
     int n = 0;
-    for (const auto& w : wordsOf(hint))
+    for (const auto& w : wordsOf(matchKey(hint)))
         if (have.find(w) != std::string::npos) n++;
     return n;
 }
@@ -776,11 +810,11 @@ std::string mediaIdFor(const MediaItem& m) {
 std::string findPlaylist(PlexClient& client, const std::string& name) {
     std::vector<Playlist> playlists;
     if (!client.fetchMusicPlaylists(playlists)) return {};
-    const std::string want = lowerCase(name);
+    const std::string want = matchKey(name);
     const Playlist* best = nullptr;
     int bestScore = 0;
     for (const auto& p : playlists) {
-        const std::string t = lowerCase(p.title);
+        const std::string t = matchKey(p.title);
         int sc = 0;
         if (t == want) sc = 3;
         else if (startsWith(t, want)) sc = 2;
@@ -803,11 +837,11 @@ std::string resolveOneSearch(PlexClient& client, const std::string& query,
     std::vector<MediaItem> results;
     if (!client.search(query, results) || results.empty()) return {};
 
-    const std::string want = lowerCase(query);
+    const std::string want = matchKey(query);
 
     // 3 exact, 2 starts with, 1 contains either way, 0 none.
     auto exactness = [&](const MediaItem& m) {
-        const std::string t = lowerCase(m.title);
+        const std::string t = matchKey(m.title);
         if (t == want) return 3;
         if (startsWith(t, want)) return 2;
         if (t.find(want) != std::string::npos ||
