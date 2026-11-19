@@ -663,7 +663,21 @@ public final class MediaNotification {
                 PendingIntent.getActivity(ctx, 101, open, pendingIntentFlags(0)));
         }
         sSession.setCallback(new MediaSessionCompat.Callback() {
-            @Override public void onPlay() { send(CODE_PLAY); }
+            // A plain play. When a client prepared a request first and now
+            // says "play", that request is what to play. With nothing loaded
+            // (a cold session, or playback stopped), the same as an empty
+            // voice request: resume what native has queued, or a random mix
+            // of the library. A paused video counts as loaded, so it resumes.
+            @Override public void onPlay() {
+                if (playPrepared()) return;
+                if (!sHasState) {
+                    Log.i(TAG, "onPlay with nothing loaded in the session");
+                    showStarting();
+                    LibraryBrowserService.playFromSearch("", null);
+                    return;
+                }
+                send(CODE_PLAY);
+            }
             @Override public void onPause() { send(CODE_PAUSE); }
             @Override public void onSkipToNext() { send(CODE_NEXT); }
             @Override public void onSkipToPrevious() { send(CODE_PREVIOUS); }
@@ -682,6 +696,7 @@ public final class MediaNotification {
             // A media id picked in Android Auto / Assistant / Wear. The ids come
             // from LibraryBrowserService's tree, so it owns resolving them.
             @Override public void onPlayFromMediaId(String mediaId, Bundle extras) {
+                clearPrepared();
                 showStarting();
                 LibraryBrowserService.playFromMediaId(mediaId);
             }
@@ -689,6 +704,7 @@ public final class MediaNotification {
             // the same work minus the play, and clients treat a missing
             // onPrepare* as "this session can't be warmed up" — so answer both.
             @Override public void onPlayFromSearch(String query, Bundle extras) {
+                clearPrepared();
                 showStarting();
                 LibraryBrowserService.playFromSearch(query, extras);
             }
@@ -696,10 +712,26 @@ public final class MediaNotification {
             // cold request is loading the native library and reconnecting to
             // the Plex server, so that is what these do — no playback.
             @Override public void onPrepare() { LibraryBrowserService.prepare(); }
+            // Android Auto and the Assistant can send the request here and then
+            // a bare onPlay(), so the request is kept for that play.
             @Override public void onPrepareFromSearch(String query, Bundle extras) {
+                synchronized (MediaNotification.class) {
+                    sPreparedQuery = query != null ? query : "";
+                    sPreparedExtras = extras != null ? new Bundle(extras) : null;
+                    sPreparedMediaId = null;
+                    sPreparedAt = android.os.SystemClock.elapsedRealtime();
+                }
+                Log.i(TAG, "prepare from search: \"" + sPreparedQuery + "\"");
                 LibraryBrowserService.prepare();
             }
             @Override public void onPrepareFromMediaId(String mediaId, Bundle extras) {
+                synchronized (MediaNotification.class) {
+                    sPreparedMediaId = mediaId;
+                    sPreparedQuery = null;
+                    sPreparedExtras = null;
+                    sPreparedAt = android.os.SystemClock.elapsedRealtime();
+                }
+                Log.i(TAG, "prepare from media id: " + mediaId);
                 LibraryBrowserService.prepare();
             }
             // A row picked out of the up-next list.
@@ -956,6 +988,49 @@ public final class MediaNotification {
         Intent i = new Intent(ACTION).setPackage(ctx.getPackageName()).putExtra(EXTRA_CODE, code);
         PendingIntent pi = PendingIntent.getBroadcast(ctx, code, i, pendingIntentFlags(0));
         return new NotificationCompat.Action.Builder(icon, title, pi).build();
+    }
+
+    // A request a client prepared and has not played yet (see onPrepareFrom*).
+    private static String sPreparedQuery;
+    private static Bundle sPreparedExtras;
+    private static String sPreparedMediaId;
+    private static long sPreparedAt;
+    // How long a prepared request waits for its play.
+    private static final long PREPARED_FOR_MS = 60_000;
+
+    private static synchronized void clearPrepared() {
+        sPreparedQuery = null;
+        sPreparedExtras = null;
+        sPreparedMediaId = null;
+    }
+
+    /** Plays the request prepared in the last minute, if any. */
+    private static boolean playPrepared() {
+        String query, mediaId;
+        Bundle extras;
+        synchronized (MediaNotification.class) {
+            final boolean fresh = android.os.SystemClock.elapsedRealtime() - sPreparedAt
+                                  < PREPARED_FOR_MS;
+            query = fresh ? sPreparedQuery : null;
+            mediaId = fresh ? sPreparedMediaId : null;
+            extras = sPreparedExtras;
+            sPreparedQuery = null;
+            sPreparedExtras = null;
+            sPreparedMediaId = null;
+        }
+        if (mediaId != null) {
+            Log.i(TAG, "onPlay: playing the prepared media id " + mediaId);
+            showStarting();
+            LibraryBrowserService.playFromMediaId(mediaId);
+            return true;
+        }
+        if (query != null) {
+            Log.i(TAG, "onPlay: playing the prepared search \"" + query + "\"");
+            showStarting();
+            LibraryBrowserService.playFromSearch(query, extras);
+            return true;
+        }
+        return false;
     }
 
     private static void send(int code) {

@@ -66,7 +66,8 @@ public final class LibraryBrowserService extends MediaBrowserServiceCompat {
     private static native void nativeLoadChildren(String parentId, int token);
     private static native void nativePlayFromMediaId(String mediaId);
     private static native void nativePlayFromSearch(String query, String focus, String title,
-                                                    String artist, String album, String playlist);
+                                                    String artist, String album, String playlist,
+                                                    String genre);
 
     /**
      * Bring the native side up in this process.
@@ -288,7 +289,8 @@ public final class LibraryBrowserService extends MediaBrowserServiceCompat {
                     extra(extras, android.provider.MediaStore.EXTRA_MEDIA_TITLE),
                     extra(extras, android.provider.MediaStore.EXTRA_MEDIA_ARTIST),
                     extra(extras, android.provider.MediaStore.EXTRA_MEDIA_ALBUM),
-                    extra(extras, "android.intent.extra.playlist"));
+                    extra(extras, "android.intent.extra.playlist"),
+                    extra(extras, android.provider.MediaStore.EXTRA_MEDIA_GENRE));
         } catch (Throwable t) {
             Log.w(TAG, "nativePlayFromSearch unavailable", t);
         }

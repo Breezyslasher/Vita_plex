@@ -495,6 +495,46 @@ std::vector<MediaItem> fetchLibraryMix(PlexClient& client) {
     return tracks;
 }
 
+// A genre's name matched against each visible music library's genres, exact
+// match first. Returns {section, genre key}, or empty strings.
+std::pair<std::string, std::string> findGenre(PlexClient& client, const std::string& name) {
+    const std::string want = matchKey(name);
+    if (want.empty()) return {};
+    std::vector<LibrarySection> sections;
+    if (!client.fetchLibrarySections(sections)) return {};
+    std::pair<std::string, std::string> partial;
+    for (const auto& s : sections) {
+        if (s.type != "artist" || isHiddenLibrary(s.key)) continue;
+        std::vector<GenreItem> genres;
+        if (!client.fetchGenreItems(s.key, genres)) continue;
+        for (const auto& g : genres) {
+            const std::string have = matchKey(g.title);
+            if (have == want) return {s.key, g.key};
+            if (partial.first.empty() && !have.empty() &&
+                (have.find(want) != std::string::npos || want.find(have) != std::string::npos))
+                partial = {s.key, g.key};
+        }
+    }
+    return partial;
+}
+
+// A shuffled mix of a genre: Plex tags genres on albums, so this takes the
+// tracks of up to 15 of the genre's albums picked at random.
+std::vector<MediaItem> fetchGenreMix(PlexClient& client, const std::string& sectionKey,
+                                     const std::string& genreKey) {
+    std::vector<MediaItem> tracks;
+    std::vector<MediaItem> albums;
+    if (!client.fetchByGenreKey(sectionKey, genreKey, albums, 9)) return tracks;
+    std::shuffle(albums.begin(), albums.end(), std::mt19937(std::random_device{}()));
+    for (size_t i = 0; i < albums.size() && i < 15; i++) {
+        std::vector<MediaItem> albumTracks;
+        if (!client.fetchChildren(albums[i].ratingKey, albumTracks)) continue;
+        for (auto& t : albumTracks)
+            if (t.type == "track") tracks.push_back(std::move(t));
+    }
+    return tracks;
+}
+
 void playMediaId(const std::string& requestedId, uint64_t request) {
     if (!ensureClientReady()) return;
     if (superseded(request, requestedId)) return;
@@ -566,6 +606,12 @@ void playMediaId(const std::string& requestedId, uint64_t request) {
         tracks = fetchArtistTracks(client, rest.substr(0, slash), rest.substr(slash + 1));
     } else if (mediaId == "librarymix") {
         tracks = fetchLibraryMix(client);
+    } else if (startsWith(mediaId, "genremix/")) {
+        // genremix/<section>/<genre key>
+        const std::string rest = suffixAfter(mediaId, "genremix/");
+        const size_t slash = rest.find('/');
+        if (slash == std::string::npos) return;
+        tracks = fetchGenreMix(client, rest.substr(0, slash), rest.substr(slash + 1));
     }
 
     if (tracks.empty()) {
@@ -969,8 +1015,10 @@ struct SpokenFields {
     std::string artist;
     std::string album;
     std::string playlist;
+    std::string genre;
     bool any() const {
-        return !title.empty() || !artist.empty() || !album.empty() || !playlist.empty();
+        return !title.empty() || !artist.empty() || !album.empty() || !playlist.empty() ||
+               !genre.empty();
     }
 };
 
@@ -979,9 +1027,18 @@ struct SpokenFields {
 std::string resolveSpokenFields(PlexClient& client, const SpokenFields& f) {
     if (!f.any()) return {};
     brls::Logger::info("MediaBrowser: Assistant heard focus=\"{}\" title=\"{}\" artist=\"{}\" "
-                       "album=\"{}\" playlist=\"{}\"",
-                       f.focus, f.title, f.artist, f.album, f.playlist);
+                       "album=\"{}\" playlist=\"{}\" genre=\"{}\"",
+                       f.focus, f.title, f.artist, f.album, f.playlist, f.genre);
     std::string id;
+
+    // "Play some jazz": a shuffled mix of the genre.
+    if (f.focus == "genre" ||
+        (!f.genre.empty() && f.title.empty() && f.artist.empty() && f.album.empty())) {
+        const std::string name = !f.genre.empty() ? f.genre : f.title;
+        const auto g = findGenre(client, name);
+        if (!g.first.empty()) return std::string(kShufflePrefix) + "genremix/" + g.first + "/" + g.second;
+        if (f.focus == "genre") return {};
+    }
 
     if (f.focus == "playlist" || (!f.playlist.empty() && f.focus.empty())) {
         const std::string name = !f.playlist.empty() ? f.playlist : f.title;
@@ -1140,6 +1197,15 @@ std::string resolveSearchQuery(PlexClient& client, const std::string& query,
             }
         }
     }
+
+    // Last: the words name a genre ("play classic rock").
+    if (title.empty() && q.kind.empty()) {
+        const auto g = findGenre(client, q.text);
+        if (!g.first.empty()) {
+            brls::Logger::info("MediaBrowser: \"{}\" is a genre", q.text);
+            return std::string(kShufflePrefix) + "genremix/" + g.first + "/" + g.second;
+        }
+    }
     return {};
 }
 
@@ -1235,7 +1301,7 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromMediaId(JNIEnv* env, j
 JNIEXPORT void JNICALL
 Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromSearch(
     JNIEnv* env, jclass, jstring jQuery, jstring jFocus, jstring jTitle, jstring jArtist,
-    jstring jAlbum, jstring jPlaylist) {
+    jstring jAlbum, jstring jPlaylist, jstring jGenre) {
     auto str = [env](jstring js) {
         const char* raw = js ? env->GetStringUTFChars(js, nullptr) : nullptr;
         std::string out = raw ? raw : "";
@@ -1249,28 +1315,32 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromSearch(
     fields.artist   = str(jArtist);
     fields.album    = str(jAlbum);
     fields.playlist = str(jPlaylist);
+    fields.genre    = str(jGenre);
 
     brls::Logger::info("MediaBrowser: playFromSearch({})", query);
     const uint64_t request = ++g_playRequest;
 
+    // "Play music", or a plain play with nothing published: resume what is
+    // queued, or with nothing queued, a random mix of the library. The queue
+    // is checked before connecting, so a queue of downloads still resumes
+    // with the server out of reach.
+    if (query.empty() && !fields.any()) {
+        brls::sync([request]() {
+            if (!MusicQueue::getInstance().isEmpty()) {
+                MusicController::getInstance().playPause(true);
+                return;
+            }
+            brls::Logger::info("MediaBrowser: nothing queued, playing a mix of the library");
+            asyncRun([request]() {
+                playMediaId(std::string(kShufflePrefix) + "librarymix", request);
+            });
+        });
+        return;
+    }
+
     asyncRun([query, fields, request]() {
         if (!ensureClientReady()) return;
         if (superseded(request, "\"" + query + "\"")) return;
-
-        // "Play music": resume what is queued, or with nothing queued, a
-        // random mix of the library.
-        if (query.empty() && !fields.any()) {
-            brls::sync([request]() {
-                if (!MusicQueue::getInstance().isEmpty()) {
-                    MusicController::getInstance().playPause(true);
-                    return;
-                }
-                asyncRun([request]() {
-                    playMediaId(std::string(kShufflePrefix) + "librarymix", request);
-                });
-            });
-            return;
-        }
 
         const std::string mediaId =
             resolveSearchQuery(PlexClient::getInstance(), query, fields);
