@@ -1421,7 +1421,14 @@ void PlayerActivity::loadFromQueue() {
         // Use a prefetch resolved during the previous track; see kPrefetchMaxAgeMs, an expired session is answered 400.
         const int64_t prefetchAgeMs =
             m_prefetchAtMs > 0 ? (brls::getCPUTimeUsec() / 1000) - m_prefetchAtMs : 0;
-        const bool prefetchStale = m_prefetchAtMs > 0 && prefetchAgeMs > kPrefetchMaxAgeMs;
+        // Only a transcode URL goes stale: a direct-play file URL
+        // (/library/parts/...) has no session to reap, and expiring it after
+        // a minute meant every song longer than that was resolved again at
+        // its end, on this thread, freezing the screen ~0.3 s per track.
+        const bool prefetchIsTranscode =
+            m_prefetchUrl.find("/transcode/") != std::string::npos;
+        const bool prefetchStale = m_prefetchAtMs > 0 && prefetchIsTranscode &&
+                                   prefetchAgeMs > kPrefetchMaxAgeMs;
         if (prefetchStale && !m_prefetchUrl.empty()) {
             brls::Logger::info("PlayerActivity: prefetched URL for {} is {}s old — resolving again",
                                m_prefetchKey, prefetchAgeMs / 1000);
