@@ -731,13 +731,18 @@ void PlayerActivity::onContentAvailable() {
         if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
         if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
 
-        // Resize the cover for the current viewport and keep it right across rotations.
+        // Resize the cover for the current viewport and keep it right across
+        // any change of size. Rotations alone were not enough: a Fold going
+        // from its tall outer screen to the near-square inner one keeps
+        // portrait, and the cover sized for the outer screen then covered the
+        // title and pushed the controls under the up-next sheet.
         applyMusicLayoutForViewport();
         std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
-        platform::onOrientationChanged([this, aliveWeak]() {
+        platform::onViewportResized([this, aliveWeak]() {
             auto alive = aliveWeak.lock();
             if (!alive || !alive->load()) return;
             applyMusicLayoutForViewport();
+            updateMobileSheet();  // whether the sheet fits depends on the height
         });
 
         wireMobileSheet();

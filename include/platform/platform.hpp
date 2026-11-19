@@ -209,6 +209,11 @@ float uiScale();
  */
 void onOrientationChanged(std::function<void()> cb);
 
+// Fires on any change of the viewport's size, including one that keeps the
+// orientation: a foldable moving between its outer and inner screen, a
+// split-screen or freeform window being resized.
+void onViewportResized(std::function<void()> cb);
+
 /**
  * Per-platform Plex transcode / identification constants.
  *

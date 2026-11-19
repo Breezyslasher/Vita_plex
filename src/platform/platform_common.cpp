@@ -16,6 +16,7 @@
 #include <TargetConditionals.h>
 #endif
 
+#include <cmath>     // std::fabs
 #include <cstdio>    // std::remove / std::rename, for the log rotation below
 #include <string>
 #include <vector>
@@ -67,6 +68,9 @@ struct OrientationDispatcher {
     bool installed = false;
     bool lastIsPortrait = false;
     std::vector<std::function<void()>> callbacks;
+    // onViewportResized: any real change of size, not only a flip.
+    float lastW = 0.f, lastH = 0.f;
+    std::vector<std::function<void()>> resizeCallbacks;
 };
 OrientationDispatcher& dispatcher() {
     static OrientationDispatcher d;
@@ -77,10 +81,19 @@ void ensureInstalled() {
     if (d.installed) return;
     d.installed = true;
     d.lastIsPortrait = isPortrait();
+    d.lastW = viewportWidth();
+    d.lastH = viewportHeight();
     auto* evt = brls::Application::getWindowSizeChangedEvent();
     if (!evt) return;
     evt->subscribe([]() {
         auto& d = dispatcher();
+        const float w = viewportWidth(), h = viewportHeight();
+        if (std::fabs(w - d.lastW) >= 1.f || std::fabs(h - d.lastH) >= 1.f) {
+            d.lastW = w;
+            d.lastH = h;
+            auto rcbs = d.resizeCallbacks;
+            for (auto& cb : rcbs) cb();
+        }
         bool now = isPortrait();
         if (now == d.lastIsPortrait) return; // orientation didn't flip
         d.lastIsPortrait = now;
@@ -95,6 +108,11 @@ void ensureInstalled() {
 void onOrientationChanged(std::function<void()> cb) {
     ensureInstalled();
     dispatcher().callbacks.push_back(std::move(cb));
+}
+
+void onViewportResized(std::function<void()> cb) {
+    ensureInstalled();
+    dispatcher().resizeCallbacks.push_back(std::move(cb));
 }
 
 // Keep the finished run's log beside the new one.
