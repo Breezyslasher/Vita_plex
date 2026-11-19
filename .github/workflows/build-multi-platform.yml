@@ -26,6 +26,7 @@ on:
         - android
         - aur
         - deb
+        - ios
       pre_release:
         description: 'Upload artifacts to a GitHub pre-release'
         type: boolean
@@ -1191,24 +1192,24 @@ jobs:
   # MoltenVK / libplacebo inside Libmpv.xcframework, so the seven Libav*
   # frameworks plus Libmpv are everything we need.
   #
-  # Builds for the SIMULATOR so no code-signing identity is required in CI
-  # (device builds need a provisioning profile). The produced .app runs in
-  # the iOS / tvOS Simulator; for a device install, build locally with
-  # -DPLATFORM=OS64 / TVOS and sign in Xcode.
+  # Builds for real iPhones and iPads (arm64), UNSIGNED, and packs the app
+  # as VitaPlex.ipa. A sideloading tool (Sideloadly, AltStore, SideStore)
+  # signs it with the user's own Apple ID at install, so CI needs no
+  # certificate or provisioning profile and no Mac is needed at home.
+  # tvOS is left out until the iOS build has been seen running.
+  #
+  # Not a release gate: the release jobs do not wait on it, so a failure
+  # here only costs the .ipa, not the other platforms' downloads.
   # ───────────────────────────────────────────────
   build-ios:
     needs: [resolve-version]
-    # Temporarily disabled — the Apple Mobile (iOS/tvOS) build can't be tested
-    # right now, so it's skipped to keep CI green. Re-enable by restoring:
-    #   if: ${{ inputs.platform == 'ios' || inputs.platform == 'tvos' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
-    if: false
+    if: ${{ inputs.platform == 'ios' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: Apple Mobile (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
         include:
-        - { target: ios,  cmake_flag: PLATFORM_IOS,  platform_for_toolchain: SIMULATORARM64,      sdk: iphonesimulator }
-        - { target: tvos, cmake_flag: PLATFORM_TVOS, platform_for_toolchain: SIMULATORARM64_TVOS, sdk: appletvsimulator }
+        - { target: ios, cmake_flag: PLATFORM_IOS, platform_for_toolchain: OS64, sdk: iphoneos, slice: ios-arm64 }
     runs-on: macos-15
     env:
       # Pin to a release whose asset names match the loop below. All eight
@@ -1243,11 +1244,12 @@ jobs:
           CURL_VERSION=8.14.1
           PREFIX="${{ github.workspace }}/libcurl-install"
           SDK_PATH=$(xcrun --sdk ${{ matrix.sdk }} --show-sdk-path)
-          if [ "${{ matrix.target }}" = "ios" ]; then
-            MIN_FLAG="-mios-simulator-version-min=14.0"
-          else
-            MIN_FLAG="-mappletvsimulator-version-min=14.0"
-          fi
+          case "${{ matrix.sdk }}" in
+            iphoneos)         MIN_FLAG="-miphoneos-version-min=14.0" ;;
+            iphonesimulator)  MIN_FLAG="-mios-simulator-version-min=14.0" ;;
+            appletvos)        MIN_FLAG="-mappletvos-version-min=14.0" ;;
+            *)                MIN_FLAG="-mappletvsimulator-version-min=14.0" ;;
+          esac
           mkdir -p "$PREFIX"
           cd /tmp
           curl -fL "https://curl.se/download/curl-${CURL_VERSION}.tar.gz" | tar xz
@@ -1384,11 +1386,44 @@ jobs:
           if [ -z "$APP" ]; then echo "VitaPlex.app not produced"; exit 1; fi
           echo "Built: $APP"
           mkdir -p stage && cp -R "$APP" stage/
-      - name: Upload app
+      - name: Embed the dynamic frameworks
+        # Any framework the binary loads through @rpath has to ship inside
+        # the app (VitaPlex.app/Frameworks) on a device, or it dies at launch
+        # with "Library not loaded". Copy each from its xcframework's device
+        # slice; static ones are already linked in and are skipped.
+        run: |
+          set -eu
+          APP="stage/VitaPlex.app"
+          BIN="$APP/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
+          FW_DIR="${{ github.workspace }}/mpv-frameworks"
+          mkdir -p "$APP/Frameworks"
+          embedded=0
+          for dep in $(otool -L "$BIN" | awk '/@rpath\/.*\.framework/ {print $1}'); do
+            name=$(echo "$dep" | sed -E 's|@rpath/([^/]+)\.framework/.*|\1|')
+            src=$(ls -d "$FW_DIR"/*.xcframework/${{ matrix.slice }}/"$name".framework 2>/dev/null | head -1 || true)
+            if [ -z "$src" ]; then echo "::warning::no ${{ matrix.slice }} slice for $name"; continue; fi
+            echo "Embedding $name from $src"
+            cp -R "$src" "$APP/Frameworks/"
+            embedded=$((embedded + 1))
+          done
+          if [ "$embedded" -gt 0 ] && ! otool -l "$BIN" | grep -q '@executable_path/Frameworks'; then
+            install_name_tool -add_rpath @executable_path/Frameworks "$BIN"
+          fi
+          [ "$embedded" -gt 0 ] || rmdir "$APP/Frameworks"
+          echo "Embedded $embedded framework(s)"
+          otool -L "$BIN"
+      - name: Pack .ipa
+        run: |
+          set -eu
+          mkdir -p ipa/Payload
+          cp -R stage/VitaPlex.app ipa/Payload/
+          (cd ipa && zip -qry ../VitaPlex.ipa Payload)
+          ls -la VitaPlex.ipa
+      - name: Upload .ipa
         uses: actions/upload-artifact@v4
         with:
           name: VitaPlex-${{ matrix.target }}-${{ github.run_number }}
-          path: stage/VitaPlex.app
+          path: VitaPlex.ipa
 
   # ───────────────────────────────────────────────
   # PS4
