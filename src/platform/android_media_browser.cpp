@@ -649,8 +649,20 @@ void playMediaId(const std::string& requestedId, uint64_t request) {
             // singlePick doubles as "startIndex is a choice": asking a head unit
             // for a whole album should let shuffle pick where it opens, rather
             // than pinning whatever happens to be first.
-            brls::Application::pushActivity(
-                PlayerActivity::createWithQueue(tracks, startIndex, singlePick));
+            auto open = [tracks, startIndex, singlePick]() {
+                brls::Application::pushActivity(
+                    PlayerActivity::createWithQueue(tracks, startIndex, singlePick));
+            };
+            // A player already on screen is replaced, not covered: each voice
+            // request or car pick used to stack one more player, and leaving
+            // took one Back per request.
+            const auto stack = brls::Application::getActivitiesStack();
+            if (!stack.empty() && dynamic_cast<PlayerActivity*>(stack.back())) {
+                brls::Logger::info("MediaBrowser: replacing the open player");
+                brls::Application::popActivity(brls::TransitionAnimation::NONE, open);
+            } else {
+                open();
+            }
             return;
         }
 
