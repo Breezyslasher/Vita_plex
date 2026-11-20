@@ -1802,11 +1802,18 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
             ${CMAKE_SOURCE_DIR}/app/platform/ios/tvos/Splash.storyboard
             PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     endif()
-    if(EXISTS "${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets")
-        target_sources(${PROJECT_NAME} PRIVATE
-            ${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets)
-        set_source_files_properties(
-            ${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets
+    # The asset catalog with the app icon: iOS has flat PNGs, tvOS layered
+    # parallax icons and Top Shelf images in a brand-assets set.
+    if(PLATFORM_TVOS)
+        set(_apple_xcassets "${CMAKE_SOURCE_DIR}/app/platform/ios/tvos/Images.xcassets")
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "App Icon & Top Shelf Image")
+    else()
+        set(_apple_xcassets "${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets")
+    endif()
+    if(EXISTS "${_apple_xcassets}")
+        target_sources(${PROJECT_NAME} PRIVATE ${_apple_xcassets})
+        set_source_files_properties(${_apple_xcassets}
             PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     endif()
 
