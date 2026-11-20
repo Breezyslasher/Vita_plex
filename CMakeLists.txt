@@ -283,6 +283,12 @@ if(PLATFORM_IOS OR PLATFORM_TVOS)
     file(COPY "${BOREALIS_DIR}/resources/img"  DESTINATION "${IOS_ROMFS_STAGE}")
     set(LIBROMFS_PROJECT_NAME "VitaPlex" CACHE STRING "" FORCE)
     set(LIBROMFS_RESOURCE_LOCATION "${IOS_ROMFS_STAGE}" CACHE PATH "" FORCE)
+    # What makes borealis read from the embedded tree at all: without it
+    # BRLS_ASSET() expands to a plain relative path, every font, translation
+    # and XML layout was looked up on disk and missing, and the first screen
+    # died with 'Unable to load XML file "xml/activity/login.xml"'.
+    # borealis's add_libromfs() would set it; this file sets the rest by hand.
+    add_definitions(-DUSE_LIBROMFS)
 endif()
 
 add_subdirectory(${BOREALIS_LIBRARY})

@@ -163,7 +163,12 @@ static void applyCurlSecurityDefaults(CURL* curl) {
     // silently skipping verification.
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+#if !defined(USE_LIBROMFS)
     curl_easy_setopt(curl, CURLOPT_CAINFO, RESOURCE_PREFIX "cacert.pem");
+#endif
+    // iOS/tvOS (the libromfs targets) leave CAINFO unset: Secure Transport
+    // trusts the system keychain, and "romfs:/cacert.pem" is no file curl
+    // could open, so naming it risked failing every HTTPS request there.
 
     // Never deliver SIGALRM-based timeouts. curl's default timeout path
     // uses signals which are unsafe in a multi-threaded process (the app

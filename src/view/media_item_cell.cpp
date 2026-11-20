@@ -683,8 +683,16 @@ void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float he
         std::string path = HintIcons::getResPath(brls::BUTTON_START);
         if (!path.empty() && path != s_startHintPath) {
             if (s_startHintNvg != 0) nvgDeleteImage(vg, s_startHintNvg);
+#ifdef USE_LIBROMFS
+            // iOS/tvOS: the resources are embedded, not files.
+            auto& res = romfs::get(path);
+            s_startHintNvg = res.valid()
+                ? nvgCreateImageMem(vg, 0, (unsigned char*)res.data(), (int)res.size())
+                : 0;
+#else
             std::string full = std::string(RESOURCE_PREFIX) + path;
             s_startHintNvg = nvgCreateImage(vg, full.c_str(), 0);
+#endif
             if (s_startHintNvg != 0) {
                 nvgImageSize(vg, s_startHintNvg,
                              &s_startHintW, &s_startHintH);

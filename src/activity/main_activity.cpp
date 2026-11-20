@@ -390,8 +390,16 @@ public:
         if (path != s_path) {
             if (s_img != 0)
                 nvgDeleteImage(vg, s_img);
+#ifdef USE_LIBROMFS
+            // iOS/tvOS: the resources are embedded, not files.
+            auto& res = romfs::get(path);
+            s_img = res.valid() ? nvgCreateImageMem(vg, 0, (unsigned char*)res.data(),
+                                                    (int)res.size())
+                                : 0;
+#else
             const std::string full = std::string(RESOURCE_PREFIX) + path;
             s_img  = nvgCreateImage(vg, full.c_str(), 0);
+#endif
             s_path = (s_img != 0) ? path : std::string();
         }
         if (s_img == 0)
