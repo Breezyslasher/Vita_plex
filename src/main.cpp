@@ -15,6 +15,9 @@
  */
 
 #include <borealis.hpp>
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 #ifdef __SWITCH__
 #include <switch.h>
 #include <cstdio>
@@ -172,6 +175,12 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     return 0;
 }
 
+// iOS / tvOS start in SDL's own main() (SDL2main), which runs
+// UIApplicationMain and only then calls SDL_main (platform_ios.mm). A main()
+// here would win the link and skip UIKit's start entirely, so the app died
+// as soon as SDL asked for a window.
+#if !(defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV))
 int main(int argc, char* argv[]) {
     return VitaPlexMainEntry(argc, argv);
 }
+#endif

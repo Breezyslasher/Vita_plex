@@ -1657,7 +1657,11 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
     if(PLATFORM_IOS)
         set_target_properties(${PROJECT_NAME} PROPERTIES
             XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
-            XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "14.0")
+            XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "14.0"
+            # Without this actool compiles the catalog but never names an app
+            # icon, so Info.plist gets no CFBundleIcons and the home screen
+            # shows a blank icon.
+            XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon")
     elseif(PLATFORM_TVOS)
         set_target_properties(${PROJECT_NAME} PROPERTIES
             XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "3"

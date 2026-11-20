@@ -27,6 +27,7 @@ on:
         - aur
         - deb
         - ios
+        - tvos
       pre_release:
         description: 'Upload artifacts to a GitHub pre-release'
         type: boolean
@@ -1196,20 +1197,23 @@ jobs:
   # as VitaPlex.ipa. A sideloading tool (Sideloadly, AltStore, SideStore)
   # signs it with the user's own Apple ID at install, so CI needs no
   # certificate or provisioning profile and no Mac is needed at home.
-  # tvOS is left out until the iOS build has been seen running.
+  # tvOS is built the same way; sideloading tools install it on an Apple TV
+  # through a paired Mac or, on Linux/Windows, over the network where the
+  # tool supports it.
   #
   # Not a release gate: the release jobs do not wait on it, so a failure
   # here only costs the .ipa, not the other platforms' downloads.
   # ───────────────────────────────────────────────
   build-ios:
     needs: [resolve-version]
-    if: ${{ inputs.platform == 'ios' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
+    if: ${{ inputs.platform == 'ios' || inputs.platform == 'tvos' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: Apple Mobile (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
         include:
-        - { target: ios, cmake_flag: PLATFORM_IOS, platform_for_toolchain: OS64, sdk: iphoneos, slice: ios-arm64 }
+        - { target: ios,  cmake_flag: PLATFORM_IOS,  platform_for_toolchain: OS64, sdk: iphoneos,  slice: ios-arm64 }
+        - { target: tvos, cmake_flag: PLATFORM_TVOS, platform_for_toolchain: TVOS, sdk: appletvos, slice: tvos-arm64 }
     runs-on: macos-15
     env:
       # Pin to a release whose asset names match the loop below. All eight

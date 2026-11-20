@@ -20,11 +20,23 @@
 #include <TargetConditionals.h>
 #import <Foundation/Foundation.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <thread>
+
+// SDL's iOS main() (SDL2main) starts UIKit and then calls SDL_main, so the
+// app's entry point lives here, as on Android, and src/main.cpp defines no
+// main() on this port.
+extern "C" int VitaPlexMainEntry(int argc, char* argv[]);
+
+extern "C" int SDL_main(int argc, char* argv[]) {
+    return VitaPlexMainEntry(argc, argv);
+}
 
 namespace vitaplex {
 namespace platform {
@@ -247,6 +259,7 @@ std::string takePendingDeepLink() { return {}; }
 void setDeepLinkHandler(std::function<void()>) {}
 
 bool init() {
+    openLogFile();
     if (!::vitaplex::HttpClient::globalInit()) {
         brls::Logger::error("Failed to initialize curl");
         return false;
@@ -262,8 +275,58 @@ std::string getLogPath() {
     return getIosDataDir() + "/vitaplex.log";
 }
 
-void openLogFile() {}
-void closeLogFile() {}
+// The log goes to Documents/vitaplex.log, which the Files app shows under
+// On My iPhone > VitaPlex (UIFileSharingEnabled in Info.plist), so it can be
+// sent in without a Mac. The previous run's is kept as vitaplex.prev.log.
+// Written and flushed line by line: what matters most on a new port is the
+// last line before a crash.
+namespace {
+FILE* g_logFile = nullptr;
+std::mutex g_logMutex;
+}  // namespace
+
+void openLogFile() {
+    if (g_logFile) return;
+    const std::string path = getLogPath();
+    const std::string prev = getIosDataDir() + "/vitaplex.prev.log";
+    std::remove(prev.c_str());
+    std::rename(path.c_str(), prev.c_str());
+    g_logFile = std::fopen(path.c_str(), "w");
+    if (!g_logFile) return;
+
+    brls::Logger::getLogEvent()->subscribe(
+        [](brls::Logger::TimePoint time, brls::LogLevel level, std::string log) {
+            const char* levelStr = "UNKNOWN";
+            switch (level) {
+                case brls::LogLevel::LOG_ERROR:   levelStr = "ERROR";   break;
+                case brls::LogLevel::LOG_WARNING: levelStr = "WARNING"; break;
+                case brls::LogLevel::LOG_INFO:    levelStr = "INFO";    break;
+                case brls::LogLevel::LOG_DEBUG:   levelStr = "DEBUG";   break;
+                case brls::LogLevel::LOG_VERBOSE: levelStr = "VERBOSE"; break;
+            }
+            std::time_t tt = std::chrono::system_clock::to_time_t(time);
+            std::tm tm = *std::localtime(&tt);
+            const long ms = (long)(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       time.time_since_epoch()).count() % 1000);
+            // Redacted here, as on the other ports: logs get pasted into bug
+            // reports, and a token is a key to the whole server.
+            const std::string line = ::vitaplex::redactTokensInUrl(log);
+            std::lock_guard<std::mutex> lock(g_logMutex);
+            if (!g_logFile) return;
+            std::fprintf(g_logFile, "%02d:%02d:%02d.%03ld [%s] %s\n", tm.tm_hour, tm.tm_min,
+                         tm.tm_sec, ms, levelStr, line.c_str());
+            std::fflush(g_logFile);
+        });
+    brls::Logger::info("Log file: {}", path);
+}
+
+void closeLogFile() {
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    if (g_logFile) {
+        std::fclose(g_logFile);
+        g_logFile = nullptr;
+    }
+}
 
 bool readLocalFile(const std::string& path,
                    std::vector<uint8_t>& out,
