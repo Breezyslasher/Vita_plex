@@ -282,6 +282,18 @@ void update(const Info& info) {
 void clear() { bgaudio::quickMenuNowPlayingCleared(); }
 void setQueue(const std::vector<QueueEntry>&, int64_t) {}
 
+#elif defined(VITAPLEX_APPLE_NOWPLAYING)  // ---- iOS / tvOS: lock screen + audio session ----
+
+// now_playing_ios.mm: MPNowPlayingInfoCenter, MPRemoteCommandCenter and the
+// AVAudioSession that keeps music playing in the background.
+namespace detail {
+void iosUpdate(const Info& info);
+void iosClear();
+}
+void update(const Info& info) { detail::iosUpdate(info); }
+void clear() { detail::iosClear(); }
+void setQueue(const std::vector<QueueEntry>&, int64_t) {}
+
 #else  // ---- other platforms: no OS media session ----
 
 void update(const Info&) {}

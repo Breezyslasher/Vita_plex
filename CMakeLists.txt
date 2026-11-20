@@ -477,6 +477,10 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
     # TARGET_OS_TV from <TargetConditionals.h>, and the constraints
     # tables differ between the two (phone-sized vs. living-room).
     list(APPEND APP_SOURCES src/platform/platform_ios.mm)
+    # Lock screen / Control Centre controls and the audio session that keeps
+    # music playing in the background (src/utils/now_playing.cpp picks it up).
+    list(APPEND APP_SOURCES src/utils/now_playing_ios.mm)
+    add_compile_definitions(VITAPLEX_APPLE_NOWPLAYING=1)
 else()
     list(APPEND APP_SOURCES src/platform/platform_desktop.cpp)
 endif()
@@ -1089,6 +1093,7 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
         "-framework CoreVideo"
         "-framework CoreImage"
         "-framework AVFoundation"
+        "-framework MediaPlayer"           # now_playing_ios.mm: lock screen card + remote commands
         "-framework AudioToolbox"
         "-framework CoreAudio"             # MPVKit Package.swift linkedFramework
         "-framework VideoToolbox"          # mpv hwdec=auto-safe -> VideoToolbox
