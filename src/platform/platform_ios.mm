@@ -20,6 +20,7 @@
 #include <TargetConditionals.h>
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#include <SDL2/SDL_hints.h>
 
 #include <chrono>
 #include <cstdio>
@@ -287,6 +288,14 @@ static void iosSafeAreaInsets(int width, int height, float* left, float* top, fl
 
 bool init() {
     openLogFile();
+#if TARGET_OS_TV
+    // The Siri Remote as a remote, not a gamepad. Opened as a joystick (SDL's
+    // default) its touch surface is an analog stick: a resting thumb keeps
+    // the focus moving and swipes overshoot. Off, SDL sends one arrow key
+    // per swipe, Enter for a click and Menu for the Back button, which is
+    // how Apple TV apps move. Must be set before SDL starts.
+    SDL_SetHint(SDL_HINT_TV_REMOTE_AS_JOYSTICK, "0");
+#endif
     brls::Application::safeAreaInsetsProvider = iosSafeAreaInsets;
     if (!::vitaplex::HttpClient::globalInit()) {
         brls::Logger::error("Failed to initialize curl");

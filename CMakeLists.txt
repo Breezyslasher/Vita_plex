@@ -234,6 +234,25 @@ foreach(_brls_patch thread:core/thread.cpp hint:views/hint.cpp)
     endif()
 endforeach()
 
+# tvOS: the Siri Remote's Menu button is Back on Apple TV, but borealis maps
+# SDL's MENU key to X, the Android TV remote's menu key (which opens options).
+if(PLATFORM_TVOS)
+    set(_sdl_input "${BOREALIS_LIBRARY}/lib/platforms/sdl/sdl_input.cpp")
+    file(READ "${_sdl_input}" _in_src)
+    set(_menu_old "state->buttons[BUTTON_X] |= getKeyboardKeys(SDL_SCANCODE_MENU);")
+    set(_menu_new "state->buttons[BUTTON_B] |= getKeyboardKeys(SDL_SCANCODE_MENU); // tvOS: Menu is Back")
+    string(FIND "${_in_src}" "${_menu_new}" _menu_done)
+    if(_menu_done EQUAL -1)
+        string(FIND "${_in_src}" "${_menu_old}" _menu_at)
+        if(_menu_at EQUAL -1)
+            message(FATAL_ERROR "sdl_input.cpp patch: MENU key mapping not found")
+        endif()
+        string(REPLACE "${_menu_old}" "${_menu_new}" _in_src "${_in_src}")
+        file(WRITE "${_sdl_input}" "${_in_src}")
+        message(STATUS "Applying patch: borealis sdl_input.cpp (tvOS Menu is Back)")
+    endif()
+endif()
+
 # iOS: SDL reports leaving the foreground on applicationWillResignActive (a
 # system alert such as the local-network prompt, Control Centre, a call),
 # but coming back from those only as SDL_APP_DIDENTERFOREGROUND; borealis
