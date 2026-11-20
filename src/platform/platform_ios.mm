@@ -367,8 +367,17 @@ const std::string& getIosDataDir() {
     static std::string s_dir;
     if (s_dir.empty()) {
         @autoreleasepool {
+#if TARGET_OS_TV
+            // tvOS gives apps no persistent Documents folder: local storage
+            // is Caches only (the system may clear it when space runs low).
+            // Without this the settings, the sign-in and the log could not be
+            // written on an Apple TV at all.
+            NSArray<NSString*>* paths = NSSearchPathForDirectoriesInDomains(
+                NSCachesDirectory, NSUserDomainMask, YES);
+#else
             NSArray<NSString*>* paths = NSSearchPathForDirectoriesInDomains(
                 NSDocumentDirectory, NSUserDomainMask, YES);
+#endif
             if (paths.count > 0) {
                 s_dir = [paths[0] UTF8String];
             } else {
