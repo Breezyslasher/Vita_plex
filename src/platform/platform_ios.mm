@@ -20,6 +20,7 @@
 #include <TargetConditionals.h>
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#include <SDL2/SDL_events.h>
 #include <SDL2/SDL_hints.h>
 
 #include <chrono>
@@ -295,6 +296,18 @@ bool init() {
     // per swipe, Enter for a click and Menu for the Back button, which is
     // how Apple TV apps move. Must be set before SDL starts.
     SDL_SetHint(SDL_HINT_TV_REMOTE_AS_JOYSTICK, "0");
+    // Nor a mouse: SDL makes a pointer out of the touch surface by default.
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+    // What the remote sends, in the log: key presses only (the touch surface
+    // reports every movement and would flood it).
+    SDL_AddEventWatch(
+        [](void*, SDL_Event* e) -> int {
+            if (e->type == SDL_KEYDOWN && !e->key.repeat)
+                brls::Logger::info("Remote: key {} pressed",
+                                   SDL_GetScancodeName(e->key.keysym.scancode));
+            return 0;
+        },
+        nullptr);
 #endif
     brls::Application::safeAreaInsetsProvider = iosSafeAreaInsets;
     if (!::vitaplex::HttpClient::globalInit()) {

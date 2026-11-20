@@ -251,6 +251,36 @@ if(PLATFORM_TVOS)
         file(WRITE "${_sdl_input}" "${_in_src}")
         message(STATUS "Applying patch: borealis sdl_input.cpp (tvOS Menu is Back)")
     endif()
+
+    # The Siri Remote's touch surface reaches SDL as screen touches (and, by
+    # default, a mouse pointer). borealis took those as pointer input: it left
+    # focus mode, so the highlight never moved, whatever the swipes sent. On
+    # tvOS only the remote's keys (one arrow per swipe, Enter, Escape) drive
+    # the UI; touches and the pointer are ignored.
+    file(READ "${_sdl_input}" _in_src)
+    foreach(_fn updateTouchStates updateMouseStates)
+        if(_fn STREQUAL "updateTouchStates")
+            set(_sig "void SDLInputManager::updateTouchStates(std::vector<RawTouchState>* states)\n{\n")
+        else()
+            set(_sig "void SDLInputManager::updateMouseStates(RawMouseState* state)\n{\n")
+        endif()
+        if(_fn STREQUAL "updateMouseStates")
+            # Hand back a cleared state rather than whatever was in it.
+            set(_guard "${_sig}#ifdef TVOS\n    *state = RawMouseState(); // tvOS: the remote's touch surface is not a pointer\n    return;\n#endif\n")
+        else()
+            set(_guard "${_sig}#ifdef TVOS\n    return; // tvOS: the remote's touch surface is not a pointer\n#endif\n")
+        endif()
+        string(FIND "${_in_src}" "${_guard}" _g_done)
+        if(_g_done EQUAL -1)
+            string(FIND "${_in_src}" "${_sig}" _g_at)
+            if(_g_at EQUAL -1)
+                message(FATAL_ERROR "sdl_input.cpp patch: ${_fn} not found")
+            endif()
+            string(REPLACE "${_sig}" "${_guard}" _in_src "${_in_src}")
+            message(STATUS "Applying patch: borealis sdl_input.cpp (tvOS ignores ${_fn})")
+        endif()
+    endforeach()
+    file(WRITE "${_sdl_input}" "${_in_src}")
 endif()
 
 # iOS: SDL reports leaving the foreground on applicationWillResignActive (a
