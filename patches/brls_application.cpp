@@ -1042,6 +1042,8 @@ void Application::frame()
     float scaleFactor = videoContext->getScaleFactor();
 
     nvgBeginFrame(frameContext.vg, Application::windowWidth, Application::windowHeight, scaleFactor);
+    // VitaPlex patch: the UI starts at the safe area's corner.
+    nvgTranslate(frameContext.vg, Application::safeInsetLeft, Application::safeInsetTop);
     nvgScale(frameContext.vg, Application::windowScale, Application::windowScale);
 
     std::vector<View*> viewsToDraw;
@@ -1586,10 +1588,25 @@ void Application::setWindowSize(int width, int height)
     Application::windowWidth  = width;
     Application::windowHeight = height;
 
+    // VitaPlex patch: lay the UI out inside the safe area (see
+    // safeAreaInsetsProvider). An implausible answer counts as none.
+    float insetL = 0, insetT = 0, insetR = 0, insetB = 0;
+    if (Application::safeAreaInsetsProvider)
+        Application::safeAreaInsetsProvider(width, height, &insetL, &insetT, &insetR, &insetB);
+    if (insetL < 0 || insetT < 0 || insetR < 0 || insetB < 0 || insetL + insetR >= width / 2.0f ||
+        insetT + insetB >= height / 2.0f)
+        insetL = insetT = insetR = insetB = 0;
+    Application::safeInsetLeft   = insetL;
+    Application::safeInsetTop    = insetT;
+    Application::safeInsetRight  = insetR;
+    Application::safeInsetBottom = insetB;
+    const float usableWidth  = (float)width - insetL - insetR;
+    const float usableHeight = (float)height - insetT - insetB;
+
     // Rescale UI
-    Application::windowScale   = (float)width / (float)ORIGINAL_WINDOW_WIDTH;
+    Application::windowScale   = usableWidth / (float)ORIGINAL_WINDOW_WIDTH;
     Application::contentWidth  = (float)ORIGINAL_WINDOW_WIDTH;
-    Application::contentHeight = std::ceil((float)height / Application::windowScale);
+    Application::contentHeight = std::ceil(usableHeight / Application::windowScale);
 
     for (Activity* activity : Application::activitiesStack)
         activity->onWindowSizeChanged();

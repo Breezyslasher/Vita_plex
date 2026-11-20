@@ -256,6 +256,39 @@ if(PLATFORM_IOS)
         file(WRITE "${_sdl_platform}" "${_sdl_src}")
         message(STATUS "Applying patch: borealis sdl_platform.cpp (iOS foreground)")
     endif()
+
+    # borealis locks iPhones to landscape (only iPads may rotate). VitaPlex has
+    # a phone layout for portrait, so let the iPhone turn as well.
+    file(READ "${_sdl_platform}" _sdl_src)
+    set(_orient_old "SDL_SetHint(SDL_HINT_ORIENTATIONS, \"LandscapeLeft LandscapeRight\");\n    }\n    SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK")
+    set(_orient_new "SDL_SetHint(SDL_HINT_ORIENTATIONS, \"LandscapeLeft LandscapeRight Portrait\");\n    }\n    SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK")
+    string(FIND "${_sdl_src}" "${_orient_new}" _orient_done)
+    if(_orient_done EQUAL -1)
+        string(FIND "${_sdl_src}" "${_orient_old}" _orient_at)
+        if(_orient_at EQUAL -1)
+            message(FATAL_ERROR "sdl_platform.cpp patch: iPhone orientation hint not found")
+        endif()
+        string(REPLACE "${_orient_old}" "${_orient_new}" _sdl_src "${_sdl_src}")
+        file(WRITE "${_sdl_platform}" "${_sdl_src}")
+        message(STATUS "Applying patch: borealis sdl_platform.cpp (iPhone portrait)")
+    endif()
+
+    # Touches were mapped across the whole window; with the UI laid out in the
+    # safe area (Application::safeInsetLeft/Top) they are mapped back into it.
+    set(_sdl_input "${BOREALIS_LIBRARY}/lib/platforms/sdl/sdl_input.cpp")
+    file(READ "${_sdl_input}" _in_src)
+    set(_touch_old "state.position.x = Application::contentWidth * finger->x;\n            state.position.y = Application::contentHeight * finger->y;")
+    set(_touch_new "state.position.x = (finger->x * Application::windowWidth - Application::safeInsetLeft) / Application::windowScale;\n            state.position.y = (finger->y * Application::windowHeight - Application::safeInsetTop) / Application::windowScale;")
+    string(FIND "${_in_src}" "${_touch_new}" _touch_done)
+    if(_touch_done EQUAL -1)
+        string(FIND "${_in_src}" "${_touch_old}" _touch_at)
+        if(_touch_at EQUAL -1)
+            message(FATAL_ERROR "sdl_input.cpp patch: touch mapping not found")
+        endif()
+        string(REPLACE "${_touch_old}" "${_touch_new}" _in_src "${_in_src}")
+        file(WRITE "${_sdl_input}" "${_in_src}")
+        message(STATUS "Applying patch: borealis sdl_input.cpp (iOS safe area touch)")
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------

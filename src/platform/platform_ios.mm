@@ -19,6 +19,7 @@
 
 #include <TargetConditionals.h>
 #import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 
 #include <chrono>
 #include <cstdio>
@@ -258,8 +259,35 @@ void offerDeepLink(const std::string&) {}
 std::string takePendingDeepLink() { return {}; }
 void setDeepLinkHandler(std::function<void()>) {}
 
+// The window edges iOS reserves (the notch or Dynamic Island, the home
+// indicator, rounded corners), converted to the units borealis's window size
+// is in. Without it the sidebar ran under the Dynamic Island in landscape.
+// Called on the main thread from Application::setWindowSize, so after every
+// rotation too.
+static void iosSafeAreaInsets(int width, int height, float* left, float* top, float* right,
+                              float* bottom) {
+    @autoreleasepool {
+        UIWindow* window = nil;
+        for (UIWindow* w in [UIApplication sharedApplication].windows) {
+            if (w.isKeyWindow) { window = w; break; }
+        }
+        if (!window) window = [UIApplication sharedApplication].windows.firstObject;
+        if (!window || window.bounds.size.width <= 0 || window.bounds.size.height <= 0) return;
+        const UIEdgeInsets in = window.safeAreaInsets;
+        const CGFloat sx = width / window.bounds.size.width;
+        const CGFloat sy = height / window.bounds.size.height;
+        *left   = (float)(in.left * sx);
+        *right  = (float)(in.right * sx);
+        *top    = (float)(in.top * sy);
+        *bottom = (float)(in.bottom * sy);
+        brls::Logger::info("Safe area: left {} top {} right {} bottom {} (of {}x{})", *left, *top,
+                           *right, *bottom, width, height);
+    }
+}
+
 bool init() {
     openLogFile();
+    brls::Application::safeAreaInsetsProvider = iosSafeAreaInsets;
     if (!::vitaplex::HttpClient::globalInit()) {
         brls::Logger::error("Failed to initialize curl");
         return false;

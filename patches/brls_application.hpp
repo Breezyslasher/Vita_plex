@@ -208,6 +208,15 @@ class Application
 
     inline static float windowScale;
 
+    // VitaPlex patch: the edges of the window the UI keeps clear of (the
+    // iPhone notch / Dynamic Island, the home indicator, rounded corners), in
+    // window units. setWindowSize asks safeAreaInsetsProvider when one is set
+    // and lays the UI out in what is left; drawing is offset by the left/top
+    // inset and touch input mapped back the same way. Zero where unset.
+    inline static float safeInsetLeft = 0, safeInsetTop = 0, safeInsetRight = 0, safeInsetBottom = 0;
+    inline static std::function<void(int width, int height, float* left, float* top, float* right,
+        float* bottom)> safeAreaInsetsProvider;
+
     /**
      * Sets whether BUTTON_START will globally be used to close the application.
      */
