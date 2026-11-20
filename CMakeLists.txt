@@ -234,6 +234,30 @@ foreach(_brls_patch thread:core/thread.cpp hint:views/hint.cpp)
     endif()
 endforeach()
 
+# iOS: SDL reports leaving the foreground on applicationWillResignActive (a
+# system alert such as the local-network prompt, Control Centre, a call),
+# but coming back from those only as SDL_APP_DIDENTERFOREGROUND; borealis
+# listened for SDL_APP_WILLENTERFOREGROUND alone, which iOS sends only after
+# a real trip to the background. So after the first alert the app stayed
+# "backgrounded": no drawing, image uploads held back, until the user left
+# the app and came back. Treat either event as back in front.
+if(PLATFORM_IOS)
+    set(_sdl_platform "${BOREALIS_LIBRARY}/lib/platforms/sdl/sdl_platform.cpp")
+    file(READ "${_sdl_platform}" _sdl_src)
+    set(_sdl_old "event->type == SDL_APP_WILLENTERFOREGROUND)")
+    set(_sdl_new "event->type == SDL_APP_WILLENTERFOREGROUND || event->type == SDL_APP_DIDENTERFOREGROUND)")
+    string(FIND "${_sdl_src}" "${_sdl_new}" _sdl_done)
+    if(_sdl_done EQUAL -1)
+        string(FIND "${_sdl_src}" "${_sdl_old}" _sdl_at)
+        if(_sdl_at EQUAL -1)
+            message(FATAL_ERROR "sdl_platform.cpp patch: foreground check not found")
+        endif()
+        string(REPLACE "${_sdl_old}" "${_sdl_new}" _sdl_src "${_sdl_src}")
+        file(WRITE "${_sdl_platform}" "${_sdl_src}")
+        message(STATUS "Applying patch: borealis sdl_platform.cpp (iOS foreground)")
+    endif()
+endif()
+
 # ---------------------------------------------------------------------------
 # GLFW keyboard mapping patch (desktop only): adds keyboard shortcuts
 # for Start / Back / X / Y / LB / RB on the desktop GLFW backend so
