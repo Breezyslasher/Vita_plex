@@ -1496,15 +1496,21 @@ jobs:
       - name: Pack .ipa
         run: |
           set -eu
+          # What a sideloading tool reads to decide iPhone/iPad vs Apple TV.
+          echo "Info.plist platform keys:"
+          plutil -p stage/VitaPlex.app/Info.plist \
+            | grep -E -A3 'CFBundleSupportedPlatforms|UIDeviceFamily|DTPlatformName|DTSDKName|MinimumOSVersion' || true
           mkdir -p ipa/Payload
           cp -R stage/VitaPlex.app ipa/Payload/
-          (cd ipa && zip -qry ../VitaPlex.ipa Payload)
-          ls -la VitaPlex.ipa
+          # Named per device: both used to be VitaPlex.ipa, and the iPhone one
+          # is easy to pick for an Apple TV by mistake.
+          (cd ipa && zip -qry ../VitaPlex-${{ matrix.target }}.ipa Payload)
+          ls -la VitaPlex-${{ matrix.target }}.ipa
       - name: Upload .ipa
         uses: actions/upload-artifact@v4
         with:
           name: VitaPlex-${{ matrix.target }}-${{ github.run_number }}
-          path: VitaPlex.ipa
+          path: VitaPlex-${{ matrix.target }}.ipa
 
   # ───────────────────────────────────────────────
   # PS4
