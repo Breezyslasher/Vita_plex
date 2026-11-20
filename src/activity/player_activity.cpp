@@ -980,7 +980,9 @@ void PlayerActivity::onContentAvailable() {
             [this](brls::KeyState ks) {
                 if (!ks.pressed || m_destroying) return;
                 const int k = (int)ks.key;
-                if (k != brls::BRLS_KBD_KEY_SPACE &&
+                // PAUSE is the Apple TV remote's Play/Pause button (SDL maps
+                // UIPressTypePlayPause to it) and a keyboard's Pause key.
+                if (k != brls::BRLS_KBD_KEY_SPACE && k != brls::BRLS_KBD_KEY_PAUSE &&
                     k != mediakey::PLAY_PAUSE && k != mediakey::STOP &&
                     k != mediakey::NEXT && k != mediakey::PREV) return;
                 // Only when this player is on top: the event is global, and Space typed into a search field must not reach playback.
@@ -999,7 +1001,7 @@ void PlayerActivity::onContentAvailable() {
                     }
                     return;
                 }
-                togglePlayPause();   // Space, Play/Pause, and Stop
+                togglePlayPause();   // Space, Pause, Play/Pause, and Stop
             });
         m_kbSubscribed = true;
     }
