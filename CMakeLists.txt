@@ -260,6 +260,43 @@ if(NOT PLATFORM_SWITCH AND NOT PLATFORM_PSV AND NOT PLATFORM_PS4 AND NOT PLATFOR
     endif()
 endif()
 
+# ---------------------------------------------------------------------------
+# Compiler cache (CI)
+#
+# Only when asked for, with -DVITAPLEX_USE_CCACHE=ON or the VITAPLEX_USE_CCACHE
+# environment variable (the CI jobs set it), and only when ccache is
+# installed: a local build, or a CI job whose ccache install failed, builds
+# exactly as before. Set here, before borealis and the app add their targets,
+# so every library and the app go through it.
+# ---------------------------------------------------------------------------
+option(VITAPLEX_USE_CCACHE "Compile through ccache when it is installed" OFF)
+if(VITAPLEX_USE_CCACHE OR DEFINED ENV{VITAPLEX_USE_CCACHE})
+    find_program(VITAPLEX_CCACHE_PROGRAM ccache)
+    if(NOT VITAPLEX_CCACHE_PROGRAM)
+        message(STATUS "ccache: not installed, building without it")
+    elseif(CMAKE_GENERATOR STREQUAL "Xcode")
+        # Xcode takes no compiler launcher; point its CC / CXX at wrappers
+        # instead. Link invocations go through them too, and ccache passes
+        # those straight on to clang.
+        set(_ccache_dir "${CMAKE_BINARY_DIR}/ccache-wrappers")
+        file(MAKE_DIRECTORY "${_ccache_dir}")
+        foreach(_tool clang clang++)
+            file(WRITE "${_ccache_dir}/ccache-${_tool}"
+                "#!/bin/sh\nexec \"${VITAPLEX_CCACHE_PROGRAM}\" \"$(xcrun -f ${_tool})\" \"$@\"\n")
+            file(CHMOD "${_ccache_dir}/ccache-${_tool}"
+                PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                            GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+        endforeach()
+        set(CMAKE_XCODE_ATTRIBUTE_CC  "${_ccache_dir}/ccache-clang")
+        set(CMAKE_XCODE_ATTRIBUTE_CXX "${_ccache_dir}/ccache-clang++")
+        message(STATUS "ccache: Xcode wrappers in ${_ccache_dir}")
+    else()
+        set(CMAKE_C_COMPILER_LAUNCHER   "${VITAPLEX_CCACHE_PROGRAM}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${VITAPLEX_CCACHE_PROGRAM}")
+        message(STATUS "ccache: ${VITAPLEX_CCACHE_PROGRAM}")
+    endif()
+endif()
+
 # iOS / tvOS embed app resources through libromfs (borealis toolchain.cmake
 # forces USE_LIBROMFS=ON for these platforms). libromfs's own CMakeLists
 # fatals unless we tell it WHAT to embed and under what project name — set
@@ -531,7 +568,20 @@ if(NOT DEFINED APP_DISPLAY_VERSION OR APP_DISPLAY_VERSION STREQUAL "")
 endif()
 message(STATUS "App version (numeric): ${APP_VERSION}")
 message(STATUS "App version (display): ${APP_DISPLAY_VERSION}")
-target_compile_definitions(${PROJECT_NAME} PRIVATE
+# Only on the files that use the version. As a define on the whole target,
+# the build number (new on every CI run) changed every file's compile line,
+# so a compiler cache could never reuse anything of the app. A new file that
+# prints VITA_PLEX_VERSION / VITA_PLEX_DISPLAY_VERSION / PLEX_CLIENT_VERSION
+# must be added here, or it gets the fallback in include/app/application.hpp.
+set(VITAPLEX_VERSIONED_SOURCES
+    src/app/application.cpp
+    src/app/downloads_manager.cpp
+    src/app/plex_client.cpp
+    src/player/mpv_player.cpp
+    src/utils/app_update.cpp
+    src/utils/http_client.cpp
+    src/view/settings_tab.cpp)
+set_property(SOURCE ${VITAPLEX_VERSIONED_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS
     VITA_PLEX_VERSION=\"${APP_VERSION}\"
     VITA_PLEX_DISPLAY_VERSION=\"${APP_DISPLAY_VERSION}\")
 

@@ -553,6 +553,23 @@ jobs:
       # transfer that crawls below 100 KB/s for 30s and retries: GitHub's
       # release-asset CDN intermittently serves an edge at dial-up speed,
       # and a retry lands on a healthy one instead of waiting it out.
+      # Compiler cache. Best effort: if ccache cannot be installed the build
+      # below runs as before, only without reuse (see CMakeLists.txt).
+      - name: Install ccache
+        continue-on-error: true
+        run: |
+          if command -v apk >/dev/null 2>&1; then apk add ccache
+          elif command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ccache
+          elif command -v dnf >/dev/null 2>&1; then dnf install -y ccache
+          elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm ccache
+          fi
+          ccache --version | head -1
+      - name: Cache compiled objects
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-vita-${{ github.run_id }}
+          restore-keys: ccache-vita-
       - name: Cache Vita portlibs
         id: cache-vita-portlibs
         uses: actions/cache@v4
@@ -672,12 +689,21 @@ jobs:
           ls -l build-sc/shell_companion.suprx
 
       - name: Build
+        env:
+          VITAPLEX_USE_CCACHE: "1"
+          CCACHE_COMPRESS: "1"
+          CCACHE_MAXSIZE: 600M
+          CCACHE_NOHASHDIR: "1"
         run: |
+          # In a container job github.workspace is the host's path, so the
+          # cache location comes from the container's own $GITHUB_WORKSPACE.
+          export CCACHE_DIR="$GITHUB_WORKSPACE/.ccache" CCACHE_BASEDIR="$GITHUB_WORKSPACE"
           cmake -B build -G Ninja -DPLATFORM_PSV=ON \
           -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
           -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}" \
           -DSC_PLUGIN_SUPRX="$GITHUB_WORKSPACE/build-sc/shell_companion.suprx"
           cmake --build build
+          ccache -s 2>/dev/null || true
 
       - name: Upload VPK
         uses: actions/upload-artifact@v4
@@ -777,12 +803,32 @@ jobs:
           mkdir -p "${dst_libdir}"
           find "${src_libdir}" -maxdepth 1 \( -name "*.so" -o -name "*.so.*" \) -exec cp -a {} "${dst_libdir}/" \;
         done
+    # Compiler cache. Best effort: if ccache cannot be installed the build
+    # below runs as before, only without reuse (see CMakeLists.txt).
+    - name: Install ccache
+      continue-on-error: true
+      run: |
+        sudo apt-get install -y --no-install-recommends ccache
+        ccache --version | head -1
+    - name: Cache compiled objects
+      uses: actions/cache@v4
+      with:
+        path: .ccache
+        key: ccache-android-${{ github.run_id }}
+        restore-keys: ccache-android-
     - name: Build APK
       # build_libromfs_generator.sh must run before Gradle/CMake configure because
       # borealis's toolchain.cmake unconditionally checks that the generator binary
       # exists when PLATFORM_ANDROID is set — even though USE_LIBROMFS=OFF means
       # the generator is never actually used to embed anything.
       # Resources are loaded via APK assets (see build.gradle syncBorealisResources).
+      env:
+        VITAPLEX_USE_CCACHE: "1"
+        CCACHE_DIR: ${{ github.workspace }}/.ccache
+        CCACHE_BASEDIR: ${{ github.workspace }}
+        CCACHE_COMPRESS: "1"
+        CCACHE_MAXSIZE: 600M
+        CCACHE_NOHASHDIR: "1"
       run: |
         ${{ github.workspace }}/lib/borealis/build_libromfs_generator.sh
         # Pass the CI-resolved version through to the native cmake build (via
@@ -791,6 +837,7 @@ jobs:
         cd app/platform/android && ./gradlew assembleGithubRelease \
           -PappVersion="${{ needs.resolve-version.outputs.version_number }}" \
           -PappDisplayVersion="${{ needs.resolve-version.outputs.version }}"
+        ccache -s 2>/dev/null || true
     - name: Upload dist
       uses: actions/upload-artifact@v4
       with:
@@ -1291,6 +1338,19 @@ jobs:
         run: |
           echo "LIBCURL_LIBRARY=${{ github.workspace }}/libcurl-install/lib/libcurl.a" >> $GITHUB_ENV
           echo "LIBCURL_INCLUDE=${{ github.workspace }}/libcurl-install/include" >> $GITHUB_ENV
+      # Compiler cache. Best effort: if ccache cannot be installed the build
+      # below runs as before, only without reuse (see CMakeLists.txt).
+      - name: Install ccache
+        continue-on-error: true
+        run: |
+          brew install ccache
+          ccache --version | head -1
+      - name: Cache compiled objects
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-apple-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: ccache-apple-${{ matrix.target }}-
       - name: Build libromfs-generator
         # borealis's iOS / tvOS toolchain requires this generator to be
         # built ahead of configure (it embeds resources/ via libromfs).
@@ -1367,6 +1427,13 @@ jobs:
           echo "Frameworks staged:"; ls -la "$FW_DIR"
           test -d "$FW_DIR/Libmpv.xcframework"
       - name: Configure
+        env:
+          VITAPLEX_USE_CCACHE: "1"
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_COMPRESS: "1"
+          CCACHE_MAXSIZE: 600M
+          CCACHE_NOHASHDIR: "1"
         run: |
           cmake -G Xcode -B build \
             -D${{ matrix.cmake_flag }}=ON \
@@ -1380,10 +1447,20 @@ jobs:
             -DLIBCURL_INCLUDE_DIR=${{ env.LIBCURL_INCLUDE }} \
             -DLIBCURL_LIBRARY=${{ env.LIBCURL_LIBRARY }}
       - name: Build
+        env:
+          VITAPLEX_USE_CCACHE: "1"
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_COMPRESS: "1"
+          CCACHE_MAXSIZE: 600M
+          CCACHE_NOHASHDIR: "1"
+          # Xcode passes options ccache would otherwise refuse to cache.
+          CCACHE_SLOPPINESS: clang_index_store,ivfsoverlay,include_file_ctime,include_file_mtime,modules,pch_defines,time_macros,system_headers
         run: |
           cmake --build build --config Release -- \
             -sdk ${{ matrix.sdk }} \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          ccache -s 2>/dev/null || true
       - name: Locate and stage .app
         run: |
           APP="$(find build -name 'VitaPlex.app' -type d | head -1)"
