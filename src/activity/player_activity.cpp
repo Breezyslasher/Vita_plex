@@ -1128,7 +1128,7 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Hand the display back: a 24Hz mode left set would redraw the whole UI at 24Hz.
     if (m_refreshRateApplied) {
         m_refreshRateApplied = false;
-        platform::setPreferredRefreshRate(0.0f);
+        platform::setPreferredVideoMode(0.0f, platform::VideoDynamicRange::SDR);
     }
 
     // Re-enable background thumbnail loading now that playback is ending
@@ -2876,7 +2876,13 @@ void PlayerActivity::applyContentRefreshRate() {
     if (!std::isfinite(fps) || fps < 10.0 || fps > 121.0) return;
 
     m_refreshRateApplied = true;
-    platform::setPreferredRefreshRate((float)fps);
+    // The transfer function says whether this is HDR, for a display that can
+    // switch to it (Apple TV); mpv names PQ and HLG "pq" and "hlg".
+    platform::VideoDynamicRange range = platform::VideoDynamicRange::SDR;
+    const std::string gamma = p.getProperty("video-params/gamma");
+    if (gamma == "pq") range = platform::VideoDynamicRange::HDR10;
+    else if (gamma == "hlg") range = platform::VideoDynamicRange::HLG;
+    platform::setPreferredVideoMode((float)fps, range);
 }
 
 void PlayerActivity::publishVideoNowPlaying() {

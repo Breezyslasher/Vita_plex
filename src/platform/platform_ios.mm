@@ -21,6 +21,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <AVKit/AVKit.h>
+#import <CoreMedia/CoreMedia.h>
 #include <SDL2/SDL_events.h>
 #include <SDL2/SDL_hints.h>
 
@@ -245,9 +246,11 @@ bool supports4KDecode() {
     return false;
 }
 
-// The display mode is the OS's business on this port; VitaPlex neither switches
-// refresh rates nor sees HDR capabilities here, so both stay no-ops.
-void setPreferredRefreshRate(float) {}
+// The frame rate alone: the Apple TV takes it with the dynamic range through
+// setPreferredVideoMode; an iPhone's display picks its own rate.
+void setPreferredRefreshRate(float fps) {
+    setPreferredVideoMode(fps, VideoDynamicRange::SDR);
+}
 bool displaySupportsHdr() { return false; }
 // No way to ask what the audio sink accepts, so everything is decoded to PCM
 // exactly as before.
@@ -257,10 +260,84 @@ const CaptionStyle& getSystemCaptionStyle() {
     static const CaptionStyle none;
     return none;
 }
-// No deep-link plumbing on this port; nothing ever hands us a URL.
-void offerDeepLink(const std::string&) {}
-std::string takePendingDeepLink() { return {}; }
-void setDeepLinkHandler(std::function<void()>) {}
+// vitaplex:// links (Info.plist CFBundleURLTypes). SDL hands a URL the app
+// is opened with over as an SDL_DROPFILE event, which the watch in init()
+// passes here; MainActivity opens the item, as on desktop and Android.
+namespace {
+std::string g_pendingDeepLink;
+std::function<void()> g_deepLinkHandler;
+}  // namespace
+
+void offerDeepLink(const std::string& url) {
+    if (url.empty()) return;
+    brls::Logger::info("Deep link: {}", url);
+    g_pendingDeepLink = url;
+    if (g_deepLinkHandler) g_deepLinkHandler();
+}
+
+std::string takePendingDeepLink() {
+    std::string out;
+    out.swap(g_pendingDeepLink);
+    return out;
+}
+
+void setDeepLinkHandler(std::function<void()> onLinkArrived) {
+    g_deepLinkHandler = std::move(onLinkArrived);
+    // A link that launched the app is already waiting by the time
+    // MainActivity registers.
+    if (g_deepLinkHandler && !g_pendingDeepLink.empty()) g_deepLinkHandler();
+}
+
+static UIWindow* keyWindow();
+
+// Apple TV: ask the TV for the video's frame rate and dynamic range (it
+// switches only with Settings > Video and Audio > Match Content on).
+// Needs tvOS 17's AVDisplayCriteria initializer; older systems keep their
+// mode. iPhone: nothing to do.
+void setPreferredVideoMode(float fps, VideoDynamicRange range) {
+#if TARGET_OS_TV
+    if (@available(tvOS 17.0, *)) {
+        @autoreleasepool {
+            UIWindow* window = keyWindow();
+            if (!window) return;
+            AVDisplayManager* dm = window.avDisplayManager;
+            if (!dm.displayCriteriaMatchingEnabled) return;  // Match Content is off
+            if (fps <= 0.0f) {
+                dm.preferredDisplayCriteria = nil;
+                return;
+            }
+            NSDictionary* ext = nil;
+            if (range != VideoDynamicRange::SDR) {
+                ext = @{
+                    (id)kCMFormatDescriptionExtension_TransferFunction:
+                        (range == VideoDynamicRange::HLG
+                             ? (id)kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG
+                             : (id)kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ),
+                    (id)kCMFormatDescriptionExtension_ColorPrimaries:
+                        (id)kCMFormatDescriptionColorPrimaries_ITU_R_2020,
+                    (id)kCMFormatDescriptionExtension_YCbCrMatrix:
+                        (id)kCMFormatDescriptionYCbCrMatrix_ITU_R_2020,
+                };
+            }
+            CMVideoFormatDescriptionRef fd = NULL;
+            if (CMVideoFormatDescriptionCreate(kCFAllocatorDefault, kCMVideoCodecType_HEVC, 3840,
+                                               2160, (__bridge CFDictionaryRef)ext,
+                                               &fd) != noErr || !fd)
+                return;
+            dm.preferredDisplayCriteria =
+                [[AVDisplayCriteria alloc] initWithRefreshRate:fps formatDescription:fd];
+            CFRelease(fd);
+            brls::Logger::info("Display: asked for {} fps, {}", fps,
+                               range == VideoDynamicRange::SDR   ? "SDR"
+                               : range == VideoDynamicRange::HLG ? "HLG"
+                                                                 : "HDR10");
+        }
+    }
+#else
+    (void)fps;
+    (void)range;
+#endif
+}
 
 static UIWindow* keyWindow() {
     for (UIWindow* w in [UIApplication sharedApplication].windows) {
@@ -353,6 +430,17 @@ static void iosSafeAreaInsets(int width, int height, float* left, float* top, fl
 
 bool init() {
     openLogFile();
+    // A vitaplex:// URL the app is opened with arrives as SDL_DROPFILE.
+    SDL_AddEventWatch(
+        [](void*, SDL_Event* e) -> int {
+            if (e->type == SDL_DROPFILE && e->drop.file) {
+                const std::string url = e->drop.file;
+                if (url.rfind("vitaplex://", 0) == 0 || url.rfind("plex://", 0) == 0)
+                    offerDeepLink(url);
+            }
+            return 0;
+        },
+        nullptr);
 #if TARGET_OS_TV
     // The Siri Remote as a remote, not a gamepad. Opened as a joystick (SDL's
     // default) its touch surface is an analog stick: a resting thumb keeps

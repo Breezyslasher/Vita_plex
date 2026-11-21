@@ -117,6 +117,7 @@ void onViewportResized(std::function<void()> cb) {
 
 // iOS / tvOS have their own in platform_ios.mm.
 #if !(defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV))
+void setPreferredVideoMode(float fps, VideoDynamicRange) { setPreferredRefreshRate(fps); }
 bool canSetScreenBrightness() { return false; }
 float getScreenBrightness() { return 0.0f; }
 void setScreenBrightness(float) {}

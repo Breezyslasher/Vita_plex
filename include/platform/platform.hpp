@@ -214,6 +214,13 @@ void onOrientationChanged(std::function<void()> cb);
 // split-screen or freeform window being resized.
 void onViewportResized(std::function<void()> cb);
 
+// The display mode a video wants: its frame rate and dynamic range. Apple TV
+// switches the TV to match (with "Match Content" on in its settings); every
+// other platform takes the frame rate alone, as setPreferredRefreshRate.
+// fps <= 0 hands the display back.
+enum class VideoDynamicRange { SDR, HDR10, HLG };
+void setPreferredVideoMode(float fps, VideoDynamicRange range);
+
 // Screen brightness, for the video player's swipe gesture. iPhone / iPad
 // only for now (UIScreen); elsewhere canSetScreenBrightness() is false.
 bool canSetScreenBrightness();
