@@ -37,6 +37,16 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Plex servers on the network are reached over plain HTTP (the
+	     downloads, which iOS carries on in the background through
+	     URLSession, use http://<ip>:<port> as VitaPlex's own do). -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

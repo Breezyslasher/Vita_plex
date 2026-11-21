@@ -532,6 +532,9 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
     # Picture in Picture over an AVSampleBufferDisplayLayer (iPhone / iPad).
     if(PLATFORM_IOS)
         list(APPEND APP_SOURCES src/utils/pip_ios.mm)
+        # Downloads iOS carries on in the background (downloads_ios.mm).
+        list(APPEND APP_SOURCES src/app/downloads_ios.mm)
+        add_compile_definitions(VITAPLEX_IOS_DOWNLOADS=1)
     endif()
     add_compile_definitions(VITAPLEX_APPLE_NOWPLAYING=1)
 else()

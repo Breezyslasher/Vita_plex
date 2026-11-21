@@ -272,6 +272,20 @@ private:
     int m_shellTakeRc = -1;
 #endif
 
+#ifdef VITAPLEX_IOS_DOWNLOADS
+    // iPhone / iPad: downloads carried on by iOS's background URLSession
+    // while the app is away (downloads_ios.mm). Handed over as the app goes
+    // to the background (withShell set, as on the Vita: "with the system"),
+    // taken back as iOS reports each one, or when it has none of them left.
+    void iosHandOver();
+    void iosComeBack();
+    void iosApplyResults();
+    void iosCheckRunning();
+    // Stopped for the background with no file URL iOS could fetch (a
+    // transcode still to be prepared): carried on here on return.
+    std::vector<std::string> m_iosPausedKeys;
+#endif
+
     // Validate that downloaded files actually exist on disk
     void validateDownloadedFiles();
 

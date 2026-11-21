@@ -17,6 +17,9 @@
 #include "utils/async.hpp"
 #include "platform/paths.hpp"
 #include "platform/platform.hpp"
+#ifdef VITAPLEX_IOS_DOWNLOADS
+#include "app/downloads_ios.hpp"
+#endif
 #include <borealis.hpp>
 #include <fstream>
 #include <algorithm>
@@ -191,6 +194,14 @@ bool DownloadsManager::init() {
     // Load saved state
     loadState();
 
+#ifdef VITAPLEX_IOS_DOWNLOADS
+    // What iOS finished while VitaPlex was away, before the files are
+    // checked; and the hooks that hand downloads to it from now on.
+    iosApplyResults();
+    iosdl::init([this]() { iosHandOver(); }, [this]() { iosComeBack(); },
+                [this]() { iosApplyResults(); });
+#endif
+
 #ifdef __vita__
     // Downloads the quick menu plugin's status names are handed to it, should
     // VitaPlex have been ended before it saved them so (handOverToShell):
@@ -231,6 +242,11 @@ bool DownloadsManager::init() {
 #endif
 
     m_initialized = true;
+#ifdef VITAPLEX_IOS_DOWNLOADS
+    // Those iOS no longer has (the app was swiped away, which ends them)
+    // go back to VitaPlex's own downloads.
+    iosCheckRunning();
+#endif
     brls::Logger::info("DownloadsManager: Initialized at {} ({} items loaded)",
                        m_downloadsPath, m_downloads.size());
     return true;
@@ -389,7 +405,9 @@ void DownloadsManager::startDownloads() {
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 for (auto& item : m_downloads) {
-                    if (item.state == DownloadState::QUEUED) {
+                    // Not one the system carries on (iOS; on the Vita these
+                    // have been taken back by now).
+                    if (item.state == DownloadState::QUEUED && !item.withShell) {
                         item.state = DownloadState::DOWNLOADING;
                         nextRatingKey = item.ratingKey;
                         brls::Logger::info("DownloadsManager: Found queued item: {}", item.title);
@@ -2522,6 +2540,9 @@ void DownloadsManager::validateDownloadedFiles() {
     // VitaPlex saved of them on its way out, they go on (takeBackFromShell).
     int interrupted = 0;
     for (auto& item : m_downloads) {
+#ifdef VITAPLEX_IOS_DOWNLOADS
+        if (item.withShell) continue;  // iOS has it (iosCheckRunning)
+#endif
         if (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING ||
             (item.withShell && (item.state == DownloadState::PAUSED ||
                                 item.state == DownloadState::FAILED ||
@@ -2847,6 +2868,157 @@ void DownloadsManager::takeBackFromShell() {
         DownloadItem* item = findItemByKey(key);
         if (item) downloadCoverArt(*item);
     }
+}
+#endif
+
+#ifdef VITAPLEX_IOS_DOWNLOADS
+void DownloadsManager::iosHandOver() {
+    // What is under way or waiting, before the download thread is stopped
+    // (stopping marks the running one paused).
+    std::vector<std::string> wanted;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& item : m_downloads)
+            if (!item.withShell && (item.state == DownloadState::QUEUED ||
+                                    item.state == DownloadState::DOWNLOADING ||
+                                    item.state == DownloadState::TRANSCODING))
+                wanted.push_back(item.ratingKey);
+    }
+    if (wanted.empty()) return;
+
+    m_downloading.store(false);
+    waitForDownloadThread(3000);
+
+    PlexClient& client = PlexClient::getInstance();
+    const std::string server = client.getServerUrl();
+    const std::string token = client.getAuthToken();
+    const bool preferDirect =
+        platform::getVideoConstraints().supportsHevc &&
+        Application::getInstance().getSettings().downloadQuality == VideoQuality::ORIGINAL;
+    const std::string base = convertToHttpForDownload(server);
+
+    std::vector<iosdl::Task> tasks;
+    m_iosPausedKeys.clear();
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& item : m_downloads) {
+            if (std::find(wanted.begin(), wanted.end(), item.ratingKey) == wanted.end()) continue;
+            if (item.state == DownloadState::CANCELLED || item.state == DownloadState::COMPLETED)
+                continue;
+            // The same file downloadItem fetches: the one the server prepared
+            // in its download queue, else the original when that is what is
+            // wanted. A transcode not yet asked for has no file to name.
+            std::string url;
+            if (!server.empty() && !item.queueId.empty() && !item.queueItemId.empty())
+                url = base + "/downloadQueue/" + item.queueId + "/item/" + item.queueItemId +
+                      "/media?X-Plex-Token=" + token;
+            else if (!server.empty() && preferDirect && !item.partPath.empty())
+                url = buildDirectDownloadUrl(server, token, item.partPath);
+            if (url.empty() || item.localPath.empty()) {
+                item.state = DownloadState::PAUSED;
+                m_iosPausedKeys.push_back(item.ratingKey);
+                continue;
+            }
+            iosdl::Task t;
+            t.key = item.ratingKey;
+            t.url = url;
+            t.path = item.localPath;
+            t.offset = std::max<int64_t>(0, partFileSize(item.localPath));
+            tasks.push_back(t);
+            item.withShell = true;
+            item.state = DownloadState::QUEUED;
+            item.downloadedBytes = t.offset;
+        }
+        saveStateUnlocked();
+    }
+    const int started = iosdl::start(tasks);
+    brls::Logger::info("DownloadsManager: to the background: iOS carries on {} download(s), {} "
+                       "wait for VitaPlex",
+                       started, m_iosPausedKeys.size());
+}
+
+void DownloadsManager::iosComeBack() {
+    iosApplyResults();
+    iosCheckRunning();
+    bool any = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& item : m_downloads)
+            if (item.state == DownloadState::PAUSED &&
+                std::find(m_iosPausedKeys.begin(), m_iosPausedKeys.end(), item.ratingKey) !=
+                    m_iosPausedKeys.end()) {
+                item.state = DownloadState::QUEUED;
+                any = true;
+            }
+        m_iosPausedKeys.clear();
+        if (any) saveStateUnlocked();
+    }
+    if (any) startDownloads();
+}
+
+void DownloadsManager::iosApplyResults() {
+    const std::vector<iosdl::Result> results = iosdl::takeFinished();
+    if (results.empty()) return;
+    std::vector<std::string> covers;
+    bool retry = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& r : results) {
+            for (auto& item : m_downloads) {
+                if (item.ratingKey != r.key || item.state == DownloadState::CANCELLED ||
+                    item.state == DownloadState::COMPLETED)
+                    continue;
+                item.withShell = false;
+                if (r.ok) {
+                    item.state = DownloadState::COMPLETED;
+                    item.totalBytes = item.downloadedBytes = r.size;
+                    item.queueId.clear();
+                    item.queueItemId.clear();
+                    if (!item.thumbUrl.empty() && !item.thumbPath.empty())
+                        covers.push_back(item.ratingKey);
+                    brls::Logger::info("DownloadsManager: {} finished by iOS", item.title);
+                } else {
+                    item.state = DownloadState::QUEUED;
+                    item.downloadedBytes = std::max<int64_t>(0, partFileSize(item.localPath));
+                    retry = true;
+                }
+            }
+        }
+        saveStateUnlocked();
+    }
+    if (!covers.empty()) {
+        asyncRun([this, covers]() {
+            for (const auto& key : covers)
+                if (DownloadItem* item = findItemByKey(key)) downloadCoverArt(*item);
+        });
+    }
+    if (retry && m_initialized) startDownloads();
+}
+
+void DownloadsManager::iosCheckRunning() {
+    iosdl::runningKeys([this](std::vector<std::string> running) {
+        iosApplyResults();
+        bool any = false;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            for (auto& item : m_downloads) {
+                if (!item.withShell) continue;
+                if (std::find(running.begin(), running.end(), item.ratingKey) != running.end())
+                    continue;
+                item.withShell = false;
+                if (item.state != DownloadState::COMPLETED && item.state != DownloadState::CANCELLED) {
+                    item.state = DownloadState::QUEUED;
+                    item.downloadedBytes = std::max<int64_t>(0, partFileSize(item.localPath));
+                    any = true;
+                }
+            }
+            if (any) saveStateUnlocked();
+        }
+        if (any) {
+            brls::Logger::info("DownloadsManager: iOS no longer has some downloads; VitaPlex goes on");
+            startDownloads();
+        }
+    });
 }
 #endif
 
