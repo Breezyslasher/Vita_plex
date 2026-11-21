@@ -42,5 +42,11 @@ bool toggle(int videoWidth, int videoHeight);
 // enables "auto PiP on Home" (onUserLeaveHint). No-op elsewhere.
 void setVideoPlaybackState(bool playing, int videoWidth, int videoHeight);
 
+// iPhone / iPad: PiP shows frames VitaPlex hands to an iOS video layer, so
+// the player's software renderer offers each one (RGBA) while a video plays.
+// wantsFrames() is false everywhere else, and pushFrameRGBA a no-op.
+bool wantsFrames();
+void pushFrameRGBA(const void* pixels, int width, int height, int stride);
+
 } // namespace pip
 } // namespace vitaplex

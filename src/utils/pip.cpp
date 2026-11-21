@@ -14,11 +14,35 @@
 #include "player/mpv_player.hpp"
 #endif
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
+// iPhone / iPad: AVKit's PiP over a sample-buffer layer (pip_ios.mm).
+#if defined(__APPLE__) && TARGET_OS_IOS
+#define VITAPLEX_PIP_IOS 1
+namespace vitaplex {
+namespace pip {
+namespace ios {
+bool available();
+bool isActive();
+void setPlaybackState(bool playing, int w, int h);
+bool enter();
+bool leave();
+bool wantsFrames();
+void pushFrameRGBA(const void* pixels, int w, int h, int stride);
+}  // namespace ios
+}  // namespace pip
+}  // namespace vitaplex
+#endif
+
 // Desktop PiP requires SDL2 (borealis's GLFW backend does not expose a
 // window handle we can manipulate). __SDL2__ is defined by borealis when
-// building the SDL2 backend.
+// building the SDL2 backend. Not on iOS / tvOS, which are SDL2 builds too
+// but have no desktop window to shrink.
 #if defined(__SDL2__) && !defined(__vita__) && !defined(__SWITCH__) && \
-    !defined(__PS4__) && !defined(__ANDROID__)
+    !defined(__PS4__) && !defined(__ANDROID__) && \
+    !(defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV))
 #define VITAPLEX_PIP_DESKTOP 1
 #include <SDL2/SDL.h>
 #include <borealis/platforms/sdl/sdl_video.hpp>
@@ -55,7 +79,9 @@ SDL_Window* getDesktopWindow() {
 } // namespace
 
 bool isAvailable() {
-#if defined(__ANDROID__) || defined(VITAPLEX_PIP_DESKTOP)
+#if defined(VITAPLEX_PIP_IOS)
+    return ios::available();
+#elif defined(__ANDROID__) || defined(VITAPLEX_PIP_DESKTOP)
     return true;
 #else
     return false;
@@ -63,7 +89,30 @@ bool isAvailable() {
 }
 
 bool isActive() {
+#if defined(VITAPLEX_PIP_IOS)
+    return ios::isActive();
+#else
     return g_pipActive;
+#endif
+}
+
+bool wantsFrames() {
+#if defined(VITAPLEX_PIP_IOS)
+    return ios::wantsFrames();
+#else
+    return false;
+#endif
+}
+
+void pushFrameRGBA(const void* pixels, int width, int height, int stride) {
+#if defined(VITAPLEX_PIP_IOS)
+    ios::pushFrameRGBA(pixels, width, height, stride);
+#else
+    (void)pixels;
+    (void)width;
+    (void)height;
+    (void)stride;
+#endif
 }
 
 #ifdef __ANDROID__
@@ -110,6 +159,11 @@ static bool androidEnterPip(int videoWidth, int videoHeight) {
 #endif
 
 bool enter(int videoWidth, int videoHeight) {
+#if defined(VITAPLEX_PIP_IOS)
+    (void)videoWidth;
+    (void)videoHeight;
+    return ios::isActive() || ios::enter();
+#endif
     if (g_pipActive) return true;
 
 #ifdef __ANDROID__
@@ -179,6 +233,9 @@ bool enter(int videoWidth, int videoHeight) {
 }
 
 bool leave() {
+#if defined(VITAPLEX_PIP_IOS)
+    return ios::leave();
+#endif
     if (!g_pipActive) return false;
 
 #ifdef __ANDROID__
@@ -215,14 +272,16 @@ bool leave() {
 }
 
 bool toggle(int videoWidth, int videoHeight) {
-    if (g_pipActive) {
+    if (isActive()) {
         return leave();
     }
     return enter(videoWidth, videoHeight);
 }
 
 void setVideoPlaybackState(bool playing, int videoWidth, int videoHeight) {
-#ifdef __ANDROID__
+#if defined(VITAPLEX_PIP_IOS)
+    ios::setPlaybackState(playing, videoWidth, videoHeight);
+#elif defined(__ANDROID__)
     JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
     if (!env) return;
     jclass cls = env->FindClass("org/VitaPlex/app/VitaPlexActivity");

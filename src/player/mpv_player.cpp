@@ -6,6 +6,7 @@
 
 #include <algorithm>   // std::max in seekRelative
 #include "player/mpv_player.hpp"
+#include "utils/pip.h"
 #include "app/application.hpp"
 #include "platform/platform.hpp"
 #include "utils/background_audio.hpp"
@@ -2018,8 +2019,15 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
             mpv_render_context_render(player->m_mpvRenderCtx, swParams);
             mpv_render_context_report_swap(player->m_mpvRenderCtx);
 
+            // iPhone PiP: a copy of the frame for its video layer.
+            if (pip::wantsFrames())
+                pip::pushFrameRGBA(player->m_videoBuffer.data(), player->m_videoWidth,
+                                   player->m_videoHeight, swStride);
+
+            // Not to the screen while the app is in the background (in PiP):
+            // a GL call there gets an iOS app killed.
             NVGcontext* vg = brls::Application::getNVGContext();
-            if (vg && player->m_nvgImage != 0) {
+            if (vg && player->m_nvgImage != 0 && brls::Application::canUploadTextures()) {
                 nvgUpdateImage(vg, player->m_nvgImage, player->m_videoBuffer.data());
             }
 #endif

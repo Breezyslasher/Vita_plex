@@ -529,6 +529,10 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
     # Lock screen / Control Centre controls and the audio session that keeps
     # music playing in the background (src/utils/now_playing.cpp picks it up).
     list(APPEND APP_SOURCES src/utils/now_playing_ios.mm)
+    # Picture in Picture over an AVSampleBufferDisplayLayer (iPhone / iPad).
+    if(PLATFORM_IOS)
+        list(APPEND APP_SOURCES src/utils/pip_ios.mm)
+    endif()
     add_compile_definitions(VITAPLEX_APPLE_NOWPLAYING=1)
 else()
     list(APPEND APP_SOURCES src/platform/platform_desktop.cpp)
