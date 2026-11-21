@@ -401,6 +401,14 @@ private:
     double m_endHandledAtSec = 0.0; // Position m_endHandled was set at; the latch is spent once playback comes back before it
     bool m_isPlaying = false;
     bool m_isPhoto = false;
+
+    // Video touch gestures: the last single tap (for a double tap on the left
+    // or right third to skip) and the vertical swipe in progress (left half
+    // brightness, right half volume).
+    int64_t m_lastTapMs = 0;
+    int m_lastTapZone = 0;        // -1 left third, 0 middle, 1 right third
+    bool m_swipeBrightness = false;
+    float m_swipeStart = 0.0f;    // brightness or volume (0..1) at the swipe's start
     bool m_isLocalFile = false;    // Playing from local download
     bool m_isDirectFile = false;   // Playing direct file path (debug)
     // True when the server chose direct play: mpv owns the timeline, so baseOffset is 0 and seeks are local.

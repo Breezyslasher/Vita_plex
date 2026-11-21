@@ -117,6 +117,25 @@
             textColor="#8C8C93"
             grow="1"/>
 
+        <!-- AirPlay / audio output picker. Hidden unless the platform has
+             one (iPhone / iPad); PlayerActivity shows it there. -->
+        <brls:Box
+            id="player/airplay_btn"
+            width="137"
+            height="137"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="68"
+            visibility="gone"
+            focusable="false">
+            <brls:Image
+                width="65"
+                height="65"
+                image="@res/icons/airplay.png"
+                scalingType="fit"/>
+        </brls:Box>
+
         <brls:Box
             id="player/queue_btn"
             width="137"

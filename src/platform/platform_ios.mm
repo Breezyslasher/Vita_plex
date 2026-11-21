@@ -20,6 +20,7 @@
 #include <TargetConditionals.h>
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <AVKit/AVKit.h>
 #include <SDL2/SDL_events.h>
 #include <SDL2/SDL_hints.h>
 
@@ -261,6 +262,72 @@ void offerDeepLink(const std::string&) {}
 std::string takePendingDeepLink() { return {}; }
 void setDeepLinkHandler(std::function<void()>) {}
 
+static UIWindow* keyWindow() {
+    for (UIWindow* w in [UIApplication sharedApplication].windows) {
+        if (w.isKeyWindow) return w;
+    }
+    return [UIApplication sharedApplication].windows.firstObject;
+}
+
+bool canSetScreenBrightness() {
+#if TARGET_OS_TV
+    return false;
+#else
+    return true;
+#endif
+}
+
+float getScreenBrightness() {
+#if TARGET_OS_TV
+    return 0.0f;
+#else
+    return (float)[UIScreen mainScreen].brightness;
+#endif
+}
+
+void setScreenBrightness(float value) {
+#if !TARGET_OS_TV
+    if (value < 0.0f) value = 0.0f;
+    if (value > 1.0f) value = 1.0f;
+    [UIScreen mainScreen].brightness = value;
+#else
+    (void)value;
+#endif
+}
+
+bool canShowAudioRoutePicker() {
+#if TARGET_OS_TV
+    return false;
+#else
+    return true;
+#endif
+}
+
+// iOS has no call that opens the AirPlay picker by itself, only the
+// AVRoutePickerView button. Keep a nearly invisible one in the window and
+// press it.
+void showAudioRoutePicker() {
+#if !TARGET_OS_TV
+    @autoreleasepool {
+        static AVRoutePickerView* picker = nil;
+        UIWindow* window = keyWindow();
+        if (!window) return;
+        if (!picker) {
+            picker = [[AVRoutePickerView alloc] initWithFrame:CGRectMake(0, 0, 1, 1)];
+            picker.alpha = 0.01;
+        }
+        if (picker.superview != window) [window addSubview:picker];
+        for (UIView* v in picker.subviews) {
+            if ([v isKindOfClass:[UIButton class]]) {
+                [(UIButton*)v sendActionsForControlEvents:UIControlEventTouchUpInside];
+                return;
+            }
+        }
+        brls::Logger::warning("AirPlay picker: no button to press");
+    }
+#endif
+}
+
 // The window edges iOS reserves (the notch or Dynamic Island, the home
 // indicator, rounded corners), converted to the units borealis's window size
 // is in. Without it the sidebar ran under the Dynamic Island in landscape.
@@ -270,10 +337,7 @@ static void iosSafeAreaInsets(int width, int height, float* left, float* top, fl
                               float* bottom) {
     @autoreleasepool {
         UIWindow* window = nil;
-        for (UIWindow* w in [UIApplication sharedApplication].windows) {
-            if (w.isKeyWindow) { window = w; break; }
-        }
-        if (!window) window = [UIApplication sharedApplication].windows.firstObject;
+        window = keyWindow();
         if (!window || window.bounds.size.width <= 0 || window.bounds.size.height <= 0) return;
         const UIEdgeInsets in = window.safeAreaInsets;
         const CGFloat sx = width / window.bounds.size.width;
@@ -308,6 +372,21 @@ bool init() {
             return 0;
         },
         nullptr);
+
+    // Back (Menu) on the main screen leaves the app, as on every Apple TV
+    // app: while the highlight is on the sidebar of the only screen open,
+    // SDL lets the Menu press through to the system; anywhere else the app
+    // gets it as Back. SDL watches this hint and applies it at once.
+    brls::Application::getRunLoopEvent()->subscribe([]() {
+        static bool exitOnMenu = false;
+        bool want = false;
+        if (brls::Application::getActivitiesStack().size() == 1)
+            want = dynamic_cast<brls::SidebarItem*>(brls::Application::getCurrentFocus()) != nullptr;
+        if (want != exitOnMenu) {
+            exitOnMenu = want;
+            SDL_SetHint(SDL_HINT_APPLE_TV_CONTROLLER_UI_EVENTS, want ? "1" : "0");
+        }
+    });
 #endif
     brls::Application::safeAreaInsetsProvider = iosSafeAreaInsets;
     if (!::vitaplex::HttpClient::globalInit()) {

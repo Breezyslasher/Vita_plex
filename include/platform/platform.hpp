@@ -214,6 +214,17 @@ void onOrientationChanged(std::function<void()> cb);
 // split-screen or freeform window being resized.
 void onViewportResized(std::function<void()> cb);
 
+// Screen brightness, for the video player's swipe gesture. iPhone / iPad
+// only for now (UIScreen); elsewhere canSetScreenBrightness() is false.
+bool canSetScreenBrightness();
+float getScreenBrightness();            // 0..1
+void setScreenBrightness(float value);  // 0..1
+
+// The system's audio-output picker (AirPlay speakers, Bluetooth, the phone),
+// shown from the music player. iPhone / iPad only.
+bool canShowAudioRoutePicker();
+void showAudioRoutePicker();
+
 /**
  * Per-platform Plex transcode / identification constants.
  *

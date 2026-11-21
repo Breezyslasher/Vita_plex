@@ -409,11 +409,69 @@ void PlayerActivity::onContentAvailable() {
     if (playerContainer) {
         playerContainer->addGestureRecognizer(new brls::TapGestureRecognizer(
             [this](brls::TapGestureStatus status, brls::Sound* soundToPlay) {
-                if (status.state == brls::GestureState::END) {
-                    resetControlsIdleTimer();
-                    toggleControls();
+                if (status.state != brls::GestureState::END) return;
+                resetControlsIdleTimer();
+
+                // Video: a double tap on the left or right third skips back or
+                // forward by the seek interval, as in most phone players. The
+                // first tap has already toggled the controls; the second puts
+                // them back the way they were.
+                if (!m_isQueueMode && !m_isPhoto && playerContainer->getWidth() > 0) {
+                    const float rel = (status.position.x - playerContainer->getX()) /
+                                      playerContainer->getWidth();
+                    const int zone = rel < 1.0f / 3.0f ? -1 : (rel > 2.0f / 3.0f ? 1 : 0);
+                    const int64_t now = (int64_t)(brls::getCPUTimeUsec() / 1000);
+                    if (zone != 0 && zone == m_lastTapZone && now - m_lastTapMs < 350) {
+                        m_lastTapMs = 0;
+                        toggleControls();
+                        const int interval = Application::getInstance().getSettings().seekInterval;
+                        seek(zone * interval);
+                        MpvPlayer::getInstance().showOSD(
+                            (zone < 0 ? "-" : "+") + std::to_string(interval) + " s", 0.8);
+                        return;
+                    }
+                    m_lastTapZone = zone;
+                    m_lastTapMs = now;
                 }
+                toggleControls();
             }));
+
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IOS)
+        // Video on a phone: swipe up or down on the left half for brightness
+        // (where the platform can set it) and on the right half for volume.
+        playerContainer->addGestureRecognizer(new brls::PanGestureRecognizer(
+            [this](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
+                if (m_isQueueMode || m_isPhoto || !playerContainer) return;
+                const float w = playerContainer->getWidth();
+                const float h = playerContainer->getHeight();
+                if (w <= 0 || h <= 0) return;
+                MpvPlayer& player = MpvPlayer::getInstance();
+
+                if (status.state == brls::GestureState::START) {
+                    const float rel = (status.startPosition.x - playerContainer->getX()) / w;
+                    m_swipeBrightness = rel < 0.5f && platform::canSetScreenBrightness();
+                    m_swipeStart = m_swipeBrightness ? platform::getScreenBrightness()
+                                                     : std::min(player.getVolume(), 100) / 100.0f;
+                    return;
+                }
+                if (status.state != brls::GestureState::STAY &&
+                    status.state != brls::GestureState::END)
+                    return;
+
+                // The full height of the video is most of the range.
+                float v = m_swipeStart + (status.startPosition.y - status.position.y) / (h * 0.8f);
+                v = std::max(0.0f, std::min(1.0f, v));
+                const int pct = (int)std::lround(v * 100.0f);
+                if (m_swipeBrightness) {
+                    platform::setScreenBrightness(v);
+                    player.showOSD("Brightness " + std::to_string(pct) + "%", 0.8);
+                } else {
+                    player.setVolume(pct);
+                    player.showOSD("Volume " + std::to_string(pct) + "%", 0.8);
+                }
+            },
+            brls::PanAxis::VERTICAL));
+#endif
     }
 
     // Tap the cover to read along. The art is the biggest target on the music
@@ -800,6 +858,18 @@ void PlayerActivity::onContentAvailable() {
             repeatBtn->addGestureRecognizer(new brls::TapGestureRecognizer(repeatBtn));
             // Set initial icon based on current repeat state
             updateRepeatIcon();
+        }
+
+        // AirPlay / audio output picker, where the platform has one (iPhone).
+        if (auto* airplayBtn = dynamic_cast<brls::Box*>(getView("player/airplay_btn"))) {
+            if (platform::canShowAudioRoutePicker()) {
+                airplayBtn->setVisibility(brls::Visibility::VISIBLE);
+                airplayBtn->registerClickAction([](brls::View*) {
+                    platform::showAudioRoutePicker();
+                    return true;
+                });
+                airplayBtn->addGestureRecognizer(new brls::TapGestureRecognizer(airplayBtn));
+            }
         }
 
         // Lyrics: the track picker always listed them, but music had no button to open it with.

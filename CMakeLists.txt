@@ -1143,6 +1143,7 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
         "-framework CoreImage"
         "-framework AVFoundation"
         "-framework MediaPlayer"           # now_playing_ios.mm: lock screen card + remote commands
+        "-framework AVKit"                 # platform_ios.mm: AirPlay picker (AVRoutePickerView)
         "-framework AudioToolbox"
         "-framework CoreAudio"             # MPVKit Package.swift linkedFramework
         "-framework VideoToolbox"          # mpv hwdec=auto-safe -> VideoToolbox
