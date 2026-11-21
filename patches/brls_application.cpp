@@ -68,6 +68,7 @@
 // bound — see glSurfaceIsLive(). Must stay at global scope: including it inside
 // namespace brls would give the EGL entry points the wrong linkage.
 #include <EGL/egl.h>
+#include <GLES3/gl3.h>
 #endif
 
 #if defined(ANDROID) || defined(IOS)
@@ -227,6 +228,50 @@ namespace
         return true;
 #endif
     }
+
+#if defined(ANDROID)
+    // Keep the GL viewport and the UI's size on the surface's real size.
+    //
+    // A foldable switching screens while the app is away (folded onto the
+    // cover screen, then opened) gives the app a new surface of another shape.
+    // The resize SDL reports for it can arrive while there is no surface, or
+    // not at all, and the glViewport it queues may run before the new surface
+    // is bound: the app came back drawing the inner screen's layout into the
+    // cover screen, stretched sideways and cut off. EGL knows the surface's
+    // size for certain, so check it before each frame.
+    void matchSurfaceSize()
+    {
+        EGLDisplay dpy  = eglGetCurrentDisplay();
+        EGLSurface surf = eglGetCurrentSurface(EGL_DRAW);
+        if (dpy == EGL_NO_DISPLAY || surf == EGL_NO_SURFACE)
+            return;
+        EGLint w = 0, h = 0;
+        if (!eglQuerySurface(dpy, surf, EGL_WIDTH, &w) || !eglQuerySurface(dpy, surf, EGL_HEIGHT, &h) ||
+            w <= 0 || h <= 0)
+            return;
+
+        GLint vp[4] = { 0, 0, 0, 0 };
+        glGetIntegerv(GL_VIEWPORT, vp);
+        if (vp[0] != 0 || vp[1] != 0 || vp[2] != w || vp[3] != h)
+            glViewport(0, 0, w, h);
+
+        // The size the UI was last asked to take; the resize itself is applied
+        // after a short delay, which asking again each frame would keep pushing back.
+        static EGLint askedW = 0, askedH = 0;
+        if ((EGLint)Application::windowWidth == w && (EGLint)Application::windowHeight == h)
+        {
+            askedW = askedH = 0;
+            return;
+        }
+        if (askedW == w && askedH == h)
+            return;
+        askedW = w;
+        askedH = h;
+        Logger::info("Surface is {}x{} but the UI is {}x{}: resizing", w, h,
+            Application::windowWidth, Application::windowHeight);
+        Application::onWindowResized(w, h);
+    }
+#endif
 }
 #endif
 
@@ -356,6 +401,9 @@ bool Application::internalMainLoop()
 
         if (canDraw)
         {
+#if defined(ANDROID)
+            matchSurfaceSize();
+#endif
             if (!g_glWasLive)
             {
                 // First frame back on a live surface. Anything nanovg tried to
