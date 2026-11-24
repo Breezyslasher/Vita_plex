@@ -21,9 +21,12 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
 import android.util.Rational;
+import android.util.SparseArray;
+import android.util.SparseLongArray;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.Surface;
@@ -841,6 +844,49 @@ public class VitaPlexActivity extends SDLActivity
         }
     }
 
+    // Arrow presses held at least this long. borealis' natural scrolling (a
+    // season's episode row among others) slides a row for as long as an arrow
+    // is held, 1000 px a second. A TV remote's press lasts a good part of a
+    // second; Home Assistant's remote card sends each press as an instant
+    // down and up, so the row slid one frame (a few pixels) per press and
+    // never reached the next card. Shorter presses have their release held
+    // back to this; a new press of the same arrow releases the last at once.
+    private static final long MIN_ARROW_HOLD_MS = 150;
+    private final Handler mArrowHandler = new Handler();
+    private final SparseLongArray mArrowDownAt = new SparseLongArray();
+    private final SparseArray<Runnable> mArrowPendingUp = new SparseArray<>();
+
+    private void arrowDown(int key) {
+        Runnable pending = mArrowPendingUp.get(key);
+        if (pending != null) {
+            mArrowHandler.removeCallbacks(pending);
+            mArrowPendingUp.remove(key);
+            SDLActivity.onNativeKeyUp(key);
+        }
+        mArrowDownAt.put(key, SystemClock.uptimeMillis());
+        SDLActivity.onNativeKeyDown(key);
+    }
+
+    private void arrowUp(final int key) {
+        long held = SystemClock.uptimeMillis() - mArrowDownAt.get(key, 0L);
+        if (held >= MIN_ARROW_HOLD_MS) {
+            SDLActivity.onNativeKeyUp(key);
+            return;
+        }
+        Runnable up = new Runnable() {
+            @Override
+            public void run() {
+                if (mArrowPendingUp.get(key) != this) return;
+                mArrowPendingUp.remove(key);
+                SDLActivity.onNativeKeyUp(key);
+            }
+        };
+        Runnable old = mArrowPendingUp.get(key);
+        if (old != null) mArrowHandler.removeCallbacks(old);
+        mArrowPendingUp.put(key, up);
+        mArrowHandler.postDelayed(up, MIN_ARROW_HOLD_MS - held);
+    }
+
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (SDLActivity.mBrokenLibraries) {
@@ -893,6 +939,15 @@ public class VitaPlexActivity extends SDLActivity
             if (!sticks) {
                 int sent = (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
                         || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) ? KeyEvent.KEYCODE_ENTER : keyCode;
+                if (sent != KeyEvent.KEYCODE_ENTER) {   // an arrow
+                    if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                        if (event.getRepeatCount() == 0) arrowDown(sent);
+                        return true;   // a hold's repeats: the key is still down
+                    } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                        arrowUp(sent);
+                        return true;
+                    }
+                }
                 if (event.getAction() == KeyEvent.ACTION_DOWN) {
                     SDLActivity.onNativeKeyDown(sent);
                     return true;
