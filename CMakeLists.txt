@@ -1607,6 +1607,9 @@ if(PLATFORM_PSV)
         FILE resources/font/switch_font.ttf               resources/font/switch_font.ttf
         FILE resources/font/switch_icons.ttf              resources/font/switch_icons.ttf
         FILE resources/material/MaterialIcons-Regular.ttf resources/material/MaterialIcons-Regular.ttf
+        # Chinese / Japanese / Korean characters, for the menus and subtitles.
+        FILE resources/cjk/subfont.ttf                    resources/cjk/subfont.ttf
+        FILE resources/cjk/LICENSE-NotoSansCJK.txt        resources/cjk/LICENSE-NotoSansCJK.txt
 
         # TLS root CA bundle (Mozilla's), so libcurl's mbedtls backend has a
         # trust anchor for peer verification — CAINFO points here (see
@@ -1684,6 +1687,8 @@ elseif(PLATFORM_PS4)
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons    ${CMAKE_BINARY_DIR}/ps4/resources/icons
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/font     ${CMAKE_BINARY_DIR}/ps4/resources/font
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/cjk      ${CMAKE_BINARY_DIR}/ps4/resources/cjk
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/material ${CMAKE_BINARY_DIR}/ps4/resources/material
         COMMAND "${CMAKE_COMMAND}" -E copy

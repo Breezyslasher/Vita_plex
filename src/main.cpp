@@ -15,6 +15,10 @@
  */
 
 #include <borealis.hpp>
+#include <nanovg.h>
+#ifdef USE_LIBROMFS
+#include <romfs/romfs.hpp>
+#endif
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #endif
@@ -35,6 +39,36 @@
 #include "app/hint_icons.hpp"
 #include "utils/http_client.hpp"
 #include "platform/platform.hpp"
+
+// Chinese / Japanese / Korean characters in the menus (song, album and film
+// titles). borealis draws them on Switch from the console's own fonts; on
+// every other platform its font (DejaVu Sans) has none, and they came out
+// blank. resources/cjk/subfont.ttf (Noto Sans CJK, cut down to the common
+// characters; also mpv's fallback for subtitles) is added as a fallback.
+static void loadCjkFallbackFont() {
+#if !defined(__SWITCH__)
+    const std::string path = BRLS_ASSET("cjk/subfont.ttf");
+    bool ok = false;
+#ifdef USE_LIBROMFS
+    try {
+        auto& font = romfs::get(path.substr(5));   // after "@res/"
+        ok = font.valid() &&
+             brls::Application::loadFontFromMemory("cjk", (void*)font.data(), font.size(), false);
+    } catch (...) {
+    }
+#else
+    ok = brls::Application::loadFontFromFile("cjk", path);
+#endif
+    if (ok) {
+        nvgAddFallbackFontId(brls::Application::getNVGContext(),
+                             brls::Application::getFont(brls::FONT_REGULAR),
+                             brls::Application::getFont("cjk"));
+        brls::Logger::info("CJK fallback font loaded");
+    } else {
+        brls::Logger::warning("CJK fallback font not loaded from {}", path);
+    }
+#endif
+}
 
 static void registerCustomViews() {
     brls::Application::registerXMLView("MediaItemCell", vitaplex::MediaItemCell::create);
@@ -126,6 +160,7 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
 
     // Create window
     brls::Application::createWindow(APP_DISPLAY_NAME);
+    loadCjkFallbackFont();
 
     // Set theme colors (Plex-like)
     brls::Application::getPlatform()->getThemeVariant();

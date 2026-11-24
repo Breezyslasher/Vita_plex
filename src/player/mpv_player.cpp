@@ -372,19 +372,22 @@ bool MpvPlayer::init() {
 #if defined(__ANDROID__) || defined(__vita__) || defined(__PS4__) || defined(__SWITCH__)
     {
         std::string fontDir = RESOURCE_PREFIX "font";
+        // Characters DejaVu Sans lacks (Chinese, Japanese, Korean) come from
+        // a CJK font. With no font provider, libass's only fallback is
+        // "subfont.ttf" in mpv's config folder, which it uses when the chosen
+        // font has no glyph for a character (FreeType reads it from disk as
+        // needed). The app ships one (resources/cjk, Noto Sans CJK cut down
+        // to the common characters). mpv looks in its config folder only with
+        // "config" on; the folder holds nothing else for it to load.
+        std::string cjkDir = RESOURCE_PREFIX "cjk";
 #if defined(__ANDROID__)
         // resources/ is relative to the folder the assets were extracted to.
         char cwd[1024];
-        const bool haveCwd = getcwd(cwd, sizeof(cwd)) != nullptr;
-        if (haveCwd) fontDir = std::string(cwd) + "/" + fontDir;
-
-        // Characters DejaVu Sans lacks (Chinese, Japanese, Korean) come from
-        // the device's own CJK font. With no font provider, libass's only
-        // fallback is "subfont.ttf" in mpv's config folder, which mpv uses
-        // when the chosen font has no glyph for a character. A link to the
-        // system font is put there (read from disk as needed, not loaded
-        // whole).
-        {
+        if (getcwd(cwd, sizeof(cwd))) {
+            fontDir = std::string(cwd) + "/" + fontDir;
+            cjkDir = std::string(cwd) + "/" + cjkDir;
+            // The device's own CJK font has every character; a link to it is
+            // used instead when there is one.
             static const char* kSystemCjk[] = {
                 "/system/fonts/NotoSansCJK-Regular.ttc",
                 "/system/fonts/NotoSansCJKjp-Regular.otf",
@@ -393,22 +396,14 @@ bool MpvPlayer::init() {
                 "/system/fonts/DroidSansFallbackFull.ttf",
                 "/system/fonts/DroidSansFallback.ttf",
             };
-            const char* cjk = nullptr;
-            for (const char* f : kSystemCjk)
-                if (access(f, R_OK) == 0) { cjk = f; break; }
-            if (cjk && haveCwd) {
-                const std::string confDir = std::string(cwd) + "/mpv";
-                mkdir(confDir.c_str(), 0700);
-                const std::string link = confDir + "/subfont.ttf";
+            for (const char* f : kSystemCjk) {
+                if (access(f, R_OK) != 0) continue;
+                const std::string dir = std::string(cwd) + "/mpv";
+                mkdir(dir.c_str(), 0700);
+                const std::string link = dir + "/subfont.ttf";
                 unlink(link.c_str());
-                if (symlink(cjk, link.c_str()) == 0) {
-                    mpv_set_option_string(m_mpv, "config-dir", confDir.c_str());
-                    brls::Logger::info("MpvPlayer: fallback subtitle font {}", cjk);
-                } else {
-                    brls::Logger::warning("MpvPlayer: could not link the fallback subtitle font {}", cjk);
-                }
-            } else {
-                brls::Logger::info("MpvPlayer: no system CJK font found for subtitles");
+                if (symlink(f, link.c_str()) == 0) cjkDir = dir;
+                break;
             }
         }
 #endif
@@ -417,7 +412,9 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "osd-fonts-dir", fontDir.c_str());
         mpv_set_option_string(m_mpv, "sub-font", "DejaVu Sans");
         mpv_set_option_string(m_mpv, "osd-font", "DejaVu Sans");
-        brls::Logger::info("MpvPlayer: subtitle font from {}", fontDir);
+        mpv_set_option_string(m_mpv, "config", "yes");
+        mpv_set_option_string(m_mpv, "config-dir", cjkDir.c_str());
+        brls::Logger::info("MpvPlayer: subtitle font from {}, fallback from {}", fontDir, cjkDir);
     }
 #endif
 
