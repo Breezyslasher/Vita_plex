@@ -378,6 +378,10 @@ struct PlexStream {
  */
 class PlexClient {
 public:
+    // The player shows the selected subtitle itself (a sidecar file, by
+    // sub-add): video transcodes then ask for subtitles=none.
+    void setPlayerShowsSubtitle(bool on) { m_playerShowsSubtitle = on; }
+
     static PlexClient& getInstance();
 
     // Authentication
@@ -740,6 +744,8 @@ public:
     MediaType parseMediaTypePublic(const std::string& typeStr) { return parseMediaType(typeStr); }
 
 private:
+    bool m_playerShowsSubtitle = false;
+
     PlexClient() = default;
     ~PlexClient() = default;
 

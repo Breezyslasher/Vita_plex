@@ -1138,6 +1138,7 @@ void PlayerActivity::setBackgroundTransparent(bool transparent) {
 }
 
 void PlayerActivity::willDisappear(bool resetState) {
+    if (resetState) PlexClient::getInstance().setPlayerShowsSubtitle(false);   // the next player's transcodes
     brls::Activity::willDisappear(resetState);
 
     // The keyboard event is owned by the input manager and outlives us.
@@ -1729,6 +1730,7 @@ void PlayerActivity::loadMedia() {
     m_directPlay = false;
     m_sideloadedSubUrl.clear();   // the last item's subtitle file
     m_sideloadUrls.clear();
+    PlexClient::getInstance().setPlayerShowsSubtitle(false);
     m_sidecarCheck = false;
 
     // Same reason: auto-play-next reloads into this activity, so the old poster must not survive into the next item.
@@ -2200,6 +2202,7 @@ void PlayerActivity::updateProgress() {
                 brls::Logger::warning("PlayerActivity: the sidecar subtitle could not be fetched");
                 MpvPlayer::getInstance().showOSD("Couldn't load the subtitle", 3.0);
                 m_sideloadUrls.clear();
+                PlexClient::getInstance().setPlayerShowsSubtitle(false);
                 m_sideloadedSubUrl.clear();
             } else {
                 const int idx = (m_sideloadTries == 0 && m_sideloadGood >= 0) ? m_sideloadGood
@@ -4347,7 +4350,12 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                 const bool offFromSidecar = trackId < 0 && (direct || !m_sideloadedSubUrl.empty()) && !burnedIn;
                 if (hasPlexStreams && (side || offFromSidecar)) {
                     const int partId = m_partId;
-                    const int serverSub = (side && direct) ? trackId : 0;
+                    // Kept selected on the server: a subtitle found online is
+                    // dropped by the server once deselected (a TV log: picked,
+                    // then subtitleStreamID=0, then 404 for its file at every
+                    // address). The transcode is told subtitles=none instead
+                    // (setPlayerShowsSubtitle), so it does not burn it in too.
+                    const int serverSub = side ? trackId : 0;
                     for (auto& ps : m_plexStreams)
                         if (ps.streamType == 3 || ps.streamType == 4)
                             ps.selected = (ps.id == trackId);
@@ -4370,6 +4378,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     if (!side) {
                         m_sideloadedSubUrl.clear();
                         m_sideloadUrls.clear();
+                        PlexClient::getInstance().setPlayerShowsSubtitle(false);
                         player.removeExternalSubtitles();
                         player.showOSD("Subtitles off", 1.5);
                     } else {
@@ -4386,6 +4395,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
             // Anything else (an embedded subtitle) is the server's to deliver.
             m_sideloadedSubUrl.clear();
             m_sideloadUrls.clear();
+            PlexClient::getInstance().setPlayerShowsSubtitle(false);
             if (trackId < 0) {
                 // Disable subtitles
                 if (m_partId > 0) {
@@ -4538,6 +4548,7 @@ std::vector<std::string> PlayerActivity::sidecarSubtitleUrls(const PlexStream& p
 // Show this sidecar through mpv from now on (updateProgress adds it).
 void PlayerActivity::setSideloadedSubtitle(const PlexStream& ps) {
     m_sideloadUrls = sidecarSubtitleUrls(ps);
+    PlexClient::getInstance().setPlayerShowsSubtitle(true);
     m_sideloadedSubUrl = m_sideloadUrls.front();
     m_sideloadNext = 0;
     m_sideloadGood = -1;

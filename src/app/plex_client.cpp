@@ -4010,8 +4010,10 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
         queryParams += buf;
         queryParams += "&videoQuality=100";
 
-        // Subtitle handling based on settings
-        if (!settings.showSubtitles) {
+        // Subtitle handling based on settings. none too while the player
+        // shows a sidecar subtitle itself (setPlayerShowsSubtitle): it stays
+        // selected on the server, which must not burn it in as well.
+        if (!settings.showSubtitles || m_playerShowsSubtitle) {
             queryParams += "&subtitles=none";
         } else {
             queryParams += "&subtitles=auto";
