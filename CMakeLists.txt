@@ -446,6 +446,7 @@ set(APP_SOURCES
     # Application
     src/app/application.cpp
     src/app/plex_client.cpp
+    src/app/client_id.cpp
     src/app/downloads_manager.cpp
     src/app/music_queue.cpp
     src/app/video_queue.cpp

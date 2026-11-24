@@ -32,7 +32,11 @@
 #define VITA_PLEX_VERSION_NUM 200
 
 // Plex client identification
-#define PLEX_CLIENT_ID "vita-plex-client-001"
+// X-Plex-Client-Identifier, "Unique per client" (openapi.json): made once
+// per install and kept in the data folder (src/app/client_id.cpp). It was one
+// fixed string for every device, so a server took all of them for one client.
+namespace vitaplex { const std::string& plexClientId(); }
+#define PLEX_CLIENT_ID (::vitaplex::plexClientId())
 // The app's name where a user reads it: VitaStream in the Google Play build
 // (VITAPLEX_STORE_BUILD, Android's "play" flavour), whose listing cannot use
 // Plex's trademark, else VitaPlex. Also the product name the Plex server shows.
