@@ -2208,7 +2208,10 @@ void MediaDetailView::onPlay(bool resume) {
         DownloadItem dlItem;
         bool isLocal = DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, dlItem)
                        && dlItem.state == DownloadState::COMPLETED;
-        Application::getInstance().pushPlayerActivity(m_item.ratingKey, isLocal);
+        if (m_item.mediaType == MediaType::MUSIC_TRACK)
+            Application::getInstance().pushTrackPlayerActivity(m_item.ratingKey, isLocal);
+        else
+            Application::getInstance().pushPlayerActivity(m_item.ratingKey, isLocal);
     }
     // For shows/seasons/albums, play the first child item
     else if (m_item.mediaType == MediaType::SHOW ||

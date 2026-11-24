@@ -604,7 +604,7 @@ void MusicTab::onItemSelected(const MediaItem& item) {
             playPlaylistWithQueue(m_currentPlaylistId, startIndex, /*userPickedTrack=*/true);
         } else {
             // Single track playback
-            Application::getInstance().pushPlayerActivity(item.ratingKey);
+            Application::getInstance().pushTrackPlayerActivity(item.ratingKey);
         }
         return;
     }

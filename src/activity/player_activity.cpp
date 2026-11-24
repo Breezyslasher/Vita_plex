@@ -110,6 +110,12 @@ PlayerActivity::PlayerActivity(const std::string& mediaKey, bool isLocalFile)
                        isLocalFile ? "local" : "remote", mediaKey);
 }
 
+PlayerActivity* PlayerActivity::createForTrack(const std::string& mediaKey, bool isLocalFile) {
+    PlayerActivity* activity = new PlayerActivity(mediaKey, isLocalFile);
+    activity->m_singleTrack = true;
+    return activity;
+}
+
 PlayerActivity* PlayerActivity::createForDirectFile(const std::string& filePath) {
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isDirectFile = true;
@@ -314,7 +320,21 @@ bool PlayerActivity::useMobileLayout() const {
 // choice of layouts, below and in useMobileLayout().
 bool PlayerActivity::useVideoOsd() const {
     // Music picks its own layout; everything else reaching this player is video.
-    return !(m_isQueueMode && MusicQueue::getInstance().isMusicQueue());
+    if (m_isQueueMode && MusicQueue::getInstance().isMusicQueue()) return false;
+
+    // A track played on its own, outside a queue, goes through this player
+    // too and is laid out as it was before the classic video controls went:
+    // the classic screen with its cover, but the OSD on phones.
+    if (m_singleTrack) {
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IOS)
+        const float vw = platform::viewportWidth();
+        const float vh = platform::viewportHeight();
+        return vw > 0.0f && vh > 0.0f && std::min(vw, vh) < 600.0f;
+#else
+        return false;
+#endif
+    }
+    return true;
 }
 
 // Photos and music keep controls up, but m_isQueueMode also covers single videos, which get an OSD.
@@ -1818,16 +1838,9 @@ void PlayerActivity::loadMedia() {
             if (videoView) videoView->setVisibility(brls::Visibility::GONE);
             if (photoImage) photoImage->setVisibility(brls::Visibility::GONE);
         } else {
-            if (m_videoOsd) {
-                setVideoOsdTitle(dlItem.parentTitle.empty() ? dlItem.title : dlItem.parentTitle,
-                                 dlItem.parentTitle.empty() ? "" : dlItem.title);
-            } else if (titleLabel) {
-                std::string title = dlItem.title;
-                if (!dlItem.parentTitle.empty()) {
-                    title = dlItem.parentTitle + " - " + dlItem.title;
-                }
-                titleLabel->setText(title);
-            }
+            // A downloaded video: always the OSD now.
+            setVideoOsdTitle(dlItem.parentTitle.empty() ? dlItem.title : dlItem.parentTitle,
+                             dlItem.parentTitle.empty() ? "" : dlItem.title);
             // Offline: the cover is already a file on disk, so the session can show it with no server to reach.
             m_osArtUrl = dlItem.thumbPath;
             m_osArtist = dlItem.parentTitle;

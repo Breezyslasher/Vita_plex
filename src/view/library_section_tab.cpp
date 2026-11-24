@@ -1365,7 +1365,7 @@ void LibrarySectionTab::onItemSelected(const MediaItem& item) {
 
     // Normal item selection
     if (item.mediaType == MediaType::MUSIC_TRACK) {
-        Application::getInstance().pushPlayerActivity(item.ratingKey);
+        Application::getInstance().pushTrackPlayerActivity(item.ratingKey);
         return;
     }
 

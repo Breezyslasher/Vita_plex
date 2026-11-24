@@ -316,6 +316,8 @@ public:
     void pushLoginActivity();
     void pushMainActivity();
     void pushPlayerActivity(const std::string& mediaKey, bool isLocalFile = false);
+    // A music track on its own (PlayerActivity::createForTrack).
+    void pushTrackPlayerActivity(const std::string& mediaKey, bool isLocalFile = false);
     void pushLiveTVPlayerActivity(const std::string& streamUrl, const std::string& channelTitle,
                                   const std::string& liveSessionUuid = "");
 

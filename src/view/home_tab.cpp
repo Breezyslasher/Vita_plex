@@ -285,7 +285,10 @@ void HomeTab::addRowCard(HorizontalScrollRow* row, const MediaItem& item, bool d
     cell->registerClickAction([this, capturedItem, directPlay](brls::View* view) {
         if (directPlay) {
             // Play directly for continue watching items (movies, episodes, tracks)
-            Application::getInstance().pushPlayerActivity(capturedItem.ratingKey);
+            if (capturedItem.mediaType == MediaType::MUSIC_TRACK)
+                Application::getInstance().pushTrackPlayerActivity(capturedItem.ratingKey);
+            else
+                Application::getInstance().pushPlayerActivity(capturedItem.ratingKey);
         } else {
             onItemSelected(capturedItem);
         }
@@ -832,7 +835,7 @@ void HomeTab::onItemSelected(const MediaItem& item) {
 
     // For tracks, play directly instead of showing detail view
     if (item.mediaType == MediaType::MUSIC_TRACK) {
-        Application::getInstance().pushPlayerActivity(item.ratingKey);
+        Application::getInstance().pushTrackPlayerActivity(item.ratingKey);
         return;
     }
 

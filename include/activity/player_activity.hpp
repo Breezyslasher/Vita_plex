@@ -30,6 +30,11 @@ public:
     // Play local downloaded file
     PlayerActivity(const std::string& mediaKey, bool isLocalFile);
 
+    // One music track on its own (not a queue): it keeps the music screens'
+    // layout rather than the video OSD, which is otherwise what a player
+    // without a music queue gets.
+    static PlayerActivity* createForTrack(const std::string& mediaKey, bool isLocalFile);
+
     // The next player opened for mediaKey starts at timeMs, whatever the
     // resume setting: VideoBackground opening the player again where the
     // sound is.
@@ -218,7 +223,8 @@ private:
     bool m_videoOsd     = false;
     // Both read m_isQueueMode, so they can only be asked once the activity exists.
     bool useMobileLayout() const;   // reads the Player layout setting
-    bool useVideoOsd() const;       // reads the Video player layout setting
+    bool useVideoOsd() const;       // video always; a single track only on phones
+    bool m_singleTrack  = false;    // createForTrack
     bool controlsCanHide() const;   // false for photos and for music
     // The collapsed queue sheet; its views exist only in player_mobile.xml and are found by id, so no stubs are needed.
     void updateMobileSheet();        // refresh "up next" from the queue
