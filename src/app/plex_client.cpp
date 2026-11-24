@@ -4108,6 +4108,29 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     brls::Logger::info("getTranscodeUrl: Decision response: {} body: {}",
                       decisionResp.statusCode, redactBodyForLog(decisionResp.body.substr(0, 500)));
 
+    // What the server will do with each subtitle stream (the body above is cut
+    // at 500 bytes, before the streams). A TV log had a found subtitle drawn
+    // into the transcoded picture although subtitles=none was asked for, so
+    // the player's own copy showed on top of it.
+    m_lastTranscodeBurnsSubtitle = false;
+    for (size_t at = decisionResp.body.find("\"streamType\":3"); at != std::string::npos;
+         at = decisionResp.body.find("\"streamType\":3", at + 1)) {
+        const size_t open = decisionResp.body.rfind('{', at);
+        const size_t close = decisionResp.body.find('}', at);
+        if (open == std::string::npos || close == std::string::npos) break;
+        const std::string obj = decisionResp.body.substr(open, close - open + 1);
+        const std::string decision = extractJsonValue(obj, "decision");
+        const std::string location = extractJsonValue(obj, "location");
+        const std::string burn = extractJsonValue(obj, "burn");
+        const bool burns = decision == "burn" || burn == "1" || burn == "true" ||
+                           location == "segments-video";
+        if (burns) m_lastTranscodeBurnsSubtitle = true;
+        brls::Logger::info("getTranscodeUrl: subtitle stream {} selected={} decision={} location={} "
+                           "burn={} codec={}",
+                           extractJsonValue(obj, "id"), extractJsonValue(obj, "selected"), decision,
+                           location, burn, extractJsonValue(obj, "codec"));
+    }
+
     if (decisionResp.statusCode != 200) {
         brls::Logger::warning("getTranscodeUrl: Decision returned {}, trying start anyway",
                              decisionResp.statusCode);

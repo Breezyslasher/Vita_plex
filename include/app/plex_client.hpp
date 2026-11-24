@@ -746,8 +746,12 @@ public:
     // "track"/"episode"/"movie" string turned into a MediaType.
     MediaType parseMediaTypePublic(const std::string& typeStr) { return parseMediaType(typeStr); }
 
+    // The last video transcode decision put a subtitle into the picture.
+    bool lastTranscodeBurnsSubtitle() const { return m_lastTranscodeBurnsSubtitle; }
+
 private:
     bool m_playerShowsSubtitle = false;
+    bool m_lastTranscodeBurnsSubtitle = false;
 
     PlexClient() = default;
     ~PlexClient() = default;

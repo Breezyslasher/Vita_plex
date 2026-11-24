@@ -2109,6 +2109,10 @@ void PlayerActivity::loadMedia() {
         if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {
             // Direct play: the server returned the original file, so mpv owns the timeline and seeks are local, not restarts.
             m_directPlay = (url.find("/transcode/universal/start") == std::string::npos);
+            m_serverBurnsSub = !m_directPlay && PlexClient::getInstance().lastTranscodeBurnsSubtitle();
+            if (m_serverBurnsSub && !m_sideloadUrls.empty())
+                brls::Logger::warning("PlayerActivity: the server draws the subtitle into the picture; "
+                                      "not adding the player's own");
             if (m_directPlay) {
                 brls::Logger::info("PlayerActivity: direct play (original file), resume {}ms",
                                    resumeOffset);
@@ -2241,7 +2245,7 @@ void PlayerActivity::updateProgress() {
 
     applySubtitleDelay();
 
-    if (!m_sideloadUrls.empty() && MpvPlayer::getInstance().isPlaying()) {
+    if (!m_sideloadUrls.empty() && !m_serverBurnsSub && MpvPlayer::getInstance().isPlaying()) {
         const int64_t nowMs = (int64_t)(brls::getCPUTimeUsec() / 1000);
         if (m_sideloadTriedMs == 0 || nowMs - m_sideloadTriedMs > 6000) {
             bool showing = false;
@@ -4646,6 +4650,13 @@ void PlayerActivity::loadServerStream(const std::string& url, int offsetMs) {
     } else {
         m_transcodeBaseOffsetMs = offsetMs;
     }
+    // The server's decision said it draws a subtitle into this transcode's
+    // picture (it did once though asked for none): the player adds no copy
+    // of its own, which would show twice.
+    m_serverBurnsSub = !m_directPlay && PlexClient::getInstance().lastTranscodeBurnsSubtitle();
+    if (m_serverBurnsSub && !m_sideloadUrls.empty())
+        brls::Logger::warning("PlayerActivity: the server draws the subtitle into the picture; "
+                              "not adding the player's own");
     MpvPlayer::getInstance().loadUrl(url, "");
 }
 
