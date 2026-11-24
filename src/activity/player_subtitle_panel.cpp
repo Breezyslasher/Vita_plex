@@ -29,8 +29,10 @@ namespace vitaplex {
 
 namespace {
 
+// SUB_SEARCH is a list with no drop-down of its own: it opens from the
+// language list, or by itself when subtitles are turned on and there are none.
 enum Which { SUB_ONOFF = 0, SUB_LANGUAGE = 1, SUB_SIZE = 2, SUB_STYLE = 3, SUB_SEARCH = 4 };
-constexpr int kSubControls = 5;
+constexpr int kSubControls = 4;
 
 const char* kSizeNames[]  = {"Small", "Medium", "Large"};
 const char* kStyleNames[] = {"Default", "Dark box", "Yellow", "Outline"};
@@ -97,13 +99,13 @@ void PlayerActivity::showSubtitlePanel() {
 
         auto* row = new brls::Box(brls::Axis::ROW);
         row->setAlignItems(brls::AlignItems::FLEX_END);
-        const char* captions[kSubControls] = {"Subtitles", "Language", "Size", "Style", "Search"};
+        const char* captions[kSubControls] = {"Subtitles", "Language", "Size", "Style"};
         for (int i = 0; i < kSubControls; i++) {
             auto* col = new brls::Box(brls::Axis::COLUMN);
             col->setMarginRight(i < kSubControls - 1 ? ui(22) : 0);
             // Fixed widths, as on a TV: a lone On / Off (subtitles off) must
             // not stretch across the screen.
-            static const float kColWidth[kSubControls] = {150, 280, 170, 170, 190};
+            static const float kColWidth[kSubControls] = {150, 280, 170, 170};
             col->setWidth(ui(kColWidth[i]));
             col->setShrink(1.0f);
 
@@ -193,11 +195,6 @@ void PlayerActivity::refreshSubtitlePanel() {
     m_subPillValues[SUB_SIZE]->setText(kSizeNames[std::clamp((int)s.subtitleSize, 0, 2)]);
     m_subPillValues[SUB_STYLE]->setText(kStyleNames[std::clamp(s.subtitleStyle, 0, 3)]);
     if (m_subSearchLang.empty()) m_subSearchLang = s.defaultSubtitleLanguage.empty() ? "en" : s.defaultSubtitleLanguage;
-    m_subPillValues[SUB_SEARCH]->setText("Online (" + m_subSearchLang + ")");
-    // Searching needs the item on the server; a direct file or stream has none.
-    if (m_subPills[SUB_SEARCH] && m_subPills[SUB_SEARCH]->getParent())
-        m_subPills[SUB_SEARCH]->getParent()->setVisibility(
-            m_mediaKey.empty() ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
     if (m_subLangCaption)
         m_subLangCaption->setText("Language (" + std::to_string(choices.size()) + ")");
 
@@ -228,8 +225,16 @@ void PlayerActivity::toggleSubtitlesFromPanel() {
         brls::Logger::info("Subtitle panel: off");
         selectTrack(TrackSelectMode::SUBTITLE, -1);
     } else if (choices.empty()) {
-        brls::Logger::info("Subtitle panel: on asked, but this video has no subtitles");
-        MpvPlayer::getInstance().showOSD("This video has no subtitles", 2.0);
+        // Nothing to turn on: go and find some.
+        if (m_mediaKey.empty()) {
+            MpvPlayer::getInstance().showOSD("This video has no subtitles", 2.0);
+            return;
+        }
+        brls::Logger::info("Subtitle panel: none to turn on, searching");
+        brls::sync([this]() {
+            if (m_subPanelVisible) openSubtitlePopup(SUB_SEARCH);
+        });
+        return;
     } else {
         int target = m_lastSubtitleStreamId;
         bool known = false;
@@ -266,12 +271,19 @@ void PlayerActivity::closeSubtitlePopup() {
     // Off the focused row before the rows go.
     if (which >= 0 && which < kSubControls && m_subPills[which])
         brls::Application::giveFocus(m_subPills[which]);
+    else if (brls::View* home = subtitlePanelHome())
+        brls::Application::giveFocus(home);   // the search list
     if (playerContainer) playerContainer->removeView(m_subPopup, true);
     m_subPopup = nullptr;
 }
 
 void PlayerActivity::openSubtitlePopup(int which) {
-    if (which < 0 || which >= kSubControls || !m_subPills[which] || !playerContainer) return;
+    if (which < 0 || which > SUB_SEARCH || !playerContainer) return;
+    // The search list sits over the language drop-down, or the switch when
+    // that is all that shows.
+    brls::Box* anchor = which == SUB_SEARCH ? dynamic_cast<brls::Box*>(subtitlePanelHome())
+                                            : m_subPills[which];
+    if (!anchor) return;
     if (m_subPopupWhich == which) {
         closeSubtitlePopup();
         return;
@@ -311,6 +323,15 @@ void PlayerActivity::openSubtitlePopup(int which) {
                 const bool sel = c.selected;
                 rows.push_back({c.name, sel, [this, id, sel]() {
                                     if (!sel) selectTrack(TrackSelectMode::SUBTITLE, id);
+                                }});
+            }
+            // One more: find others online. Opened the frame after this list
+            // closes, in its place.
+            if (!m_mediaKey.empty()) {
+                rows.push_back({"Search online...", false, [this]() {
+                                    brls::sync([this]() {
+                                        if (m_subPanelVisible) openSubtitlePopup(SUB_SEARCH);
+                                    });
                                 }});
             }
             break;
@@ -360,14 +381,14 @@ void PlayerActivity::openSubtitlePopup(int which) {
     }
 
     // Above the pill it belongs to, left edges lined up.
-    brls::Box* pill = m_subPills[which];
+    brls::Box* pill = anchor;
     const float containerH = playerContainer->getHeight();
     const float pillTop = pill->getY() - playerContainer->getY();
     const float left = pill->getX() - playerContainer->getX();
     const float rowH = ui(46);
     const float maxListH = std::max(rowH * 2, std::min(pillTop - ui(70), containerH * 0.55f));
     const float listH = std::min(maxListH, rowH * (float)std::max<size_t>(rows.size(), 1));
-    const float width = std::max(pill->getWidth(), ui(260));
+    const float width = std::max(pill->getWidth(), ui(which == SUB_SEARCH ? 460 : 260));
 
     m_subPopup = new brls::Box(brls::Axis::COLUMN);
     m_subPopup->setPositionType(brls::PositionType::ABSOLUTE);
@@ -457,7 +478,8 @@ void PlayerActivity::openSubtitlePopup(int which) {
                        which, rows.size(), popupLeft,
                        containerH - pillTop + ui(10), width, listH,
                        playerContainer->getWidth(), containerH);
-    if (m_subPillChevrons[which]) setIconRes(m_subPillChevrons[which], "icons/chevron-down.png");
+    if (which < kSubControls && m_subPillChevrons[which])
+        setIconRes(m_subPillChevrons[which], "icons/chevron-down.png");
     if (focusRow) brls::Application::giveFocus(focusRow);
 }
 
