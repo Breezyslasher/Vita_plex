@@ -20,6 +20,7 @@
 #include "utils/async.hpp"
 
 #include <borealis.hpp>
+#include <yoga/Yoga.h>   // flex-wrap, which borealis does not expose
 
 #include <algorithm>
 #include <cmath>
@@ -123,10 +124,15 @@ void PlayerActivity::showSubtitlePanel() {
 
         auto* row = new brls::Box(brls::Axis::ROW);
         row->setAlignItems(brls::AlignItems::FLEX_END);
+        // On a phone the five controls are wider than the screen: what does
+        // not fit (Timing, then Style) goes onto a second line instead of
+        // off the right edge. borealis has no wrap setter; yoga's is used.
+        YGNodeStyleSetFlexWrap(row->getYGNode(), YGWrapWrap);
         const char* captions[kSubControls] = {"Subtitles", "Language", "Size", "Style", "Timing"};
         for (int i = 0; i < kSubControls; i++) {
             auto* col = new brls::Box(brls::Axis::COLUMN);
             col->setMarginRight(i < kSubControls - 1 ? ui(22) : 0);
+            col->setMarginTop(ui(10));   // between the lines when they wrap
             // Fixed widths, as on a TV: a lone On / Off (subtitles off) must
             // not stretch across the screen.
             static const float kColWidth[kSubControls] = {150, 280, 160, 160, 170};
