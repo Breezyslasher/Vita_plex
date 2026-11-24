@@ -266,6 +266,18 @@ void PlayerActivity::closeSubtitlePopup() {
     if (!m_subPopup) return;
     const int which = m_subPopupWhich;
     m_subPopupWhich = -1;
+    // Size / Style previewed but not picked: back to the saved one.
+    if ((which == SUB_SIZE || which == SUB_STYLE) && !m_subPreviewKept) {
+        AppSettings& st = Application::getInstance().getSettings();
+        if (which == SUB_SIZE && (int)st.subtitleSize != m_subPreviewSize) {
+            st.subtitleSize = static_cast<SubtitleSize>(m_subPreviewSize);
+            MpvPlayer::getInstance().applySubtitleSize();
+        }
+        if (which == SUB_STYLE && st.subtitleStyle != m_subPreviewStyle) {
+            st.subtitleStyle = m_subPreviewStyle;
+            MpvPlayer::getInstance().applySubtitleStyle();
+        }
+    }
     if (which >= 0 && which < kSubControls && m_subPillChevrons[which])
         setIconRes(m_subPillChevrons[which], "icons/chevron-up.png");
     // Off the focused row before the rows go.
@@ -295,9 +307,13 @@ void PlayerActivity::openSubtitlePopup(int which) {
         std::string name;
         bool current;
         std::function<void()> pick;   // empty: a line of information, nothing to pick
+        std::function<void()> preview = nullptr;   // as the row is reached (Size, Style)
     };
     std::vector<Row> rows;
     std::string heading;
+    m_subPreviewKept = false;
+    m_subPreviewSize = (int)Application::getInstance().getSettings().subtitleSize;
+    m_subPreviewStyle = Application::getInstance().getSettings().subtitleStyle;
     AppSettings& settings = Application::getInstance().getSettings();
     const auto choices = subtitleChoices(m_plexStreams);
     bool anyOn = false;
@@ -359,10 +375,17 @@ void PlayerActivity::openSubtitlePopup(int which) {
         case SUB_SIZE:
             heading = "Sizes";
             for (int i = 0; i < 3; i++) {
-                rows.push_back({kSizeNames[i], (int)settings.subtitleSize == i, [i]() {
+                rows.push_back({kSizeNames[i], (int)settings.subtitleSize == i,
+                                [this, i]() {
                                     Application& app = Application::getInstance();
                                     app.getSettings().subtitleSize = static_cast<SubtitleSize>(i);
                                     app.saveSettings();
+                                    m_subPreviewKept = true;
+                                    MpvPlayer::getInstance().applySubtitleSize();
+                                },
+                                [i]() {
+                                    Application::getInstance().getSettings().subtitleSize =
+                                        static_cast<SubtitleSize>(i);
                                     MpvPlayer::getInstance().applySubtitleSize();
                                 }});
             }
@@ -370,10 +393,16 @@ void PlayerActivity::openSubtitlePopup(int which) {
         case SUB_STYLE:
             heading = "Styles";
             for (int i = 0; i < 4; i++) {
-                rows.push_back({kStyleNames[i], settings.subtitleStyle == i, [i]() {
+                rows.push_back({kStyleNames[i], settings.subtitleStyle == i,
+                                [this, i]() {
                                     Application& app = Application::getInstance();
                                     app.getSettings().subtitleStyle = i;
                                     app.saveSettings();
+                                    m_subPreviewKept = true;
+                                    MpvPlayer::getInstance().applySubtitleStyle();
+                                },
+                                [i]() {
+                                    Application::getInstance().getSettings().subtitleStyle = i;
                                     MpvPlayer::getInstance().applySubtitleStyle();
                                 }});
             }
@@ -442,6 +471,13 @@ void PlayerActivity::openSubtitlePopup(int which) {
             mark->setTextColor(vitaplex::palette::goldInk);
             mark->setMarginLeft(ui(8));
             item->addView(mark);
+        }
+
+        // Size and Style show on the picture as the row is reached; leaving
+        // the list without picking puts back what was there.
+        if (r.preview) {
+            auto preview = r.preview;
+            item->getFocusEvent()->subscribe([preview](brls::View*) { preview(); });
         }
 
         auto pick = r.pick;

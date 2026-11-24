@@ -270,6 +270,9 @@ private:
     int  m_subPopupWhich = -1;
     bool m_subPanelVisible = false;
     int  m_lastSubtitleStreamId = -1;   // what "On" turns back on
+    // Size / Style as they were when their list opened, put back if it closes unpicked.
+    bool m_subPreviewKept = false;
+    int  m_subPreviewSize = 1, m_subPreviewStyle = 0;
     // Scale factor for code-built rows shared with the mobile XML; the two mobile designs use different frames (see DESIGN_NOTES).
     float ui(float v) const {
         if (m_mobileLayout) return v * kMobileUiScale;
