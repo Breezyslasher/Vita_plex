@@ -2184,6 +2184,24 @@ void PlayerActivity::updateProgress() {
     // spec's form, on subtitles found online. Each try takes the next one;
     // the one that worked is tried first after a reload. After three rounds
     // with none showing, the player says so and stops asking.
+    // A transcode starts its clock at the offset it was asked for
+    // (m_transcodeBaseOffsetMs), but a sidecar file is timed from the start
+    // of the film: without this, 1:28 into Iron Man the player looked for
+    // the subtitle lines of the first minutes, and showed nothing or the
+    // wrong ones. mpv's sub-delay shifts them back; 0 for the file itself.
+    {
+        const bool direct = m_directPlay || m_isLocalFile || m_isDirectFile;
+        const double want = (!m_sideloadUrls.empty() && !direct)
+                                ? -(m_transcodeBaseOffsetMs / 1000.0) : 0.0;
+        // Set once at the start too: mpv keeps it from the last player.
+        if (!m_subDelaySet || want != m_appliedSubDelay) {
+            MpvPlayer::getInstance().setSubtitleDelay(want);
+            m_appliedSubDelay = want;
+            m_subDelaySet = true;
+            brls::Logger::info("PlayerActivity: subtitle timing shifted by {:.1f} s", want);
+        }
+    }
+
     if (!m_sideloadUrls.empty() && MpvPlayer::getInstance().isPlaying()) {
         const int64_t nowMs = (int64_t)(brls::getCPUTimeUsec() / 1000);
         if (m_sideloadTriedMs == 0 || nowMs - m_sideloadTriedMs > 6000) {

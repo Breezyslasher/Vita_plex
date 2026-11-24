@@ -537,6 +537,8 @@ private:
     std::vector<std::string> sidecarSubtitleUrls(const PlexStream& ps) const;   // its addresses, token and all
     void setSideloadedSubtitle(const PlexStream& ps);
     std::vector<std::string> m_sideloadUrls;   // the addresses to try
+    double m_appliedSubDelay = 0.0;            // mpv sub-delay set for it
+    bool m_subDelaySet = false;
     int m_sideloadNext = 0, m_sideloadGood = -1, m_sideloadLast = -1, m_sideloadTries = 0;   // its file, token and all   // a transcode or the file, from getTranscodeUrl   // direct play: add the server's selected sidecar subtitle once playing
     int m_selectedTrackIndex = 0;  // Index of selected item in track list for focus
 
