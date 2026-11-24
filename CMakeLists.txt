@@ -459,6 +459,7 @@ set(APP_SOURCES
     src/activity/main_activity.cpp
     src/activity/login_activity.cpp
     src/activity/player_activity.cpp
+    src/activity/player_subtitle_panel.cpp
 
     # Views
     src/view/home_tab.cpp

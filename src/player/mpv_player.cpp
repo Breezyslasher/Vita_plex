@@ -303,6 +303,17 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "sub-scale", scale);
     }
 
+    // A Style picked in the subtitle panel other than the first.
+    if (Application::getInstance().getSettings().subtitleStyle != 0) {
+        const int style = Application::getInstance().getSettings().subtitleStyle;
+        mpv_set_option_string(m_mpv, "sub-color", style == 2 ? "#FFFFE14D" : "#FFFFFFFF");
+        mpv_set_option_string(m_mpv, "sub-border-color", "#FF000000");
+        mpv_set_option_string(m_mpv, "sub-back-color", style == 1 ? "#C0000000" : "#00000000");
+        mpv_set_option_string(m_mpv, "sub-border-size", style == 1 ? "0" : style == 3 ? "5" : "3");
+        mpv_set_option_string(m_mpv, "sub-shadow-offset", style == 3 ? "1" : "0");
+        if (style == 1) mpv_set_option_string(m_mpv, "sub-border-style", "background-box");
+    }
+
     // Audio passthrough. Without it mpv decodes Dolby/DTS to PCM and downmixes
     // it, so a receiver that could have rendered 5.1 gets stereo. The list is
     // the intersection of what the user asked for and what the audio output
@@ -1357,6 +1368,50 @@ void MpvPlayer::applySubtitleSize() {
 
     double scale = Application::subtitleScale(Application::getInstance().getSettings().subtitleSize);
     mpv_set_property_async(m_mpv, 0, "sub-scale", MPV_FORMAT_DOUBLE, &scale);
+}
+
+// The look of text subtitles (SRT and the like; styled ASS keeps its own).
+// Every property is set each time, so going from one style to another leaves
+// nothing of the first behind. Style 0 is what the player starts with: the
+// system's caption style where it has one (see the init), else mpv's own.
+void MpvPlayer::applySubtitleStyle() {
+    if (!m_mpv || m_stopping) return;
+    const int style = Application::getInstance().getSettings().subtitleStyle;
+
+    std::string color = "#FFFFFFFF", border = "#FF000000", back = "#00000000";
+    std::string borderSize = "3", shadow = "0", borderStyle = "outline-and-shadow";
+    if (style == 0) {
+        const auto& cs = platform::getSystemCaptionStyle();
+        if (cs.valid) {
+            char buf[16];
+            if (cs.hasForeground) { snprintf(buf, sizeof(buf), "#%08X", cs.foreground); color = buf; }
+            if (cs.hasBackground) { snprintf(buf, sizeof(buf), "#%08X", cs.background); back = buf; }
+            if (cs.hasEdgeColor)  { snprintf(buf, sizeof(buf), "#%08X", cs.edgeColor); border = buf; }
+            if (cs.edgeType >= 2 && cs.edgeType <= 4) shadow = "2";
+        }
+    } else if (style == 1) {          // white on a dark box
+        back = "#C0000000";
+        borderSize = "0";
+        borderStyle = "background-box";
+    } else if (style == 2) {          // yellow
+        color = "#FFFFE14D";
+    } else if (style == 3) {          // heavy outline
+        borderSize = "5";
+        shadow = "1";
+    }
+
+    auto set = [this](const char* name, const std::string& value) {
+        const char* v = value.c_str();   // MPV_FORMAT_STRING takes a char**
+        mpv_set_property_async(m_mpv, 0, name, MPV_FORMAT_STRING, &v);
+    };
+    // Older mpv has no sub-border-style; the async set then fails quietly and
+    // the box is drawn behind the glyphs only, which still reads as a box.
+    set("sub-border-style", borderStyle);
+    set("sub-color", color);
+    set("sub-border-color", border);
+    set("sub-back-color", back);
+    set("sub-border-size", borderSize);
+    set("sub-shadow-offset", shadow);
 }
 
 void MpvPlayer::toggleSubtitles() {

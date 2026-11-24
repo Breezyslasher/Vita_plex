@@ -241,6 +241,24 @@ private:
     void cycleSpeed();               // 1.0 -> 1.25 -> 1.5 -> 2.0 -> 0.75 -> ...
     // Set together on the top bar: the show over the episode, not the single line the other layouts print.
     void setVideoOsdTitle(const std::string& title, const std::string& subtitle);
+
+    // The subtitle panel over the video OSD (player_subtitle_panel.cpp): four
+    // drop-downs along the bottom, Subtitles on/off, Language, Size and Style,
+    // each opening its list above it, applied as soon as one is picked.
+    void showSubtitlePanel();
+    void hideSubtitlePanel(bool restoreControls = true);
+    void refreshSubtitlePanel();
+    void openSubtitlePopup(int which);
+    void closeSubtitlePopup();
+    bool subtitlePanelHit(float x, float y) const;   // a tap inside it
+    brls::Box*   m_subPanel = nullptr;
+    brls::Box*   m_subPopup = nullptr;
+    brls::Box*   m_subPills[4] = {nullptr, nullptr, nullptr, nullptr};
+    brls::Label* m_subPillValues[4] = {nullptr, nullptr, nullptr, nullptr};
+    brls::Label* m_subLangCaption = nullptr;
+    int  m_subPopupWhich = -1;
+    bool m_subPanelVisible = false;
+    int  m_lastSubtitleStreamId = -1;   // what "On" turns back on
     // Scale factor for code-built rows shared with the mobile XML; the two mobile designs use different frames (see DESIGN_NOTES).
     float ui(float v) const {
         if (m_mobileLayout) return v * kMobileUiScale;

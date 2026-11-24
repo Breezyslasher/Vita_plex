@@ -419,6 +419,16 @@ void PlayerActivity::onContentAvailable() {
                 if (status.state != brls::GestureState::END) return;
                 resetControlsIdleTimer();
 
+                // The subtitle panel up: its own rows answer taps on them; a
+                // tap anywhere else on the picture closes it.
+                if (m_subPanelVisible) {
+                    if (!subtitlePanelHit(status.position.x, status.position.y)) {
+                        if (m_subPopupWhich >= 0) closeSubtitlePopup();
+                        else                      hideSubtitlePanel();
+                    }
+                    return;
+                }
+
                 // Video: a double tap on the left or right third skips back or
                 // forward by the seek interval, as in most phone players. The
                 // first tap has already toggled the controls; the second puts
@@ -545,6 +555,15 @@ void PlayerActivity::onContentAvailable() {
 
     this->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
         resetControlsIdleTimer();
+        // The subtitle panel: its list first, then the panel.
+        if (m_subPopupWhich >= 0) {
+            closeSubtitlePopup();
+            return true;
+        }
+        if (m_subPanelVisible) {
+            hideSubtitlePanel();
+            return true;
+        }
         // If track overlay is showing, dismiss it instead of leaving player
         if (m_trackSelectMode != TrackSelectMode::NONE) {
             hideTrackOverlay();
@@ -958,7 +977,8 @@ void PlayerActivity::onContentAvailable() {
                 setIconRes(subtitleIcon, "icons/subtitles.png");
             }
             subBtn->registerClickAction([this](brls::View* view) {
-                showTrackOverlay(TrackSelectMode::SUBTITLE);
+                if (m_videoOsd) showSubtitlePanel();
+                else            showTrackOverlay(TrackSelectMode::SUBTITLE);
                 return true;
             });
             subBtn->addGestureRecognizer(new brls::TapGestureRecognizer(subBtn));
@@ -2479,7 +2499,7 @@ void PlayerActivity::updateProgress() {
 
     // Auto-hide controls after inactivity
     int autoHide = Application::getInstance().getSettings().controlsAutoHideSeconds;
-    if (autoHide > 0 && m_controlsVisible && !m_isPhoto) {
+    if (autoHide > 0 && m_controlsVisible && !m_isPhoto && !m_subPanelVisible) {
         m_controlsIdleSeconds++;
         if (m_controlsIdleSeconds >= autoHide) {
             hideControls();
@@ -4849,7 +4869,7 @@ void PlayerActivity::wireVideoOsd() {
         brls::Application::popActivity();
     });
     tap(box("player/speed_btn"),  [this] { cycleSpeed(); });
-    tap(box("player/subs_pill"),  [this] { showTrackOverlay(TrackSelectMode::SUBTITLE); });
+    tap(box("player/subs_pill"),  [this] { showSubtitlePanel(); });
     tap(box("player/next_btn"),   [this] {
         if (m_isQueueMode) playNext();
         else               playNextEpisode();

@@ -153,6 +153,10 @@ struct AppSettings {
     bool resumePlayback = true;
     bool showSubtitles = true;
     SubtitleSize subtitleSize = SubtitleSize::MEDIUM;
+    // How text subtitles look (the player's subtitle panel): 0 the system's
+    // caption style or mpv's own, 1 white on a dark box, 2 yellow, 3 white
+    // with a heavy outline. MpvPlayer::applySubtitleStyle.
+    int subtitleStyle = 0;
     int seekInterval = 10;  // seconds
     int controlsAutoHideSeconds = 5;  // Auto-hide player controls after inactivity (0 = never)
     bool autoSkipIntro = false;       // Automatically skip intro markers

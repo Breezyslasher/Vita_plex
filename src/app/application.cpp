@@ -533,6 +533,10 @@ bool Application::loadSettings() {
     m_settings.showSubtitles   = extractBool("showSubtitles", true);
     // extractInt reads a missing key as 0, which here is Small, not the
     // default. Absent or out of range keeps the default, Medium.
+    {
+        const int style = extractInt("subtitleStyle");
+        m_settings.subtitleStyle = (style >= 0 && style <= 3) ? style : 0;
+    }
     if (content.find("\"subtitleSize\":") != std::string::npos) {
         const int size = extractInt("subtitleSize");
         if (size >= 0 && size <= 2) m_settings.subtitleSize = static_cast<SubtitleSize>(size);
@@ -762,6 +766,7 @@ bool Application::saveSettings() {
     json += "  \"resumePlayback\": " + b(m_settings.resumePlayback) + ",\n";
     json += "  \"showSubtitles\": " + b(m_settings.showSubtitles) + ",\n";
     json += "  \"subtitleSize\": " + std::to_string(static_cast<int>(m_settings.subtitleSize)) + ",\n";
+    json += "  \"subtitleStyle\": " + std::to_string(m_settings.subtitleStyle) + ",\n";
     json += "  \"seekInterval\": " + std::to_string(m_settings.seekInterval) + ",\n";
     json += "  \"controlsAutoHideSeconds\": " + std::to_string(m_settings.controlsAutoHideSeconds) + ",\n";
     json += "  \"autoSkipIntro\": " + b(m_settings.autoSkipIntro) + ",\n";
