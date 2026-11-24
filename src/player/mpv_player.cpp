@@ -7,7 +7,8 @@
 #include <algorithm>   // std::max in seekRelative
 #include "player/mpv_player.hpp"
 #if defined(__ANDROID__)
-#include <unistd.h>  // getcwd
+#include <sys/stat.h>  // mkdir
+#include <unistd.h>    // getcwd, symlink
 #endif
 #include "utils/pip.h"
 #include "app/application.hpp"
@@ -374,7 +375,42 @@ bool MpvPlayer::init() {
 #if defined(__ANDROID__)
         // resources/ is relative to the folder the assets were extracted to.
         char cwd[1024];
-        if (getcwd(cwd, sizeof(cwd))) fontDir = std::string(cwd) + "/" + fontDir;
+        const bool haveCwd = getcwd(cwd, sizeof(cwd)) != nullptr;
+        if (haveCwd) fontDir = std::string(cwd) + "/" + fontDir;
+
+        // Characters DejaVu Sans lacks (Chinese, Japanese, Korean) come from
+        // the device's own CJK font. With no font provider, libass's only
+        // fallback is "subfont.ttf" in mpv's config folder, which mpv uses
+        // when the chosen font has no glyph for a character. A link to the
+        // system font is put there (read from disk as needed, not loaded
+        // whole).
+        {
+            static const char* kSystemCjk[] = {
+                "/system/fonts/NotoSansCJK-Regular.ttc",
+                "/system/fonts/NotoSansCJKjp-Regular.otf",
+                "/system/fonts/NotoSansSC-Regular.otf",
+                "/system/fonts/NotoSansJP-Regular.otf",
+                "/system/fonts/DroidSansFallbackFull.ttf",
+                "/system/fonts/DroidSansFallback.ttf",
+            };
+            const char* cjk = nullptr;
+            for (const char* f : kSystemCjk)
+                if (access(f, R_OK) == 0) { cjk = f; break; }
+            if (cjk && haveCwd) {
+                const std::string confDir = std::string(cwd) + "/mpv";
+                mkdir(confDir.c_str(), 0700);
+                const std::string link = confDir + "/subfont.ttf";
+                unlink(link.c_str());
+                if (symlink(cjk, link.c_str()) == 0) {
+                    mpv_set_option_string(m_mpv, "config-dir", confDir.c_str());
+                    brls::Logger::info("MpvPlayer: fallback subtitle font {}", cjk);
+                } else {
+                    brls::Logger::warning("MpvPlayer: could not link the fallback subtitle font {}", cjk);
+                }
+            } else {
+                brls::Logger::info("MpvPlayer: no system CJK font found for subtitles");
+            }
+        }
 #endif
         mpv_set_option_string(m_mpv, "sub-font-provider", "none");
         mpv_set_option_string(m_mpv, "sub-fonts-dir", fontDir.c_str());
