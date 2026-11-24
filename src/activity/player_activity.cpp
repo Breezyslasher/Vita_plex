@@ -2076,13 +2076,34 @@ void PlayerActivity::loadMedia() {
         // Remember Plex's full length: mpv's duration reads stale after a transcode reload and let the bar run past the end.
         m_mediaDurationMs = (item.duration > 0) ? (int)item.duration : 0;
         std::string url;
+        // A sidecar subtitle selected on the server (an .srt beside the file,
+        // or one found online): the player shows it itself, so Size and Style
+        // reach it and a transcode is not asked to burn it into the picture,
+        // where neither could (a log: both changed, nothing on the screen did).
+        // setSideloadedSubtitle makes the transcode ask for no subtitle.
+        if (Application::getInstance().getSettings().showSubtitles) {
+            std::vector<PlexStream> streams;
+            int partId = 0;
+            if (client.fetchStreams(m_mediaKey, streams, partId)) {
+                m_plexStreams = streams;
+                m_partId = partId;
+                m_streamsLoaded = true;
+                for (const auto& ps : m_plexStreams) {
+                    if (ps.streamType != 3 || !ps.selected || ps.key.empty()) continue;
+                    brls::Logger::info("PlayerActivity: the player shows the subtitle {} itself",
+                                       ps.displayTitle);
+                    setSideloadedSubtitle(ps);
+                    break;
+                }
+            }
+        }
         if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {
             // Direct play: the server returned the original file, so mpv owns the timeline and seeks are local, not restarts.
             m_directPlay = (url.find("/transcode/universal/start") == std::string::npos);
             if (m_directPlay) {
                 brls::Logger::info("PlayerActivity: direct play (original file), resume {}ms",
                                    resumeOffset);
-                m_sidecarCheck = true;   // the file has none of the server's sidecar subtitles
+                // (A sidecar selected on the server was taken up above.)
                 m_transcodeBaseOffsetMs = 0;
                 if (resumeOffset > 0) m_pendingSeek = resumeOffset / 1000.0;
             }
