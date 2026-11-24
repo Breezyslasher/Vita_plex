@@ -600,6 +600,8 @@ public:
         bool hearingImpaired = false; // SDH
         bool forced = false;          // Forced (signs/songs)
     };
+    // Take an item off the server's Continue Watching (its progress stays).
+    bool removeFromContinueWatching(const std::string& ratingKey);
     bool searchSubtitles(const std::string& ratingKey, const std::string& language,
                          std::vector<SubtitleResult>& results);
     bool selectSearchedSubtitle(const std::string& ratingKey, int partId,

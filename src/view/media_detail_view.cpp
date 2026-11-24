@@ -3183,10 +3183,19 @@ private:
 
 }  // namespace
 
+std::vector<OptionRow> MediaDetailView::s_extraMenuRows;
+
 void MediaDetailView::showOptionsPopover(brls::View* anchor,
                                          const std::string& contextLine,
                                          const std::string& title,
                                          std::vector<OptionRow> rows) {
+    if (!s_extraMenuRows.empty()) {
+        // Above a closing Cancel row, else at the end.
+        auto at = rows.end();
+        if (!rows.empty() && rows.back().danger && rows.back().label == "Cancel") at = rows.end() - 1;
+        rows.insert(at, s_extraMenuRows.begin(), s_extraMenuRows.end());
+        s_extraMenuRows.clear();
+    }
     namespace pc = popcol;
 
     // The episode menu passes an "S{n} · E{n}" context line; every other menu

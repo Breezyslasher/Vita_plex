@@ -4243,6 +4243,20 @@ bool PlexClient::markAsWatched(const std::string& ratingKey) {
     return resp.statusCode == 200;
 }
 
+bool PlexClient::removeFromContinueWatching(const std::string& ratingKey) {
+    if (ratingKey.empty()) return false;
+    // PUT /actions/removeFromContinueWatching?ratingKey=: what Plex's own
+    // apps send for "Remove from Continue Watching". openapi.json does not
+    // list it. It hides the item from the hub; its watch progress is kept.
+    HttpClient client;
+    HttpRequest req;
+    req.url = buildApiUrl("/actions/removeFromContinueWatching?ratingKey=" + ratingKey);
+    req.method = "PUT";
+    HttpResponse resp = client.request(req);
+    brls::Logger::info("removeFromContinueWatching {}: HTTP {}", ratingKey, resp.statusCode);
+    return resp.statusCode >= 200 && resp.statusCode < 300;
+}
+
 bool PlexClient::markAsUnwatched(const std::string& ratingKey) {
     HttpClient client;
     // openapi.json: PUT "Mark an item as unplayed".

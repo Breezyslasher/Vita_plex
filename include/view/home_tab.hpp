@@ -50,6 +50,7 @@ private:
     void appendRowCards(HorizontalScrollRow* row,
                         std::shared_ptr<const std::vector<MediaItem>> items, size_t from,
                         bool directPlay, bool preferPoster, uint64_t generation);
+    void removeFromContinueWatching(const MediaItem& item, std::weak_ptr<bool> aliveWeak);
     void addRowCard(HorizontalScrollRow* row, const MediaItem& item, bool directPlay,
                     bool preferPoster);
     std::map<HorizontalScrollRow*, uint64_t> m_rowGeneration;

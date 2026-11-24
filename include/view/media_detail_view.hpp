@@ -147,6 +147,11 @@ public:
     // sheet when `anchor` is null or the screen is too narrow. Every show*
     // context menu funnels its rows through here. Static because several callers
     // are static members.
+    // Rows the caller of showContextMenuFor adds to the menu it opens (the
+    // Home rail's "Remove from Continue Watching"), put just above Cancel.
+    // Set right before the call; the next popover takes and clears them.
+    static std::vector<OptionRow> s_extraMenuRows;
+
     static void showOptionsPopover(brls::View* anchor,
                                    const std::string& contextLine,
                                    const std::string& title,
