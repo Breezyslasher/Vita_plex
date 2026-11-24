@@ -22,6 +22,8 @@
 #include <borealis.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <chrono>
 #include <thread>
 #include <string>
@@ -33,8 +35,26 @@ namespace {
 
 // SUB_SEARCH is a list with no drop-down of its own: it opens from the
 // language list, or by itself when subtitles are turned on and there are none.
-enum Which { SUB_ONOFF = 0, SUB_LANGUAGE = 1, SUB_SIZE = 2, SUB_STYLE = 3, SUB_SEARCH = 4 };
-constexpr int kSubControls = 4;
+enum Which { SUB_ONOFF = 0, SUB_LANGUAGE = 1, SUB_SIZE = 2, SUB_STYLE = 3, SUB_TIMING = 4,
+             SUB_SEARCH = 5 };
+constexpr int kSubControls = 5;
+
+// "In time", "0.5 s later", "1.25 s earlier".
+std::string timingName(double d) {
+    if (std::fabs(d) < 0.001) return "In time";
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%g s %s", std::fabs(d), d > 0 ? "later" : "earlier");
+    return buf;
+}
+
+// The timing steps: a quarter second near zero, half a second further out.
+std::vector<double> timingSteps() {
+    std::vector<double> v;
+    for (double d = -10.0; d < -3.0 + 1e-9; d += 0.5) v.push_back(d);
+    for (double d = -2.75; d < 3.0 + 1e-9; d += 0.25) v.push_back(d);
+    for (double d = 3.5; d < 10.0 + 1e-9; d += 0.5) v.push_back(d);
+    return v;
+}
 
 const char* kSizeNames[]  = {"Small", "Medium", "Large"};
 const char* kStyleNames[] = {"Default", "Dark box", "Yellow", "Outline"};
@@ -101,13 +121,13 @@ void PlayerActivity::showSubtitlePanel() {
 
         auto* row = new brls::Box(brls::Axis::ROW);
         row->setAlignItems(brls::AlignItems::FLEX_END);
-        const char* captions[kSubControls] = {"Subtitles", "Language", "Size", "Style"};
+        const char* captions[kSubControls] = {"Subtitles", "Language", "Size", "Style", "Timing"};
         for (int i = 0; i < kSubControls; i++) {
             auto* col = new brls::Box(brls::Axis::COLUMN);
             col->setMarginRight(i < kSubControls - 1 ? ui(22) : 0);
             // Fixed widths, as on a TV: a lone On / Off (subtitles off) must
             // not stretch across the screen.
-            static const float kColWidth[kSubControls] = {150, 280, 170, 170};
+            static const float kColWidth[kSubControls] = {150, 280, 160, 160, 170};
             col->setWidth(ui(kColWidth[i]));
             col->setShrink(1.0f);
 
@@ -197,12 +217,13 @@ void PlayerActivity::refreshSubtitlePanel() {
         on ? current : (choices.empty() ? "None available" : "Off"));
     m_subPillValues[SUB_SIZE]->setText(kSizeNames[std::clamp((int)s.subtitleSize, 0, 2)]);
     m_subPillValues[SUB_STYLE]->setText(kStyleNames[std::clamp(s.subtitleStyle, 0, 3)]);
+    m_subPillValues[SUB_TIMING]->setText(timingName(m_subUserDelay));
     if (m_subSearchLang.empty()) m_subSearchLang = s.defaultSubtitleLanguage.empty() ? "en" : s.defaultSubtitleLanguage;
     if (m_subLangCaption)
         m_subLangCaption->setText("Language (" + std::to_string(choices.size()) + ")");
 
     // Off: the language, size and style mean nothing, so only On / Off shows.
-    for (int i = SUB_LANGUAGE; i <= SUB_STYLE; i++) {
+    for (int i = SUB_LANGUAGE; i <= SUB_TIMING; i++) {
         brls::View* col = m_subPills[i] ? m_subPills[i]->getParent() : nullptr;
         if (col) col->setVisibility(on ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
     }
@@ -282,6 +303,10 @@ void PlayerActivity::closeSubtitlePopup() {
             MpvPlayer::getInstance().applySubtitleStyle();
         }
     }
+    if (which == SUB_TIMING && !m_subPreviewKept) {
+        m_subUserDelay = m_subPreviewDelay;
+        applySubtitleDelay();
+    }
     if (which >= 0 && which < kSubControls && m_subPillChevrons[which])
         setIconRes(m_subPillChevrons[which], "icons/chevron-up.png");
     // Off the focused row before the rows go.
@@ -318,6 +343,7 @@ void PlayerActivity::openSubtitlePopup(int which) {
     m_subPreviewKept = false;
     m_subPreviewSize = (int)Application::getInstance().getSettings().subtitleSize;
     m_subPreviewStyle = Application::getInstance().getSettings().subtitleStyle;
+    m_subPreviewDelay = m_subUserDelay;
     AppSettings& settings = Application::getInstance().getSettings();
     const auto choices = subtitleChoices(m_plexStreams);
     bool anyOn = false;
@@ -342,7 +368,9 @@ void PlayerActivity::openSubtitlePopup(int which) {
                 const int id = c.id;
                 const bool sel = c.selected;
                 rows.push_back({c.name, sel, [this, id, sel]() {
-                                    if (!sel) selectTrack(TrackSelectMode::SUBTITLE, id);
+                                    if (sel) return;
+                                    m_subUserDelay = 0.0;   // another file, its own timing
+                                    selectTrack(TrackSelectMode::SUBTITLE, id);
                                 }});
             }
             // One more: find others online. Opened the frame after this list
@@ -370,6 +398,9 @@ void PlayerActivity::openSubtitlePopup(int which) {
                     if (r.hearingImpaired) name += " (SDH)";
                     if (r.forced) name += " (Forced)";
                     if (!r.provider.empty()) name += "  -  " + r.provider;
+                    // The release it was made for: one that matches the
+                    // video's own file is the one in time.
+                    if (!r.release.empty() && r.release != r.displayTitle) name += "  -  " + r.release;
                     const std::string key = r.key;
                     rows.push_back({name, false, [this, key, name]() { installSearchedSubtitle(key, name); }});
                 }
@@ -394,6 +425,28 @@ void PlayerActivity::openSubtitlePopup(int which) {
                                 }});
             }
             break;
+        case SUB_TIMING: {
+            heading = "Move subtitles";
+            // The row nearest the current shift is the current one.
+            double nearest = 0.0, best = 1e9;
+            const auto steps = timingSteps();
+            for (double d : steps)
+                if (std::fabs(d - m_subUserDelay) < best) { best = std::fabs(d - m_subUserDelay); nearest = d; }
+            for (double d : steps) {
+                rows.push_back({timingName(d), std::fabs(d - nearest) < 1e-6,
+                                [this, d]() {
+                                    m_subUserDelay = d;
+                                    m_subPreviewKept = true;
+                                    applySubtitleDelay();
+                                    brls::Logger::info("Subtitle panel: timing {:+.2f} s", d);
+                                },
+                                [this, d]() {
+                                    m_subUserDelay = d;
+                                    applySubtitleDelay();
+                                }});
+            }
+            break;
+        }
         case SUB_STYLE:
             heading = "Styles";
             for (int i = 0; i < 4; i++) {
@@ -574,6 +627,7 @@ void PlayerActivity::promptSubtitleSearchLanguage() {
 // with it where the video is.
 void PlayerActivity::installSearchedSubtitle(const std::string& subKey, const std::string& name) {
     MpvPlayer::getInstance().showOSD("Adding subtitle...", 4.0);
+    m_subUserDelay = 0.0;   // another file, its own timing
     const std::string mediaKey = m_mediaKey;
     const int partId = m_partId;
     std::vector<int> known;

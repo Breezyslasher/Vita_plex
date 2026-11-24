@@ -3783,7 +3783,10 @@ bool PlexClient::searchSubtitles(const std::string& ratingKey, const std::string
         sub.language = extractJsonValue(obj, "language");
         sub.languageCode = extractJsonValue(obj, "languageCode");
         sub.provider = extractJsonValue(obj, "provider");
+        // "score" comes as a string ("7"), which extractJsonInt reads as 0.
         sub.score = extractJsonInt(obj, "score");
+        if (sub.score == 0) sub.score = std::atoi(extractJsonValue(obj, "score").c_str());
+        sub.release = extractJsonValue(obj, "title");
         sub.hearingImpaired = extractJsonBool(obj, "hearingImpaired");
         sub.forced = extractJsonBool(obj, "forced");
 
@@ -3797,13 +3800,17 @@ bool PlexClient::searchSubtitles(const std::string& ratingKey, const std::string
 
         if (!sub.key.empty()) {
             results.push_back(sub);
-            brls::Logger::debug("searchSubtitles: {} - {} [{}]",
-                               sub.displayTitle, sub.language, sub.provider);
+            brls::Logger::debug("searchSubtitles: {} - {} [{}] score {} for {}",
+                               sub.displayTitle, sub.language, sub.provider, sub.score, sub.release);
         }
 
         objPos = objEnd;
     }
 
+    // Best match first: the provider's score rates how well the file fits
+    // this video (a file for another release runs early or late).
+    std::stable_sort(results.begin(), results.end(),
+                     [](const SubtitleResult& a, const SubtitleResult& b) { return a.score > b.score; });
     brls::Logger::info("searchSubtitles: Found {} results for ratingKey {}", results.size(), ratingKey);
     return true;
 }

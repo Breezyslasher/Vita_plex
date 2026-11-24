@@ -596,6 +596,7 @@ public:
         std::string languageCode; // Language code (e.g., "eng")
         std::string provider;     // e.g., "opensubtitles"
         int score = 0;            // Provider match score (0-100)
+        std::string release;      // The release the file was made for (its "title")
         bool hearingImpaired = false; // SDH
         bool forced = false;          // Forced (signs/songs)
     };

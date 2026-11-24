@@ -2179,6 +2179,29 @@ static std::mutex s_timelineMutex;
 static std::atomic<uint64_t> s_timelineSeq{0};
 static uint64_t s_timelineSent = 0;  // under s_timelineMutex
 
+// mpv's sub-delay: the transcode's shift (below) plus the panel's Timing.
+void PlayerActivity::applySubtitleDelay() {
+    if (!MpvPlayer::getInstance().isInitialized()) return;
+    // A transcode starts its clock at the offset it was asked for
+    // (m_transcodeBaseOffsetMs), but a sidecar file is timed from the start
+    // of the film: without this, 1:28 into Iron Man the player looked for
+    // the subtitle lines of the first minutes, and showed nothing or the
+    // wrong ones. mpv's sub-delay shifts them back; 0 for the file itself.
+    {
+        const bool direct = m_directPlay || m_isLocalFile || m_isDirectFile;
+        const double want = ((!m_sideloadUrls.empty() && !direct)
+                                 ? -(m_transcodeBaseOffsetMs / 1000.0) : 0.0) + m_subUserDelay;
+        // Set once at the start too: mpv keeps it from the last player.
+        if (!m_subDelaySet || want != m_appliedSubDelay) {
+            MpvPlayer::getInstance().setSubtitleDelay(want);
+            m_appliedSubDelay = want;
+            m_subDelaySet = true;
+            brls::Logger::info("PlayerActivity: subtitle timing shifted by {:.2f} s", want);
+        }
+    }
+
+}
+
 void PlayerActivity::updateProgress() {
     // Don't update if destroying or showing photo
     if (m_destroying || m_isPhoto) return;
@@ -2207,23 +2230,7 @@ void PlayerActivity::updateProgress() {
     // with none showing, the player says so and stops asking.
     updateSubtitlePosition();   // once mpv exists (the first calls come before)
 
-    // A transcode starts its clock at the offset it was asked for
-    // (m_transcodeBaseOffsetMs), but a sidecar file is timed from the start
-    // of the film: without this, 1:28 into Iron Man the player looked for
-    // the subtitle lines of the first minutes, and showed nothing or the
-    // wrong ones. mpv's sub-delay shifts them back; 0 for the file itself.
-    {
-        const bool direct = m_directPlay || m_isLocalFile || m_isDirectFile;
-        const double want = (!m_sideloadUrls.empty() && !direct)
-                                ? -(m_transcodeBaseOffsetMs / 1000.0) : 0.0;
-        // Set once at the start too: mpv keeps it from the last player.
-        if (!m_subDelaySet || want != m_appliedSubDelay) {
-            MpvPlayer::getInstance().setSubtitleDelay(want);
-            m_appliedSubDelay = want;
-            m_subDelaySet = true;
-            brls::Logger::info("PlayerActivity: subtitle timing shifted by {:.1f} s", want);
-        }
-    }
+    applySubtitleDelay();
 
     if (!m_sideloadUrls.empty() && MpvPlayer::getInstance().isPlaying()) {
         const int64_t nowMs = (int64_t)(brls::getCPUTimeUsec() / 1000);

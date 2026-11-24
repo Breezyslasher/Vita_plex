@@ -255,9 +255,9 @@ private:
     brls::View* subtitlePanelHome();                  // where focus rests in it
     brls::Box*   m_subPanel = nullptr;
     brls::Box*   m_subPopup = nullptr;
-    brls::Box*   m_subPills[5] = {};
-    brls::Label* m_subPillValues[5] = {};
-    brls::Image* m_subPillChevrons[5] = {};
+    brls::Box*   m_subPills[6] = {};
+    brls::Label* m_subPillValues[6] = {};
+    brls::Image* m_subPillChevrons[6] = {};
     // Online search, as on the media page: by language, off the UI thread.
     void startSubtitleSearch();
     void installSearchedSubtitle(const std::string& key, const std::string& name);
@@ -273,6 +273,12 @@ private:
     // Size / Style as they were when their list opened, put back if it closes unpicked.
     bool m_subPreviewKept = false;
     int  m_subPreviewSize = 1, m_subPreviewStyle = 0;
+    // Timing from the panel: seconds the subtitle is moved by (+ later,
+    // - earlier), on top of the shift a transcode needs. A file found online
+    // is often cut for another release of the film and runs early or late.
+    double m_subUserDelay = 0.0;
+    double m_subPreviewDelay = 0.0;
+    void applySubtitleDelay();
     // Scale factor for code-built rows shared with the mobile XML; the two mobile designs use different frames (see DESIGN_NOTES).
     float ui(float v) const {
         if (m_mobileLayout) return v * kMobileUiScale;
