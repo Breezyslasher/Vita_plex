@@ -534,7 +534,10 @@ private:
     int64_t m_sideloadTriedMs = 0;     // when it was last added
     bool m_sidecarCheck = false;
     void loadServerStream(const std::string& url, int offsetMs);
-    std::string sidecarSubtitleUrl(const PlexStream& ps) const;   // its file, token and all   // a transcode or the file, from getTranscodeUrl   // direct play: add the server's selected sidecar subtitle once playing
+    std::vector<std::string> sidecarSubtitleUrls(const PlexStream& ps) const;   // its addresses, token and all
+    void setSideloadedSubtitle(const PlexStream& ps);
+    std::vector<std::string> m_sideloadUrls;   // the addresses to try
+    int m_sideloadNext = 0, m_sideloadGood = -1, m_sideloadLast = -1, m_sideloadTries = 0;   // its file, token and all   // a transcode or the file, from getTranscodeUrl   // direct play: add the server's selected sidecar subtitle once playing
     int m_selectedTrackIndex = 0;  // Index of selected item in track list for focus
 
     void showTrackOverlay(TrackSelectMode mode);

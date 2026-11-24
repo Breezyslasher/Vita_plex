@@ -1728,6 +1728,7 @@ void PlayerActivity::loadMedia() {
     m_syncRecoverAttempts = 0;
     m_directPlay = false;
     m_sideloadedSubUrl.clear();   // the last item's subtitle file
+    m_sideloadUrls.clear();
     m_sidecarCheck = false;
 
     // Same reason: auto-play-next reloads into this activity, so the old poster must not survive into the next item.
@@ -2175,15 +2176,39 @@ void PlayerActivity::updateProgress() {
     // (a seek, a switch of audio) starts a new file without it, so it is added
     // again whenever none is showing. Not more than every 6 s, so a slow
     // fetch is not asked for twice.
-    if (!m_sideloadedSubUrl.empty() && MpvPlayer::getInstance().isPlaying()) {
+    //
+    // The file has more than one address (sidecarSubtitleUrls), and a server
+    // may answer only some: a TV log has 404 for /library/streams/N.srt, the
+    // spec's form, on subtitles found online. Each try takes the next one;
+    // the one that worked is tried first after a reload. After three rounds
+    // with none showing, the player says so and stops asking.
+    if (!m_sideloadUrls.empty() && MpvPlayer::getInstance().isPlaying()) {
         const int64_t nowMs = (int64_t)(brls::getCPUTimeUsec() / 1000);
         if (m_sideloadTriedMs == 0 || nowMs - m_sideloadTriedMs > 6000) {
             bool showing = false;
             for (const auto& t : MpvPlayer::getInstance().getTrackList("sub"))
                 showing = showing || t.selected;
-            if (!showing) {
-                brls::Logger::info("PlayerActivity: adding the sidecar subtitle to the stream");
-                MpvPlayer::getInstance().loadSubtitleUrl(m_sideloadedSubUrl, /*select=*/true);
+            const int n = (int)m_sideloadUrls.size();
+            if (showing) {
+                if (m_sideloadLast >= 0 && m_sideloadGood != m_sideloadLast) {
+                    m_sideloadGood = m_sideloadLast;
+                    brls::Logger::info("PlayerActivity: the sidecar subtitle loaded from address {}",
+                                       m_sideloadGood + 1);
+                }
+                m_sideloadTries = 0;
+            } else if (m_sideloadTries >= 3 * n) {
+                brls::Logger::warning("PlayerActivity: the sidecar subtitle could not be fetched");
+                MpvPlayer::getInstance().showOSD("Couldn't load the subtitle", 3.0);
+                m_sideloadUrls.clear();
+                m_sideloadedSubUrl.clear();
+            } else {
+                const int idx = (m_sideloadTries == 0 && m_sideloadGood >= 0) ? m_sideloadGood
+                                                                               : m_sideloadNext % n;
+                m_sideloadNext = idx + 1;
+                m_sideloadLast = idx;
+                m_sideloadTries++;
+                brls::Logger::info("PlayerActivity: adding the sidecar subtitle (address {})", idx + 1);
+                MpvPlayer::getInstance().loadSubtitleUrl(m_sideloadUrls[idx], /*select=*/true);
                 m_sideloadTriedMs = nowMs;
             }
         }
@@ -2214,9 +2239,7 @@ void PlayerActivity::updateProgress() {
                     brls::Logger::info("PlayerActivity: adding the selected sidecar subtitle {}",
                                        ps.displayTitle);
                     // Into mpv by the check below: already selected on the server.
-                    std::string url = sidecarSubtitleUrl(ps);
-                    m_sideloadedSubUrl = url;
-                    m_sideloadTriedMs = 0;
+                    setSideloadedSubtitle(ps);
                     break;
                 }
             });
@@ -4346,16 +4369,14 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     }
                     if (!side) {
                         m_sideloadedSubUrl.clear();
+                        m_sideloadUrls.clear();
                         player.removeExternalSubtitles();
                         player.showOSD("Subtitles off", 1.5);
                     } else {
-                        std::string url = sidecarSubtitleUrl(*side);
-                        m_sideloadedSubUrl = url;
-                        m_sideloadTriedMs = 0;   // updateProgress adds it (again after a reload)
-                        if (!burnedIn) {
-                            player.loadSubtitleUrl(url, /*select=*/true);
-                            m_sideloadTriedMs = (int64_t)(brls::getCPUTimeUsec() / 1000);
-                        }
+                        // updateProgress adds it, at once unless a reload is under
+                        // way, and again after one.
+                        setSideloadedSubtitle(*side);
+                        if (burnedIn) m_sideloadTriedMs = (int64_t)(brls::getCPUTimeUsec() / 1000);
                         player.showOSD("Subtitles: " + (side->displayTitle.empty() ? side->language
                                                                                    : side->displayTitle), 2.0);
                     }
@@ -4364,6 +4385,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
             }
             // Anything else (an embedded subtitle) is the server's to deliver.
             m_sideloadedSubUrl.clear();
+            m_sideloadUrls.clear();
             if (trackId < 0) {
                 // Disable subtitles
                 if (m_partId > 0) {
@@ -4488,20 +4510,40 @@ bool PlayerActivity::restartTranscodeAtMs(int offsetMs) {
     return true;
 }
 
-// A sidecar subtitle's file: GET /library/streams/{streamId}.{ext}, where
-// openapi.json makes the extension part of the path (it is what picks the
-// file for idx/sub pairs); fetchLyrics fetches the same way. The bare key
-// the metadata gives has none.
-std::string PlayerActivity::sidecarSubtitleUrl(const PlexStream& ps) const {
-    std::string path = ps.key;
-    const size_t slash = path.find_last_of('/');
-    const bool hasExt = path.find('.', slash == std::string::npos ? 0 : slash) != std::string::npos;
-    if (!hasExt && !ps.codec.empty() && path.find('?') == std::string::npos) path += "." + ps.codec;
-    std::string url = PlexClient::getInstance().getServerUrl() + path;
+// A sidecar subtitle's file, at each address it may be served from, in the
+// order tried: the bare key, as Plex's own clients and python-plexapi fetch
+// it; /library/streams/{streamId}.{ext}, openapi.json's form, which a TV log
+// shows answering 404 for subtitles found online; and the key with the
+// spec's format parameter.
+std::vector<std::string> PlayerActivity::sidecarSubtitleUrls(const PlexStream& ps) const {
+    const std::string server = PlexClient::getInstance().getServerUrl();
     const std::string& token = PlexClient::getInstance().getAuthToken();
-    if (!token.empty())
-        url += (url.find('?') == std::string::npos ? "?" : "&") + std::string("X-Plex-Token=") + token;
-    return url;
+    auto withToken = [&token](std::string url) {
+        if (!token.empty())
+            url += (url.find('?') == std::string::npos ? "?" : "&") + std::string("X-Plex-Token=") + token;
+        return url;
+    };
+    std::vector<std::string> out;
+    const std::string& key = ps.key;
+    out.push_back(withToken(server + key));
+    const size_t slash = key.find_last_of('/');
+    const bool plain = key.find('?') == std::string::npos &&
+                       key.find('.', slash == std::string::npos ? 0 : slash) == std::string::npos;
+    const std::string fmt = ps.codec.empty() ? std::string("srt") : ps.codec;
+    if (plain) out.push_back(withToken(server + key + "." + fmt));
+    out.push_back(withToken(server + key + (key.find('?') == std::string::npos ? "?" : "&") + "format=" + fmt));
+    return out;
+}
+
+// Show this sidecar through mpv from now on (updateProgress adds it).
+void PlayerActivity::setSideloadedSubtitle(const PlexStream& ps) {
+    m_sideloadUrls = sidecarSubtitleUrls(ps);
+    m_sideloadedSubUrl = m_sideloadUrls.front();
+    m_sideloadNext = 0;
+    m_sideloadGood = -1;
+    m_sideloadLast = -1;
+    m_sideloadTries = 0;
+    m_sideloadTriedMs = 0;
 }
 
 // Load what getTranscodeUrl gave for offsetMs. The server answers a transcode
