@@ -6,6 +6,9 @@
 
 #include <algorithm>   // std::max in seekRelative
 #include "player/mpv_player.hpp"
+#if defined(__ANDROID__)
+#include <unistd.h>  // getcwd
+#endif
 #include "utils/pip.h"
 #include "app/application.hpp"
 #include "platform/platform.hpp"
@@ -354,6 +357,32 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "sub-fonts-dir", "sdmc:/VitaPlex");
     mpv_set_option_string(m_mpv, "watch-later-dir", "sdmc:/VitaPlex/watch-later");
     mpv_set_option_string(m_mpv, "gpu-shader-cache-dir", "sdmc:/VitaPlex/cache");
+#endif
+
+    // A font for subtitles and mpv's own messages. libass finds fonts through
+    // a system font provider (fontconfig, CoreText, DirectWrite), and these
+    // ports have none: an Android log has "can't find selected font provider"
+    // and "failed to find any fallback ... for font: (sans-serif ...)", and a
+    // subtitle loaded into mpv (sid=1, timed right) never showed on screen,
+    // while the ones the server burned into the picture did. The app ships
+    // DejaVu Sans with its resources; libass is pointed at that folder and
+    // asked for it by name. (iOS / tvOS have CoreText, the desktops their
+    // own providers.)
+#if defined(__ANDROID__) || defined(__vita__) || defined(__PS4__) || defined(__SWITCH__)
+    {
+        std::string fontDir = RESOURCE_PREFIX "font";
+#if defined(__ANDROID__)
+        // resources/ is relative to the folder the assets were extracted to.
+        char cwd[1024];
+        if (getcwd(cwd, sizeof(cwd))) fontDir = std::string(cwd) + "/" + fontDir;
+#endif
+        mpv_set_option_string(m_mpv, "sub-font-provider", "none");
+        mpv_set_option_string(m_mpv, "sub-fonts-dir", fontDir.c_str());
+        mpv_set_option_string(m_mpv, "osd-fonts-dir", fontDir.c_str());
+        mpv_set_option_string(m_mpv, "sub-font", "DejaVu Sans");
+        mpv_set_option_string(m_mpv, "osd-font", "DejaVu Sans");
+        brls::Logger::info("MpvPlayer: subtitle font from {}", fontDir);
+    }
 #endif
 
     // ========================================
