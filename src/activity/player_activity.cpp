@@ -4374,6 +4374,12 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     // address). The transcode is told subtitles=none instead
                     // (setPlayerShowsSubtitle), so it does not burn it in too.
                     const int serverSub = side ? trackId : 0;
+                    // Off from a sidecar the player shows: hidden here only.
+                    // Telling the server would delete one found online, and
+                    // On then asked for a file that was gone (404 at every
+                    // address, a TV log). It stays selected there, so its
+                    // transcodes still ask for no subtitle.
+                    const bool hideOnly = !side && !m_sideloadedSubUrl.empty();
                     for (auto& ps : m_plexStreams)
                         if (ps.streamType == 3 || ps.streamType == 4)
                             ps.selected = (ps.id == trackId);
@@ -4388,7 +4394,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                         if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
                             loadServerStream(newUrl, offsetMs);
                         }
-                    } else if (partId > 0) {
+                    } else if (partId > 0 && !hideOnly) {
                         asyncRun([partId, serverSub]() {
                             PlexClient::getInstance().setStreamSelection(partId, -1, serverSub);
                         });
@@ -4396,7 +4402,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     if (!side) {
                         m_sideloadedSubUrl.clear();
                         m_sideloadUrls.clear();
-                        PlexClient::getInstance().setPlayerShowsSubtitle(false);
+                        PlexClient::getInstance().setPlayerShowsSubtitle(hideOnly);
                         player.removeExternalSubtitles();
                         player.showOSD("Subtitles off", 1.5);
                     } else {
