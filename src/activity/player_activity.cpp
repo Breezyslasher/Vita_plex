@@ -4296,8 +4296,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
                         brls::Logger::info("selectTrack: Reloading audio at offset={}ms", offsetMs);
                         player.showOSD("Switching: " + displayTitle, 2.0);
-                        m_transcodeBaseOffsetMs = offsetMs;
-                        player.loadUrl(newUrl, "");
+                        loadServerStream(newUrl, offsetMs);
                     }
                 }
             } else {
@@ -4342,8 +4341,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                         client.stopTranscode();
                         std::string newUrl;
                         if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
-                            m_transcodeBaseOffsetMs = offsetMs;
-                            player.loadUrl(newUrl, "");
+                            loadServerStream(newUrl, offsetMs);
                         }
                     } else if (partId > 0) {
                         asyncRun([partId, serverSub]() {
@@ -4393,8 +4391,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
                         brls::Logger::info("selectTrack: Reloading subs off at offset={}ms", offsetMs);
                         player.showOSD("Subtitles off", 2.0);
-                        m_transcodeBaseOffsetMs = offsetMs;
-                        player.loadUrl(newUrl, "");
+                        loadServerStream(newUrl, offsetMs);
                     }
                 }
             } else if (const PlexStream* lyrics = findSideloadableStream(trackId)) {
@@ -4428,8 +4425,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
                         brls::Logger::info("selectTrack: Reloading subs at offset={}ms", offsetMs);
                         player.showOSD("Switching: " + displayTitle, 2.0);
-                        m_transcodeBaseOffsetMs = offsetMs;
-                        player.loadUrl(newUrl, "");
+                        loadServerStream(newUrl, offsetMs);
                     }
                 }
             } else {
@@ -4496,9 +4492,27 @@ bool PlayerActivity::restartTranscodeAtMs(int offsetMs) {
     std::string url;
     if (!client.getTranscodeUrl(m_mediaKey, url, offsetMs)) return false;
     brls::Logger::info("Player: restarting transcode at offset={}ms", offsetMs);
-    m_transcodeBaseOffsetMs = offsetMs;
-    MpvPlayer::getInstance().loadUrl(url, "");
+    loadServerStream(url, offsetMs);
     return true;
+}
+
+// Load what getTranscodeUrl gave for offsetMs. The server answers a transcode
+// or, when it can, the original file, and the two keep time differently: a
+// transcode starts at the offset (positions are relative to it, seeks restart
+// it), the original file is the whole film (positions are absolute, seeks are
+// mpv's own). m_directPlay was set only at the first load, so a reload that
+// came back as the original file was still treated as a transcode: on a TV
+// log, scrubbing restarted the "transcode" nine times in eight seconds, each
+// time the whole file again.
+void PlayerActivity::loadServerStream(const std::string& url, int offsetMs) {
+    m_directPlay = url.find("/transcode/universal/start") == std::string::npos;
+    if (m_directPlay) {
+        m_transcodeBaseOffsetMs = 0;
+        if (offsetMs > 0) m_pendingSeek = offsetMs / 1000.0;
+    } else {
+        m_transcodeBaseOffsetMs = offsetMs;
+    }
+    MpvPlayer::getInstance().loadUrl(url, "");
 }
 
 void PlayerActivity::requestTranscodeSeek(double absMs) {
