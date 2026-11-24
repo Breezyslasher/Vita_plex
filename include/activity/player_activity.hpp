@@ -256,6 +256,7 @@ private:
     brls::Box*   m_subPopup = nullptr;
     brls::Box*   m_subPills[4] = {nullptr, nullptr, nullptr, nullptr};
     brls::Label* m_subPillValues[4] = {nullptr, nullptr, nullptr, nullptr};
+    brls::Image* m_subPillChevrons[4] = {nullptr, nullptr, nullptr, nullptr};
     brls::Label* m_subLangCaption = nullptr;
     int  m_subPopupWhich = -1;
     bool m_subPanelVisible = false;

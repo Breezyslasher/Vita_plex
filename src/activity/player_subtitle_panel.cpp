@@ -128,12 +128,15 @@ void PlayerActivity::showSubtitlePanel() {
             value->setShrink(1.0f);
             pill->addView(value);
 
-            auto* chevron = new brls::Label();
-            chevron->setText("v");
-            chevron->setFontSize(ui(13));
-            chevron->setTextColor(vitaplex::palette::muted);
+            // Up while closed, since the list opens above; down while it is open.
+            auto* chevron = new brls::Image();
+            chevron->setWidth(ui(22));
+            chevron->setHeight(ui(22));
+            chevron->setScalingType(brls::ImageScalingType::FIT);
             chevron->setMarginLeft(ui(8));
+            setIconRes(chevron, "icons/chevron-up.png");
             pill->addView(chevron);
+            m_subPillChevrons[i] = chevron;
 
             pill->registerClickAction([this, i](brls::View*) {
                 openSubtitlePopup(i);
@@ -217,6 +220,8 @@ void PlayerActivity::closeSubtitlePopup() {
     if (!m_subPopup) return;
     const int which = m_subPopupWhich;
     m_subPopupWhich = -1;
+    if (which >= 0 && which < 4 && m_subPillChevrons[which])
+        setIconRes(m_subPillChevrons[which], "icons/chevron-up.png");
     // Off the focused row before the rows go.
     if (which >= 0 && which < 4 && m_subPills[which])
         brls::Application::giveFocus(m_subPills[which]);
@@ -392,6 +397,7 @@ void PlayerActivity::openSubtitlePopup(int which) {
 
     playerContainer->addView(m_subPopup);
     m_subPopupWhich = which;
+    if (m_subPillChevrons[which]) setIconRes(m_subPillChevrons[which], "icons/chevron-down.png");
     if (focusRow) brls::Application::giveFocus(focusRow);
 }
 
