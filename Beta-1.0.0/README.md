@@ -34,6 +34,58 @@
 ---
 <table>
   <tr>
+    <th colspan="2" align="center">Music Queue Mobile</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1 Does not exist</b></td>
+    <td align="center"><b>Beta 1.1.9</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/music_queue_mobile.png" width="400"/></td>
+  </tr>
+</table>
+<table>
+  <tr>
+    <th colspan="2" align="center">Music Lyrics Mobile</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1 Does not exist</b></td>
+    <td align="center"><b>Beta 1.1.9</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/music_lyrics_mobile.png" width="400"/></td>
+  </tr>
+</table>
+<table>
+  <tr>
+    <th colspan="2" align="center">Music UI Mobile</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1 Does not exist</b></td>
+    <td align="center"><b>Beta 1.1.9</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/music_palyer_ui_mobile.png" width="400"/></td>
+  </tr>
+</table>
+<table>
+  <tr>
+    <th colspan="2" align="center">Video Player</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1 </b></td>
+    <td align="center"><b>Beta 1.1.9</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/video_player_ui.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/video_player_ui.png" width="400"/></td>
+  </tr>
+</table>
+<table>
+  <tr>
     <th colspan="2" align="center">Selector Dialog</th>
   </tr>
   <tr>
@@ -477,19 +529,7 @@
 </table>
 
 
-<table>
-  <tr>
-    <th colspan="2" align="center">Video Player</th>
-  </tr>
-  <tr>
-    <td align="center"><b>Beta 0.6.1 </b></td>
-    <td align="center"><b>Beta 1.1.9</b></td>
-  </tr>
-  <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/video_player_ui.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/video_player_ui.png" width="400"/></td>
-  </tr>
-</table>
+
 
 
 
