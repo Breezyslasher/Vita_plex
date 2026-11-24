@@ -11,6 +11,7 @@
  */
 
 #include "view/settings_tab.hpp"
+#include "utils/log_server.hpp"
 #include "view/livetv_actions.hpp"
 #include "utils/app_update.hpp"
 #include "utils/background_audio.hpp"
@@ -971,6 +972,31 @@ brls::Box* SettingsTab::createPlaybackSection() {
                 return true;
             });
             box->addView(sendPrevCell);
+        }
+
+        // For a TV or phone with nothing to share a file to (a Sony Android
+        // 9 TV's share sheet is empty; Apple TV has none): the log is served
+        // on the local network, to open in a browser on another device.
+        if (logserver::available()) {
+            auto* wifiCell = new brls::DetailCell();
+            wifiCell->setText("Send Log over Wi-Fi");
+            wifiCell->setDetailText("Open it in a browser on your phone or computer");
+            wifiCell->registerClickAction([](brls::View*) {
+                const std::string url = logserver::start(15);
+                brls::Dialog* dialog = new brls::Dialog(
+                    url.empty()
+                        ? std::string("Could not start sharing the log: this device has no "
+                                      "network address. Check that it is connected.")
+                        : "On a phone or computer on the same network, open:\n\n" + url +
+                              "\n\nThis run's log and the one before it are there. "
+                              "Sharing stops after 15 minutes.");
+                if (!url.empty())
+                    dialog->addButton("Stop sharing", []() { logserver::stop(); });
+                dialog->addButton("OK", []() {});
+                dialog->open();
+                return true;
+            });
+            box->addView(wifiCell);
         }
     }
 

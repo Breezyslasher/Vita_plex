@@ -492,6 +492,7 @@ set(APP_SOURCES
     src/utils/image_loader.cpp
     src/utils/frame_profiler.cpp
     src/utils/log_file_writer.cpp
+    src/utils/log_server.cpp
     src/utils/jwt_auth.cpp
     src/utils/update_verify.cpp
     src/utils/now_playing.cpp
