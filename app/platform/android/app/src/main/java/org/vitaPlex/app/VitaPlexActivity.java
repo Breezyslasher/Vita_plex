@@ -874,22 +874,30 @@ public class VitaPlexActivity extends SDLActivity
             }
         }
 
-        // OK / select from a remote that is not a gamepad: the touch surface
-        // of Home Assistant's remote card (a tap), a phone remote app, ADB.
-        // Those come from a keyboard-like device, where SDL turns DPAD_CENTER
-        // into SDL_SCANCODE_SELECT, which borealis maps to nothing: the
-        // swipes (arrow keys) moved the focus and the tap did nothing. ENTER
-        // becomes RETURN, which is A. A gamepad's own buttons are left alone.
-        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+        // The D-pad and OK of a remote that has no sticks: Home Assistant's
+        // remote card ('virtual-remote', sources 0x701: keyboard, D-pad and
+        // gamepad, no joystick axes), phone remote apps, ADB. A TV log
+        // (build 2204) had 94 of its arrow and OK presses reach the app and
+        // move nothing ("focus changes: 0") while its Back, which already
+        // takes the keyboard path below, worked: SDL's controller path drops
+        // them. They take the keyboard path too, where SDL makes the arrows
+        // arrow keys (borealis' D-pad) and ENTER makes RETURN (A).
+        // DPAD_CENTER becomes ENTER: as itself SDL makes it SELECT, which
+        // borealis maps to nothing. A controller with sticks is left alone.
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN
+                || keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+                || keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
             InputDevice dev = event.getDevice();
             int sources = dev != null ? dev.getSources() : event.getSource();
-            boolean gamepad = (sources & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD;
-            if (!gamepad) {
+            boolean sticks = (sources & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK;
+            if (!sticks) {
+                int sent = (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                        || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) ? KeyEvent.KEYCODE_ENTER : keyCode;
                 if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                    SDLActivity.onNativeKeyDown(KeyEvent.KEYCODE_ENTER);
+                    SDLActivity.onNativeKeyDown(sent);
                     return true;
                 } else if (event.getAction() == KeyEvent.ACTION_UP) {
-                    SDLActivity.onNativeKeyUp(KeyEvent.KEYCODE_ENTER);
+                    SDLActivity.onNativeKeyUp(sent);
                     return true;
                 }
             }
