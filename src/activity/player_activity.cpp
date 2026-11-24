@@ -5147,6 +5147,13 @@ void PlayerActivity::wireVideoOsd() {
     // The subtitle line stays hidden until it has text, so a film gets a title rather than a title and a blank.
     if (brls::View* v = getView("player/osd_bottom")) v->setVisibility(brls::Visibility::VISIBLE);
     if (brls::View* v = getView("player/subs_pill")) v->setVisibility(brls::Visibility::VISIBLE);
+    // The "Subs" pill is the subtitle control here (it names the track, as
+    // the Audio pill does); the top bar's subtitle icon opened the same
+    // panel, a second button for one thing.
+    if (subBtn) {
+        subBtn->setFocusable(false);
+        subBtn->setVisibility(brls::Visibility::GONE);
+    }
 
     // As the Back button leaves: a video that is to play on does (the
     // on-screen arrow stopped it, where Back did not; build 2118).
