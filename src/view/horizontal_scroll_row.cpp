@@ -125,12 +125,11 @@ void HorizontalScrollRow::scrollToView(brls::View* targetView) {
     float visibleLeft = m_scrollOffset;
     float visibleRight = m_scrollOffset + m_visibleWidth;
 
-    // A card that is (even partly) off the row's edge is brought to the
-    // middle, so a press that leaves the screen shows the cards around it,
-    // rather than nudging the row just far enough to uncover that one card
-    // at the edge each time. setScrollOffset keeps the ends in range.
-    if (viewLeft < visibleLeft || viewRight > visibleRight) {
-        setScrollOffset(viewLeft + targetView->getWidth() / 2.0f - m_visibleWidth / 2.0f);
+    if (viewLeft < visibleLeft) {
+        setScrollOffset(viewLeft);
+    }
+    else if (viewRight > visibleRight) {
+        setScrollOffset(viewRight - m_visibleWidth);
     }
 }
 
