@@ -2946,7 +2946,12 @@ void PlayerActivity::registerIcons() {
     note(audioIcon,       "icons/translate.png");
     note(subtitleIcon,    "icons/subtitles.png");
     note(videoIcon,       "icons/video-image.png");
-    note(pipIcon,         "icons/video-image.png");
+    // player_mobile.xml (the video OSD, and music's mobile layout) has its own
+    // PiP glyph; player.xml reuses the video one. Recording the wrong one put
+    // the old icon back whenever the icons were reloaded (after the app came
+    // back from the background, or lost its GL context).
+    note(pipIcon, (m_mobileLayout || m_videoOsd) ? "icons/picture-in-picture.png"
+                                                 : "icons/video-image.png");
     note(queueIcon,       "icons/format-list-group.png");
     note(lyricsIcon,      "icons/subtitles.png");
 }
