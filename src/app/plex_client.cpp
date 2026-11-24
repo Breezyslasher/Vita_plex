@@ -253,6 +253,11 @@ std::string PlexClient::buildApiUrl(const std::string& endpoint) {
         } else {
             url += "?X-Plex-Token=" + m_authToken;
         }
+    } else if (endpoint.find('?') == std::string::npos) {
+        // No token (a local server that asks for none): still end with a
+        // query, since several callers add "&name=value" to what this returns
+        // ("/all&type=8" was the path that went out without it).
+        url += "?";
     }
 
     return url;
@@ -3948,8 +3953,18 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     queryParams += "path=" + encodedPath;
     queryParams += "&mediaIndex=0&partIndex=0";
 
-    // directPlay/directStream based on settings
-    if (settings.directPlay && !settings.forceTranscode) {
+    // directPlay/directStream based on settings. Once: the Vita and PS4 used
+    // to append a second directPlay=0 for audio after a directPlay=1 here,
+    // and which of two a server reads is not defined (openapi.json: one
+    // integer, 0 or 1).
+#if defined(__vita__) || defined(__PS4__)
+    const bool noDirectPlay = isAudio;   // see the audio branch below
+#else
+    const bool noDirectPlay = false;
+#endif
+    if (noDirectPlay && !settings.forceTranscode) {
+        queryParams += "&directPlay=0&directStream=1";
+    } else if (settings.directPlay && !settings.forceTranscode) {
         queryParams += "&directPlay=1&directStream=1";
     } else if (settings.forceTranscode) {
         queryParams += "&directPlay=0&directStream=0";
@@ -3973,8 +3988,8 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
         // desktop, and the audio profile we send says only "I can take an mp3
         // transcode" — it declares no direct-play capability for the server to
         // judge. Asking for direct play here invites a FLAC or ALAC the port
-        // cannot open, so tell the server not to offer it and take the mp3.
-        queryParams += "&directPlay=0";
+        // cannot open, so the server is told not to offer it and takes the mp3
+        // (noDirectPlay, above).
 #endif
     } else {
         // Video: HLS (HTTP Live Streaming) with TS segments.
@@ -4068,7 +4083,9 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     // Per official API: X-Plex-Client-Identifier is REQUIRED, in=header
     {
         const auto& vc = platform::getVideoConstraints();
-        decisionReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_NAME;
+        // The same identifier as the timeline and play queue calls, so the
+        // server sees one client and not two.
+        decisionReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
         decisionReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
         decisionReq.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
         decisionReq.headers["X-Plex-Platform"] = vc.plexPlatform;
@@ -4114,7 +4131,7 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     std::string startQuery = queryParams;
     {
         const auto& vc = platform::getVideoConstraints();
-        startQuery += "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_NAME);
+        startQuery += "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_ID);
         startQuery += "&X-Plex-Product=" + std::string(PLEX_CLIENT_NAME);
         startQuery += "&X-Plex-Version=" + std::string(PLEX_CLIENT_VERSION);
         startQuery += "&X-Plex-Platform=" + HttpClient::urlEncode(vc.plexPlatform);
@@ -4209,15 +4226,21 @@ bool PlexClient::reportLiveTimeline(const std::string& liveSessionUuid, int play
 
 bool PlexClient::markAsWatched(const std::string& ratingKey) {
     HttpClient client;
-    std::string url = buildApiUrl("/:/scrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");
-    HttpResponse resp = client.get(url);
+    // openapi.json: PUT "Mark an item as played".
+    HttpRequest req;
+    req.url = buildApiUrl("/:/scrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");
+    req.method = "PUT";
+    HttpResponse resp = client.request(req);
     return resp.statusCode == 200;
 }
 
 bool PlexClient::markAsUnwatched(const std::string& ratingKey) {
     HttpClient client;
-    std::string url = buildApiUrl("/:/unscrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");
-    HttpResponse resp = client.get(url);
+    // openapi.json: PUT "Mark an item as unplayed".
+    HttpRequest req;
+    req.url = buildApiUrl("/:/unscrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");
+    req.method = "PUT";
+    HttpResponse resp = client.request(req);
     return resp.statusCode == 200;
 }
 

@@ -2499,7 +2499,6 @@ bool DownloadsManager::reportTimeline(const DownloadItem& item, const std::strin
     url << serverUrl << "/:/timeline"
         << "?ratingKey=" << item.ratingKey
         << "&key=/library/metadata/" << item.ratingKey
-        << "&identifier=com.plexapp.plugins.library"
         << "&time=" << item.viewOffset
         << "&state=" << state
         << "&duration=" << item.duration
@@ -2511,7 +2510,7 @@ bool DownloadsManager::reportTimeline(const DownloadItem& item, const std::strin
     HttpClient http;
     HttpRequest req;
     req.url = url.str();
-    req.method = "GET";
+    req.method = "POST";   // openapi.json: /:/timeline is POST only
     req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
     req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
     req.timeout = 15;

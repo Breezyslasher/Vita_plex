@@ -1218,8 +1218,10 @@ bool writeQueue(std::string& what, std::string& key) {
         server.empty() ? std::string()
                        : server + "/:/scrobble?key={id}&identifier=com.plexapp.plugins.library";
     sq.state.url = timeline.c_str();
+    sq.state.method = "POST";   // openapi.json: /:/timeline is POST, /:/scrobble PUT
     sq.stateEveryS = 10;
     sq.played.url = scrobble.c_str();
+    sq.played.method = "PUT";
     // No remote control (the plugin's control.* lines) yet: Plex's companion
     // protocol is to be tried in VitaPlex itself first.
     if (scWriteQueue(&sq, tracks.data(), (uint32_t)tracks.size()) < 0) return false;

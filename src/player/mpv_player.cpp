@@ -614,7 +614,7 @@ bool MpvPlayer::init() {
     {
         const auto& vc = platform::getVideoConstraints();
         std::string headerFields =
-            std::string("X-Plex-Client-Identifier: ") + PLEX_CLIENT_NAME + "," +
+            std::string("X-Plex-Client-Identifier: ") + PLEX_CLIENT_ID + "," +
             "X-Plex-Product: " + PLEX_CLIENT_NAME + "," +
             "X-Plex-Version: " + PLEX_CLIENT_VERSION + "," +
             "X-Plex-Platform: " + vc.plexPlatform + "," +
