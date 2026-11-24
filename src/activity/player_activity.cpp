@@ -990,6 +990,24 @@ void PlayerActivity::onContentAvailable() {
         routeIfFocusable(videoBtn, brls::FocusDirection::DOWN, videoBtn);
     }
 
+    // The video OSD (phones) has its own top bar above the transport: Up from
+    // the transport reaches it, Down from it comes back to Play / Pause. The
+    // routes above blocked both ways, so the top bar was only reachable by
+    // going round through the pills below.
+    if (m_videoOsd) {
+        brls::View* backBtn = getView("player/back_btn");
+        if (backBtn && backBtn->isFocusable()) {
+            routeIfFocusable(playBtn, brls::FocusDirection::UP, backBtn);
+            routeIfFocusable(rewindBtn, brls::FocusDirection::UP, backBtn);
+            routeIfFocusable(forwardBtn, brls::FocusDirection::UP, backBtn);
+        }
+        if (playBtn && playBtn->isFocusable()) {
+            for (const char* id : {"player/back_btn", "player/speed_btn", "player/sub_btn",
+                                   "player/video_btn", "player/pip_btn"})
+                routeIfFocusable(getView(id), brls::FocusDirection::DOWN, playBtn);
+        }
+    }
+
     // Wire up skip button for intro/credits
     if (skipBtn) {
         skipBtn->registerClickAction([this](brls::View* view) {
@@ -4857,7 +4875,12 @@ void PlayerActivity::applyVideoOsdForViewport() {
         if (!v) return;
         if (w > 0.0f) v->setWidth(w * k);
         if (h > 0.0f) v->setHeight(h * k);
-        if (r > 0.0f) v->setCornerRadius(r * k);
+        if (r > 0.0f) {
+            v->setCornerRadius(r * k);
+            // The focus highlight follows the round shape instead of a square;
+            // half its stroke wider, as it is drawn around the outline.
+            v->setHighlightCornerRadius(r * k + 2.5f);
+        }
     };
     auto font = [&](const char* id, float pt) {
         if (auto* l = dynamic_cast<brls::Label*>(getView(id))) l->setFontSize(pt * k);
