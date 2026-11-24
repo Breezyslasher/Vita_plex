@@ -44,6 +44,11 @@ public:
     void scrollToItemIndex(size_t index, bool animated = true);
     size_t itemCount() const { return m_items.size(); }
 
+    // The next time focus enters the grid (LEFT off the A-Z rail), it lands on
+    // item `index` instead of the cell last focused. Cleared once any cell
+    // gains focus.
+    void setPendingFocusIndex(size_t index) { m_pendingFocusIndex = index; }
+
     // Opt-in: where focus goes when RIGHT is pressed at the grid's right edge
     // (e.g. the A-Z jump rail). Default null = standard navigation; only used
     // when the target is visible.
@@ -51,6 +56,8 @@ public:
 
     // Override to detect when user tries to scroll past the bottom
     brls::View* getNextFocus(brls::FocusDirection direction, brls::View* currentView) override;
+    brls::View* getDefaultFocus() override;
+    void onChildFocusGained(brls::View* directChild, brls::View* focusedView) override;
 
     // Override to visibility-cull off-screen rows. Cover painting itself
     // lives in MediaItemCell::draw() so non-grid containers (the home
@@ -100,6 +107,9 @@ private:
 
     // Opt-in RIGHT-edge focus escape (e.g. the A-Z jump rail). See setter.
     brls::View* m_rightFocusEscape = nullptr;
+
+    static constexpr size_t kNoPendingFocus = (size_t)-1;
+    size_t m_pendingFocusIndex = kNoPendingFocus;
 
     // Lifetime guard for the orientation-change listener — the listener
     // is global and lives forever, but the grid can be destroyed while

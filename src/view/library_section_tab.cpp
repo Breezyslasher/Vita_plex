@@ -1089,6 +1089,8 @@ void LibrarySectionTab::jumpToLetter(char letter) {
     if (found >= m_items.size()) found = m_items.size() - 1;   // letter beyond loaded range
 
     m_contentGrid->scrollToItemIndex(found, true);
+    // LEFT off the rail goes to that item, not the one focused before the jump.
+    m_contentGrid->setPendingFocusIndex(found);
     m_currentAzLetter = target;
     refreshAzRail();
 }

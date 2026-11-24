@@ -149,6 +149,22 @@ void RecyclingGrid::scrollToItemIndex(size_t index, bool animated) {
     setContentOffsetY(target, animated);
 }
 
+brls::View* RecyclingGrid::getDefaultFocus() {
+    if (m_pendingFocusIndex != kNoPendingFocus) {
+        if (m_pendingFocusIndex < m_cells.size() && m_cells[m_pendingFocusIndex]) {
+            brls::View* cell = (brls::View*)m_cells[m_pendingFocusIndex];
+            if (brls::View* f = cell->getDefaultFocus()) return f;
+        }
+        m_pendingFocusIndex = kNoPendingFocus;
+    }
+    return brls::ScrollingFrame::getDefaultFocus();
+}
+
+void RecyclingGrid::onChildFocusGained(brls::View* directChild, brls::View* focusedView) {
+    m_pendingFocusIndex = kNoPendingFocus;
+    brls::ScrollingFrame::onChildFocusGained(directChild, focusedView);
+}
+
 brls::View* RecyclingGrid::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
     brls::View* next = brls::ScrollingFrame::getNextFocus(direction, currentView);
 
@@ -242,6 +258,7 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
 }
 
 void RecyclingGrid::rebuildGrid() {
+    m_pendingFocusIndex = kNoPendingFocus;
     // Crash fix for "open category": setDataSource() runs while one of
     // our cells (the category cell the user just clicked) still owns
     // the focus. The old implementation called m_contentBox->clearViews()
