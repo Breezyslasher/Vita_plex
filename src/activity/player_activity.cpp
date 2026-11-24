@@ -428,6 +428,12 @@ void PlayerActivity::onContentAvailable() {
                     }
                     return;
                 }
+                // The audio list (opened from the OSD, no panel behind it):
+                // a tap outside it closes it.
+                if (m_subPopupWhich >= 0) {
+                    if (!subtitlePanelHit(status.position.x, status.position.y)) closeSubtitlePopup();
+                    return;
+                }
 
                 // Video: a double tap on the left or right third skips back or
                 // forward by the seek interval, as in most phone players. The
@@ -959,7 +965,10 @@ void PlayerActivity::onContentAvailable() {
                 setIconRes(audioIcon, "icons/translate.png");
             }
             audioBtn->registerClickAction([this](brls::View* view) {
-                showTrackOverlay(TrackSelectMode::AUDIO);
+                // Video: a drop-down list over the pill, like the subtitle
+                // panel's. Music keeps its overlay.
+                if (m_videoOsd) showAudioTrackPopup();
+                else            showTrackOverlay(TrackSelectMode::AUDIO);
                 return true;
             });
             audioBtn->addGestureRecognizer(new brls::TapGestureRecognizer(audioBtn));
@@ -2628,7 +2637,8 @@ void PlayerActivity::updateProgress() {
 
     // Auto-hide controls after inactivity
     int autoHide = Application::getInstance().getSettings().controlsAutoHideSeconds;
-    if (autoHide > 0 && m_controlsVisible && !m_isPhoto && !m_subPanelVisible) {
+    if (autoHide > 0 && m_controlsVisible && !m_isPhoto && !m_subPanelVisible &&
+        m_subPopupWhich < 0) {
         m_controlsIdleSeconds++;
         if (m_controlsIdleSeconds >= autoHide) {
             hideControls();
@@ -3256,6 +3266,11 @@ void PlayerActivity::updatePlayPauseLabel() {
 }
 
 void PlayerActivity::cycleAudioTrack() {
+    if (m_videoOsd) {
+        showControls();
+        showAudioTrackPopup();
+        return;
+    }
     showTrackOverlay(TrackSelectMode::AUDIO);
 }
 

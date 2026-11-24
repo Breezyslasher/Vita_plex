@@ -279,6 +279,7 @@ private:
     double m_subUserDelay = 0.0;
     double m_subPreviewDelay = 0.0;
     void applySubtitleDelay();
+    void showAudioTrackPopup();
     // Scale factor for code-built rows shared with the mobile XML; the two mobile designs use different frames (see DESIGN_NOTES).
     float ui(float v) const {
         if (m_mobileLayout) return v * kMobileUiScale;

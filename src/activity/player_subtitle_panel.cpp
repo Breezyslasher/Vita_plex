@@ -35,8 +35,10 @@ namespace {
 
 // SUB_SEARCH is a list with no drop-down of its own: it opens from the
 // language list, or by itself when subtitles are turned on and there are none.
+// SUB_AUDIO is the audio track list, opened from the OSD's Audio pill with
+// no panel behind it.
 enum Which { SUB_ONOFF = 0, SUB_LANGUAGE = 1, SUB_SIZE = 2, SUB_STYLE = 3, SUB_TIMING = 4,
-             SUB_SEARCH = 5 };
+             SUB_SEARCH = 5, SUB_AUDIO = 6 };
 constexpr int kSubControls = 5;
 
 // "In time", "0.5 s later", "1.25 s earlier".
@@ -310,7 +312,9 @@ void PlayerActivity::closeSubtitlePopup() {
     if (which >= 0 && which < kSubControls && m_subPillChevrons[which])
         setIconRes(m_subPillChevrons[which], "icons/chevron-up.png");
     // Off the focused row before the rows go.
-    if (which >= 0 && which < kSubControls && m_subPills[which])
+    if (which == SUB_AUDIO) {
+        if (audioBtn && m_controlsVisible) brls::Application::giveFocus(audioBtn);
+    } else if (which >= 0 && which < kSubControls && m_subPills[which])
         brls::Application::giveFocus(m_subPills[which]);
     else if (brls::View* home = subtitlePanelHome())
         brls::Application::giveFocus(home);   // the search list
@@ -319,10 +323,11 @@ void PlayerActivity::closeSubtitlePopup() {
 }
 
 void PlayerActivity::openSubtitlePopup(int which) {
-    if (which < 0 || which > SUB_SEARCH || !playerContainer) return;
+    if (which < 0 || which > SUB_AUDIO || !playerContainer) return;
     // The search list sits over the language drop-down, or the switch when
-    // that is all that shows.
-    brls::Box* anchor = which == SUB_SEARCH ? dynamic_cast<brls::Box*>(subtitlePanelHome())
+    // that is all that shows; the audio list over the Audio pill.
+    brls::Box* anchor = which == SUB_AUDIO    ? audioBtn
+                      : which == SUB_SEARCH ? dynamic_cast<brls::Box*>(subtitlePanelHome())
                                             : m_subPills[which];
     if (!anchor) return;
     if (m_subPopupWhich == which) {
@@ -405,6 +410,40 @@ void PlayerActivity::openSubtitlePopup(int which) {
                     rows.push_back({name, false, [this, key, name]() { installSearchedSubtitle(key, name); }});
                 }
             }
+            break;
+        }
+        case SUB_AUDIO: {
+            // The server's list (a transcode carries only the chosen track,
+            // so mpv sees one); mpv's when the server gave none.
+            int n = 0;
+            for (const auto& ps : m_plexStreams) {
+                if (ps.streamType != 2) continue;
+                std::string name = ps.displayTitle;
+                if (name.empty()) {
+                    name = !ps.language.empty() ? ps.language : "Track " + std::to_string(n + 1);
+                    if (!ps.codec.empty()) name += " [" + ps.codec + "]";
+                }
+                n++;
+                const int id = ps.id;
+                const bool sel = ps.selected;
+                rows.push_back({name, sel, [this, id, sel]() {
+                                    if (!sel) selectTrack(TrackSelectMode::AUDIO, id);
+                                }});
+            }
+            if (rows.empty()) {
+                for (const auto& t : MpvPlayer::getInstance().getTrackList("audio")) {
+                    std::string name = !t.lang.empty() ? t.lang : "Track " + std::to_string(t.id);
+                    if (!t.title.empty()) name += " - " + t.title;
+                    if (!t.codec.empty()) name += " [" + t.codec + "]";
+                    const int id = t.id;
+                    const bool sel = t.selected;
+                    rows.push_back({name, sel, [this, id, sel]() {
+                                        if (!sel) selectTrack(TrackSelectMode::AUDIO, id);
+                                    }});
+                }
+            }
+            heading = "Audio (" + std::to_string(rows.size()) + ")";
+            if (rows.empty()) rows.push_back({"No other audio tracks", false, nullptr});
             break;
         }
         case SUB_SIZE:
@@ -541,8 +580,14 @@ void PlayerActivity::openSubtitlePopup(int which) {
         item->registerClickAction([this, pick](brls::View*) {
             if (!pick) return true;
             // After this frame: the pick can close the list this row is in.
-            brls::sync([this, pick]() {
+            const int which = m_subPopupWhich;
+            brls::sync([this, pick, which]() {
                 pick();
+                if (which == SUB_AUDIO) {
+                    // selectTrack puts focus on the OSD; the list just closes.
+                    closeSubtitlePopup();
+                    return;
+                }
                 if (!m_subPanelVisible) return;   // it handed over to another screen
                 closeSubtitlePopup();
                 refreshSubtitlePanel();
@@ -691,6 +736,12 @@ void PlayerActivity::installSearchedSubtitle(const std::string& subKey, const st
             if (brls::View* home = subtitlePanelHome()) brls::Application::giveFocus(home);
         });
     });
+}
+
+// The OSD's Audio pill: straight to the list of audio tracks.
+void PlayerActivity::showAudioTrackPopup() {
+    fetchPlexStreams();
+    openSubtitlePopup(SUB_AUDIO);
 }
 
 bool PlayerActivity::subtitlePanelHit(float x, float y) const {
