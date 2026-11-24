@@ -1760,12 +1760,9 @@ int Application::getFont(std::string fontName)
 
 int Application::getDefaultFont()
 {
-#ifdef __SWITCH__
-    static int regular = Application::getFont(FONT_CHINESE_SIMPLIFIED);
-#else
-    static int regular = Application::getFont(FONT_REGULAR);
-#endif
-    return regular;
+    // borealis 0c0988d4: on Switch the Standard shared font is now primary
+    // and carries the fallbacks (CJK, icons), as on the other platforms.
+    return Application::getFont(FONT_REGULAR);
 }
 
 bool Application::XMLViewsRegisterContains(std::string name)
