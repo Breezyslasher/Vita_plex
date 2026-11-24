@@ -858,6 +858,43 @@ public class VitaPlexActivity extends SDLActivity
             return false;
         }
 
+        // Which device sent which key, into the app's log: remotes that are
+        // not the TV's own (Home Assistant's remote card, a phone remote app,
+        // ADB) come from virtual devices with their own sources.
+        // Not letters or digits: what is typed (a password) stays out of the log.
+        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0
+                && !event.isPrintingKey()) {
+            InputDevice dev = event.getDevice();
+            try {
+                NetworkMonitor.nativeLog("key " + KeyEvent.keyCodeToString(keyCode) + " from '"
+                        + (dev != null ? dev.getName() : "none") + "' sources 0x"
+                        + Integer.toHexString(dev != null ? dev.getSources() : event.getSource())
+                        + (dev != null && dev.isVirtual() ? " (virtual)" : ""));
+            } catch (Throwable ignored) {
+            }
+        }
+
+        // OK / select from a remote that is not a gamepad: the touch surface
+        // of Home Assistant's remote card (a tap), a phone remote app, ADB.
+        // Those come from a keyboard-like device, where SDL turns DPAD_CENTER
+        // into SDL_SCANCODE_SELECT, which borealis maps to nothing: the
+        // swipes (arrow keys) moved the focus and the tap did nothing. ENTER
+        // becomes RETURN, which is A. A gamepad's own buttons are left alone.
+        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            InputDevice dev = event.getDevice();
+            int sources = dev != null ? dev.getSources() : event.getSource();
+            boolean gamepad = (sources & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD;
+            if (!gamepad) {
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    SDLActivity.onNativeKeyDown(KeyEvent.KEYCODE_ENTER);
+                    return true;
+                } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                    SDLActivity.onNativeKeyUp(KeyEvent.KEYCODE_ENTER);
+                    return true;
+                }
+            }
+        }
+
         // KEYCODE_BACK and DPAD_CENTER must always go through the keyboard
         // path regardless of input source. Without this, DPAD-source remotes
         // route them through SDL's joystick handler where BACK becomes
