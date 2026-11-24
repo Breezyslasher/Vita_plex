@@ -98,9 +98,11 @@ void PlayerActivity::showSubtitlePanel() {
         for (int i = 0; i < 4; i++) {
             auto* col = new brls::Box(brls::Axis::COLUMN);
             col->setMarginRight(i < 3 ? ui(22) : 0);
-            col->setGrow(i == SUB_LANGUAGE ? 1.4f : 1.0f);
+            // Fixed widths, as on a TV: a lone On / Off (subtitles off) must
+            // not stretch across the screen.
+            static const float kColWidth[4] = {150, 280, 170, 170};
+            col->setWidth(ui(kColWidth[i]));
             col->setShrink(1.0f);
-            col->setWidth(ui(10));   // a base; grow shares the row out
 
             auto* cap = new brls::Label();
             cap->setText(captions[i]);
@@ -137,9 +139,11 @@ void PlayerActivity::showSubtitlePanel() {
             setIconRes(chevron, "icons/chevron-up.png");
             pill->addView(chevron);
             m_subPillChevrons[i] = chevron;
+            if (i == SUB_ONOFF) chevron->setVisibility(brls::Visibility::GONE);   // a switch
 
             pill->registerClickAction([this, i](brls::View*) {
-                openSubtitlePopup(i);
+                if (i == SUB_ONOFF) toggleSubtitlesFromPanel();   // a switch, no list
+                else                openSubtitlePopup(i);
                 return true;
             });
             pill->addGestureRecognizer(new brls::TapGestureRecognizer(pill));
@@ -203,6 +207,34 @@ brls::View* PlayerActivity::subtitlePanelHome() {
         lang->getParent()->getVisibility() == brls::Visibility::VISIBLE)
         return lang;
     return m_subPills[SUB_ONOFF];
+}
+
+// The On / Off switch: off, or back on to the track last shown (the first
+// when there was none).
+void PlayerActivity::toggleSubtitlesFromPanel() {
+    const auto choices = subtitleChoices(m_plexStreams);
+    bool anyOn = false;
+    for (const auto& c : choices) anyOn = anyOn || c.selected;
+    if (anyOn) {
+        brls::Logger::info("Subtitle panel: off");
+        selectTrack(TrackSelectMode::SUBTITLE, -1);
+    } else if (choices.empty()) {
+        brls::Logger::info("Subtitle panel: on asked, but this video has no subtitles");
+        MpvPlayer::getInstance().showOSD("This video has no subtitles", 2.0);
+    } else {
+        int target = m_lastSubtitleStreamId;
+        bool known = false;
+        for (const auto& c : choices) known = known || c.id == target;
+        if (!known) target = choices.front().id;
+        brls::Logger::info("Subtitle panel: on, track {}", target);
+        selectTrack(TrackSelectMode::SUBTITLE, target);
+    }
+    // selectTrack moves focus to the OSD's buttons; the panel is still up.
+    brls::sync([this]() {
+        if (!m_subPanelVisible) return;
+        refreshSubtitlePanel();
+        if (brls::View* home = subtitlePanelHome()) brls::Application::giveFocus(home);
+    });
 }
 
 void PlayerActivity::hideSubtitlePanel(bool restoreControls) {
@@ -317,7 +349,8 @@ void PlayerActivity::openSubtitlePopup(int which) {
 
     m_subPopup = new brls::Box(brls::Axis::COLUMN);
     m_subPopup->setPositionType(brls::PositionType::ABSOLUTE);
-    m_subPopup->setPositionLeft(std::min(left, playerContainer->getWidth() - width - ui(16)));
+    const float popupLeft = std::max(0.0f, std::min(left, playerContainer->getWidth() - width - ui(16)));
+    m_subPopup->setPositionLeft(popupLeft);
     m_subPopup->setPositionBottom(containerH - pillTop + ui(10));
     m_subPopup->setWidth(width);
     m_subPopup->setCornerRadius(ui(14));
@@ -397,6 +430,10 @@ void PlayerActivity::openSubtitlePopup(int which) {
 
     playerContainer->addView(m_subPopup);
     m_subPopupWhich = which;
+    brls::Logger::info("Subtitle panel: list {} open, {} rows, at left {} bottom {} ({}x{} over {}x{})",
+                       which, rows.size(), popupLeft,
+                       containerH - pillTop + ui(10), width, listH,
+                       playerContainer->getWidth(), containerH);
     if (m_subPillChevrons[which]) setIconRes(m_subPillChevrons[which], "icons/chevron-down.png");
     if (focusRow) brls::Application::giveFocus(focusRow);
 }

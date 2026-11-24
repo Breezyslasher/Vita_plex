@@ -250,6 +250,7 @@ private:
     void refreshSubtitlePanel();
     void openSubtitlePopup(int which);
     void closeSubtitlePopup();
+    void toggleSubtitlesFromPanel();
     bool subtitlePanelHit(float x, float y) const;   // a tap inside it
     brls::View* subtitlePanelHome();                  // where focus rests in it
     brls::Box*   m_subPanel = nullptr;
