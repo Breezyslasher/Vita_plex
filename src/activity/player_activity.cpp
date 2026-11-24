@@ -309,25 +309,12 @@ bool PlayerActivity::useMobileLayout() const {
     return platform::isPhoneScreen();
 }
 
-// The landscape OSD over video. Separate from useMobileLayout(): wanting one design says nothing about the other.
+// The landscape OSD over video: the only video player, on every platform (the
+// classic video controls and their setting are gone). Music keeps its own
+// choice of layouts, below and in useMobileLayout().
 bool PlayerActivity::useVideoOsd() const {
-    // Music picks its own mobile layout above; everything else reaching this player is video.
-    if (m_isQueueMode && MusicQueue::getInstance().isMusicQueue()) return false;
-
-    switch (Application::getInstance().getSettings().videoPlayerLayout) {
-        case 1: return false;   // Classic, everywhere
-        case 2: return true;    // Mobile, everywhere -- including handheld and TV
-        default: break;         // Auto
-    }
-#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IOS)
-    const float vw = platform::viewportWidth();
-    const float vh = platform::viewportHeight();
-    if (vw <= 0.0f || vh <= 0.0f) return false;   // unknown: leave it classic
-    // Short edge, not orientation: a phone suits touch controls either way, a tablet has room for the classic ones.
-    return std::min(vw, vh) < 600.0f;
-#else
-    return false;   // PSV / PS4 / Switch / desktop keep the classic controls
-#endif
+    // Music picks its own layout; everything else reaching this player is video.
+    return !(m_isQueueMode && MusicQueue::getInstance().isMusicQueue());
 }
 
 // Photos and music keep controls up, but m_isQueueMode also covers single videos, which get an OSD.
