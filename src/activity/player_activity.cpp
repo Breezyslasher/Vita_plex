@@ -2214,11 +2214,7 @@ void PlayerActivity::updateProgress() {
                     brls::Logger::info("PlayerActivity: adding the selected sidecar subtitle {}",
                                        ps.displayTitle);
                     // Into mpv by the check below: already selected on the server.
-                    std::string url = PlexClient::getInstance().getServerUrl() + ps.key;
-                    const std::string& token = PlexClient::getInstance().getAuthToken();
-                    if (!token.empty())
-                        url += (url.find('?') == std::string::npos ? "?" : "&") +
-                               std::string("X-Plex-Token=") + token;
+                    std::string url = sidecarSubtitleUrl(ps);
                     m_sideloadedSubUrl = url;
                     m_sideloadTriedMs = 0;
                     break;
@@ -4353,11 +4349,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                         player.removeExternalSubtitles();
                         player.showOSD("Subtitles off", 1.5);
                     } else {
-                        std::string url = PlexClient::getInstance().getServerUrl() + side->key;
-                        const std::string& token = PlexClient::getInstance().getAuthToken();
-                        if (!token.empty())
-                            url += (url.find('?') == std::string::npos ? "?" : "&") +
-                                   std::string("X-Plex-Token=") + token;
+                        std::string url = sidecarSubtitleUrl(*side);
                         m_sideloadedSubUrl = url;
                         m_sideloadTriedMs = 0;   // updateProgress adds it (again after a reload)
                         if (!burnedIn) {
@@ -4494,6 +4486,22 @@ bool PlayerActivity::restartTranscodeAtMs(int offsetMs) {
     brls::Logger::info("Player: restarting transcode at offset={}ms", offsetMs);
     loadServerStream(url, offsetMs);
     return true;
+}
+
+// A sidecar subtitle's file: GET /library/streams/{streamId}.{ext}, where
+// openapi.json makes the extension part of the path (it is what picks the
+// file for idx/sub pairs); fetchLyrics fetches the same way. The bare key
+// the metadata gives has none.
+std::string PlayerActivity::sidecarSubtitleUrl(const PlexStream& ps) const {
+    std::string path = ps.key;
+    const size_t slash = path.find_last_of('/');
+    const bool hasExt = path.find('.', slash == std::string::npos ? 0 : slash) != std::string::npos;
+    if (!hasExt && !ps.codec.empty() && path.find('?') == std::string::npos) path += "." + ps.codec;
+    std::string url = PlexClient::getInstance().getServerUrl() + path;
+    const std::string& token = PlexClient::getInstance().getAuthToken();
+    if (!token.empty())
+        url += (url.find('?') == std::string::npos ? "?" : "&") + std::string("X-Plex-Token=") + token;
+    return url;
 }
 
 // Load what getTranscodeUrl gave for offsetMs. The server answers a transcode

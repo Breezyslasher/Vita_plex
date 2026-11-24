@@ -533,7 +533,8 @@ private:
     std::string m_sideloadedSubUrl;   // a sidecar subtitle mpv shows by sub-add, kept across reloads
     int64_t m_sideloadTriedMs = 0;     // when it was last added
     bool m_sidecarCheck = false;
-    void loadServerStream(const std::string& url, int offsetMs);   // a transcode or the file, from getTranscodeUrl   // direct play: add the server's selected sidecar subtitle once playing
+    void loadServerStream(const std::string& url, int offsetMs);
+    std::string sidecarSubtitleUrl(const PlexStream& ps) const;   // its file, token and all   // a transcode or the file, from getTranscodeUrl   // direct play: add the server's selected sidecar subtitle once playing
     int m_selectedTrackIndex = 0;  // Index of selected item in track list for focus
 
     void showTrackOverlay(TrackSelectMode mode);
