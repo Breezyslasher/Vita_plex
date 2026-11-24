@@ -175,6 +175,7 @@ void PlayerActivity::showSubtitlePanel() {
     refreshSubtitlePanel();
     hideControls();
     m_subPanelVisible = true;
+    updateSubtitlePosition();
     m_subPanel->setVisibility(brls::Visibility::VISIBLE);
     brls::Application::giveFocus(subtitlePanelHome());
 }
@@ -257,6 +258,7 @@ void PlayerActivity::hideSubtitlePanel(bool restoreControls) {
     closeSubtitlePopup();
     if (!m_subPanel || !m_subPanelVisible) return;
     m_subPanelVisible = false;
+    updateSubtitlePosition();
     m_subPanel->setVisibility(brls::Visibility::GONE);
     if (!restoreControls) return;
     showControls();

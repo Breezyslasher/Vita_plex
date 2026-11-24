@@ -113,7 +113,7 @@ static const SectionMeta kSections[] = {
     /* SEC_ACCOUNT     */ { "Account",         "account.png",
                             "Sign-in, switch user, and auto-login." },
     /* SEC_INTERFACE   */ { "Interface",       "theme-light-dark.png",
-                            "Logging, diagnostics, and hidden libraries." },
+                            "Player layout and hidden libraries." },
     /* SEC_CONTENT     */ { "Content Display", "show.png",
                             "What appears in grids and library hubs." },
     /* SEC_PLAYBACK    */ { "Playback",        "play.png",
@@ -130,6 +130,8 @@ static const SectionMeta kSections[] = {
                             "Background playback and default track action." },
     /* SEC_LIVETV      */ { "Live TV & DVR",   "television-guide.png",
                             "Channel guide window and recording defaults." },
+    /* SEC_LOGS        */ { "Logs",            "history.png",
+                            "Debug logging, view or send the log, diagnostics." },
     /* SEC_ABOUT       */ { "About",           "information.png",
                             "" /* unused — rail uses the version string */ },
 };
@@ -296,6 +298,7 @@ SettingsTab::SettingsTab() {
     m_sectionBoxes[SEC_DOWNLOADS]   = createDownloadsSection();
     m_sectionBoxes[SEC_MUSIC]       = createMusicSection();
     m_sectionBoxes[SEC_LIVETV]      = createLiveTVSection();
+    m_sectionBoxes[SEC_LOGS]        = createLogsSection();
 
     // Stage every section's box but do NOT add any of them to the
     // detail content yet — showSection() adds exactly one at a time.
@@ -680,28 +683,6 @@ brls::Box* SettingsTab::createUISection() {
     playerLayoutInfo->setMarginTop(8);
     box->addView(playerLayoutInfo);
 
-    // Debug logging toggle
-    m_debugLogToggle = new brls::BooleanCell();
-    m_debugLogToggle->init("Debug Logging", settings.debugLogging, [&settings](bool value) {
-        settings.debugLogging = value;
-        Application::getInstance().applyLogLevel();
-        Application::getInstance().saveSettings();
-    });
-    box->addView(m_debugLogToggle);
-
-    // MPV stats overlay toggle — surfaces codec, hwdec, FPS, frame
-    // drops, and cache state on top of the video so playback issues
-    // can be diagnosed without an adb cable. Lives in Interface
-    // alongside "Debug Logging" — both are developer-focused toggles.
-    // See PlayerActivity::updateMpvStatsOverlay().
-    auto* mpvStatsToggle = new brls::BooleanCell();
-    mpvStatsToggle->init("MPV Stats Overlay", settings.showMpvStats,
-                         [&settings](bool value) {
-        settings.showMpvStats = value;
-        Application::getInstance().saveSettings();
-    });
-    box->addView(mpvStatsToggle);
-
     // Manage hidden libraries (+ Live TV / Downloads). Hidden items are kept out
     // of the sidebar and the sidebar reorder editor; this is the one place to
     // toggle them.
@@ -732,6 +713,131 @@ brls::Box* SettingsTab::createUISection() {
         return true;
     });
     box->addView(m_hiddenLibrariesCell);
+
+    return box;
+}
+
+// Logs and diagnostics, on their own page: the debug log switch, the log
+// itself (read here, shared, or served over Wi-Fi for a TV), the mpv stats
+// overlay and the local playback test.
+brls::Box* SettingsTab::createLogsSection() {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+    brls::Box* box = makeSectionBox();
+
+    // Debug logging toggle
+    m_debugLogToggle = new brls::BooleanCell();
+    m_debugLogToggle->init("Debug Logging", settings.debugLogging, [&settings](bool value) {
+        settings.debugLogging = value;
+        Application::getInstance().applyLogLevel();
+        Application::getInstance().saveSettings();
+    });
+    box->addView(m_debugLogToggle);
+
+    // MPV stats overlay toggle — surfaces codec, hwdec, FPS, frame
+    // drops, and cache state on top of the video so playback issues
+    // can be diagnosed without an adb cable. Lives in Interface
+    // alongside "Debug Logging" — both are developer-focused toggles.
+    // See PlayerActivity::updateMpvStatsOverlay().
+    auto* mpvStatsToggle = new brls::BooleanCell();
+    mpvStatsToggle->init("MPV Stats Overlay", settings.showMpvStats,
+                         [&settings](bool value) {
+        settings.showMpvStats = value;
+        Application::getInstance().saveSettings();
+    });
+    box->addView(mpvStatsToggle);
+
+    // Local playback smoke test — opens the player on a known-good
+    // file under ux0:data/VitaPlex/. Was previously under the
+    // (now-removed) Debug section.
+    auto* testLocalCell = new brls::DetailCell();
+    testLocalCell->setText("Test Local Playback");
+    // Show the platform's actual data dir so the user knows where to
+    // drop the test file. platformPath("") yields "<root>/" — strip
+    // the trailing slash for a clean display string.
+    {
+        std::string dataDir = platformPath("");
+        if (!dataDir.empty() && dataDir.back() == '/') dataDir.pop_back();
+        testLocalCell->setDetailText("Place test.mp4 or test.mp3 in " + dataDir);
+    }
+    testLocalCell->registerClickAction([this](brls::View*) {
+        onTestLocalPlayback();
+        return true;
+    });
+    box->addView(testLocalCell);
+
+    // Reading the log on the device itself. Only offered where a log file
+    // exists: Linux and macOS log to stdout, where a terminal or the journal
+    // already has it, and getLogPath() is empty there.
+    if (!platform::getLogPath().empty()) {
+        auto* logCell = new brls::DetailCell();
+        logCell->setText("View Log");
+        logCell->setDetailText(platform::getLogPath());
+        logCell->registerClickAction([this](brls::View*) {
+            onShowLog();
+            return true;
+        });
+        box->addView(logCell);
+
+        // The run before this one. A bug whose workaround is restarting the
+        // app is reported *after* the restart, by which point the log holding
+        // it is the previous one.
+        auto* prevLogCell = new brls::DetailCell();
+        prevLogCell->setText("View Previous Log");
+        prevLogCell->setDetailText("The run before this one");
+        prevLogCell->registerClickAction([this](brls::View*) {
+            onShowLog(platform::previousLogPath());
+            return true;
+        });
+        box->addView(prevLogCell);
+
+        // Android only: the log is in app-private storage, so reading it here
+        // is the only way to see it and this is the only way to send it.
+        if (platform::canShareLogFile()) {
+            auto* sendCell = new brls::DetailCell();
+            sendCell->setText("Send Log");
+            sendCell->setDetailText("Share this run's log");
+            sendCell->registerClickAction([](brls::View*) {
+                platform::shareLogFile(platform::getLogPath());
+                return true;
+            });
+            box->addView(sendCell);
+
+            auto* sendPrevCell = new brls::DetailCell();
+            sendPrevCell->setText("Send Previous Log");
+            sendPrevCell->setDetailText("Share the run before this one");
+            sendPrevCell->registerClickAction([](brls::View*) {
+                platform::shareLogFile(platform::previousLogPath());
+                return true;
+            });
+            box->addView(sendPrevCell);
+        }
+
+        // For a TV or phone with nothing to share a file to (a Sony Android
+        // 9 TV's share sheet is empty; Apple TV has none): the log is served
+        // on the local network, to open in a browser on another device.
+        if (logserver::available()) {
+            auto* wifiCell = new brls::DetailCell();
+            wifiCell->setText("Send Log over Wi-Fi");
+            wifiCell->setDetailText("Open it in a browser on your phone or computer");
+            wifiCell->registerClickAction([](brls::View*) {
+                const std::string url = logserver::start(15);
+                brls::Dialog* dialog = new brls::Dialog(
+                    url.empty()
+                        ? std::string("Could not start sharing the log: this device has no "
+                                      "network address. Check that it is connected.")
+                        : "On a phone or computer on the same network, open:\n\n" + url +
+                              "\n\nThis run's log and the one before it are there. "
+                              "Sharing stops after 15 minutes.");
+                if (!url.empty())
+                    dialog->addButton("Stop sharing", []() { logserver::stop(); });
+                dialog->addButton("OK", []() {});
+                dialog->open();
+                return true;
+            });
+            box->addView(wifiCell);
+        }
+    }
 
     return box;
 }
@@ -908,97 +1014,6 @@ brls::Box* SettingsTab::createPlaybackSection() {
     skipInfoLabel->setMarginTop(8);
     box->addView(skipInfoLabel);
 
-    // Local playback smoke test — opens the player on a known-good
-    // file under ux0:data/VitaPlex/. Was previously under the
-    // (now-removed) Debug section.
-    auto* testLocalCell = new brls::DetailCell();
-    testLocalCell->setText("Test Local Playback");
-    // Show the platform's actual data dir so the user knows where to
-    // drop the test file. platformPath("") yields "<root>/" — strip
-    // the trailing slash for a clean display string.
-    {
-        std::string dataDir = platformPath("");
-        if (!dataDir.empty() && dataDir.back() == '/') dataDir.pop_back();
-        testLocalCell->setDetailText("Place test.mp4 or test.mp3 in " + dataDir);
-    }
-    testLocalCell->registerClickAction([this](brls::View*) {
-        onTestLocalPlayback();
-        return true;
-    });
-    box->addView(testLocalCell);
-
-    // Reading the log on the device itself. Only offered where a log file
-    // exists: Linux and macOS log to stdout, where a terminal or the journal
-    // already has it, and getLogPath() is empty there.
-    if (!platform::getLogPath().empty()) {
-        auto* logCell = new brls::DetailCell();
-        logCell->setText("View Log");
-        logCell->setDetailText(platform::getLogPath());
-        logCell->registerClickAction([this](brls::View*) {
-            onShowLog();
-            return true;
-        });
-        box->addView(logCell);
-
-        // The run before this one. A bug whose workaround is restarting the
-        // app is reported *after* the restart, by which point the log holding
-        // it is the previous one.
-        auto* prevLogCell = new brls::DetailCell();
-        prevLogCell->setText("View Previous Log");
-        prevLogCell->setDetailText("The run before this one");
-        prevLogCell->registerClickAction([this](brls::View*) {
-            onShowLog(platform::previousLogPath());
-            return true;
-        });
-        box->addView(prevLogCell);
-
-        // Android only: the log is in app-private storage, so reading it here
-        // is the only way to see it and this is the only way to send it.
-        if (platform::canShareLogFile()) {
-            auto* sendCell = new brls::DetailCell();
-            sendCell->setText("Send Log");
-            sendCell->setDetailText("Share this run's log");
-            sendCell->registerClickAction([](brls::View*) {
-                platform::shareLogFile(platform::getLogPath());
-                return true;
-            });
-            box->addView(sendCell);
-
-            auto* sendPrevCell = new brls::DetailCell();
-            sendPrevCell->setText("Send Previous Log");
-            sendPrevCell->setDetailText("Share the run before this one");
-            sendPrevCell->registerClickAction([](brls::View*) {
-                platform::shareLogFile(platform::previousLogPath());
-                return true;
-            });
-            box->addView(sendPrevCell);
-        }
-
-        // For a TV or phone with nothing to share a file to (a Sony Android
-        // 9 TV's share sheet is empty; Apple TV has none): the log is served
-        // on the local network, to open in a browser on another device.
-        if (logserver::available()) {
-            auto* wifiCell = new brls::DetailCell();
-            wifiCell->setText("Send Log over Wi-Fi");
-            wifiCell->setDetailText("Open it in a browser on your phone or computer");
-            wifiCell->registerClickAction([](brls::View*) {
-                const std::string url = logserver::start(15);
-                brls::Dialog* dialog = new brls::Dialog(
-                    url.empty()
-                        ? std::string("Could not start sharing the log: this device has no "
-                                      "network address. Check that it is connected.")
-                        : "On a phone or computer on the same network, open:\n\n" + url +
-                              "\n\nThis run's log and the one before it are there. "
-                              "Sharing stops after 15 minutes.");
-                if (!url.empty())
-                    dialog->addButton("Stop sharing", []() { logserver::stop(); });
-                dialog->addButton("OK", []() {});
-                dialog->open();
-                return true;
-            });
-            box->addView(wifiCell);
-        }
-    }
 
     return box;
 }

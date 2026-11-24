@@ -2205,6 +2205,8 @@ void PlayerActivity::updateProgress() {
     // spec's form, on subtitles found online. Each try takes the next one;
     // the one that worked is tried first after a reload. After three rounds
     // with none showing, the player says so and stops asking.
+    updateSubtitlePosition();   // once mpv exists (the first calls come before)
+
     // A transcode starts its clock at the offset it was asked for
     // (m_transcodeBaseOffsetMs), but a sidecar file is timed from the start
     // of the film: without this, 1:28 into Iron Man the player looked for
@@ -4592,6 +4594,10 @@ std::vector<std::string> PlayerActivity::sidecarSubtitleUrls(const PlexStream& p
 
 // Show this sidecar through mpv from now on (updateProgress adds it).
 void PlayerActivity::setSideloadedSubtitle(const PlexStream& ps) {
+    // Another one may be showing (a second subtitle found while the first
+    // is up): off first, or the check below sees a subtitle showing and never
+    // adds this one (a TV log: the second found subtitle never appeared).
+    MpvPlayer::getInstance().removeExternalSubtitles();
     m_sideloadUrls = sidecarSubtitleUrls(ps);
     PlexClient::getInstance().setPlayerShowsSubtitle(true);
     m_sideloadedSubUrl = m_sideloadUrls.front();
@@ -6837,8 +6843,20 @@ void PlayerActivity::setVideoOsdChromeVisible(bool visible) {
     setSubtreeClickAvailable(getView("player/osd_top"), visible);
 }
 
+// Over a video the OSD's bottom bar and scrim cover the bottom of the
+// picture, where subtitles sit: raised above them while it is up, or while
+// the subtitle panel is, and back to the bottom when they go.
+void PlayerActivity::updateSubtitlePosition() {
+    if (!m_videoOsd || !MpvPlayer::getInstance().isInitialized()) return;
+    const int pos = (m_controlsVisible || m_subPanelVisible) ? 72 : 100;
+    if (pos == m_subtitlePos) return;
+    m_subtitlePos = pos;
+    MpvPlayer::getInstance().setSubtitlePosition(pos);
+}
+
 void PlayerActivity::showControls() {
     m_controlsVisible = true;
+    updateSubtitlePosition();
     resetControlsIdleTimer();
     setSubtreeClickAvailable(controlsBox, true);
     setSubtreeClickAvailable(centerControls, true);
@@ -6867,6 +6885,7 @@ void PlayerActivity::hideControls() {
     if (!controlsCanHide()) return;
 
     m_controlsVisible = false;
+    updateSubtitlePosition();
     if (controlsBox) {
         controlsBox->setAlpha(0.0f);
         controlsBox->setVisibility(brls::Visibility::GONE);

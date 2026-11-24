@@ -1357,6 +1357,12 @@ void MpvPlayer::setSubtitleDelay(double seconds) {
     mpv_set_property_async(m_mpv, 0, "sub-delay", MPV_FORMAT_DOUBLE, &seconds);
 }
 
+void MpvPlayer::setSubtitlePosition(int percent) {
+    if (!m_mpv || m_stopping) return;
+    int64_t pos = percent;
+    mpv_set_property_async(m_mpv, 0, "sub-pos", MPV_FORMAT_INT64, &pos);
+}
+
 void MpvPlayer::setAudioDelay(double seconds) {
     if (!m_mpv || m_stopping) return;
 

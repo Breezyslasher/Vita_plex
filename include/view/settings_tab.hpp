@@ -51,6 +51,7 @@ private:
         SEC_DOWNLOADS,
         SEC_MUSIC,
         SEC_LIVETV,
+        SEC_LOGS,
         SEC_ABOUT,
         SEC_COUNT
     };
@@ -69,6 +70,7 @@ private:
     brls::Box* createDownloadsSection();
     brls::Box* createMusicSection();
     brls::Box* createLiveTVSection();
+    brls::Box* createLogsSection();
 
     // Master/detail plumbing — see settings_tab.cpp for the layout.
     brls::Box*           makeSectionBox();

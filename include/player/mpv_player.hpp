@@ -155,6 +155,8 @@ public:
     void cycleAudio();
     void toggleSubtitles();
     void setSubtitleDelay(double seconds);
+    // Where subtitles sit, in percent of the picture's height (100 = the bottom).
+    void setSubtitlePosition(int percent);
     // Re-reads the Subtitle Size setting. mpv lives for the session once the
     // first playback starts it, so a change has to reach it here.
     void applySubtitleSize();
