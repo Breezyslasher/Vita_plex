@@ -1127,6 +1127,22 @@ jobs:
         # builds, missing the build number on dev builds), the same divergence
         # the Android build had. Stamp the resolved version so they match.
         run: echo "${{ needs.resolve-version.outputs.version }}" > VERSION
+      - name: Copy the image's Flatpak installation onto the container's own layer
+        # flatpak-builder (--install-deps-from=flathub) updates the runtime the
+        # image ships whenever Flathub has a newer commit, and the update
+        # failed: "Failed to update org.freedesktop.Sdk: Invalid cross-device
+        # link", then a segfault. Deploying an update renames directories in
+        # /var/lib/flatpak, and on Docker's overlay filesystem renaming a
+        # directory that comes from the image's (lower) layer returns EXDEV.
+        # A copy made in the container is wholly in its own (upper) layer,
+        # where renames work.
+        run: |
+          if [ -d /var/lib/flatpak ]; then
+            cp -a /var/lib/flatpak /var/lib/flatpak.copy
+            rm -rf /var/lib/flatpak
+            mv /var/lib/flatpak.copy /var/lib/flatpak
+            du -sh /var/lib/flatpak
+          fi
       - name: Build Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
