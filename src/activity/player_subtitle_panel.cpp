@@ -16,6 +16,8 @@
 #include "app/application.hpp"
 #include "player/mpv_player.hpp"
 #include "app/plex_palette.hpp"
+#include "app/plex_client.hpp"
+#include "utils/async.hpp"
 
 #include <borealis.hpp>
 
@@ -27,7 +29,8 @@ namespace vitaplex {
 
 namespace {
 
-enum Which { SUB_ONOFF = 0, SUB_LANGUAGE = 1, SUB_SIZE = 2, SUB_STYLE = 3 };
+enum Which { SUB_ONOFF = 0, SUB_LANGUAGE = 1, SUB_SIZE = 2, SUB_STYLE = 3, SUB_SEARCH = 4 };
+constexpr int kSubControls = 5;
 
 const char* kSizeNames[]  = {"Small", "Medium", "Large"};
 const char* kStyleNames[] = {"Default", "Dark box", "Yellow", "Outline"};
@@ -94,13 +97,13 @@ void PlayerActivity::showSubtitlePanel() {
 
         auto* row = new brls::Box(brls::Axis::ROW);
         row->setAlignItems(brls::AlignItems::FLEX_END);
-        const char* captions[4] = {"Subtitles", "Language", "Size", "Style"};
-        for (int i = 0; i < 4; i++) {
+        const char* captions[kSubControls] = {"Subtitles", "Language", "Size", "Style", "Search"};
+        for (int i = 0; i < kSubControls; i++) {
             auto* col = new brls::Box(brls::Axis::COLUMN);
-            col->setMarginRight(i < 3 ? ui(22) : 0);
+            col->setMarginRight(i < kSubControls - 1 ? ui(22) : 0);
             // Fixed widths, as on a TV: a lone On / Off (subtitles off) must
             // not stretch across the screen.
-            static const float kColWidth[4] = {150, 280, 170, 170};
+            static const float kColWidth[kSubControls] = {150, 280, 170, 170, 190};
             col->setWidth(ui(kColWidth[i]));
             col->setShrink(1.0f);
 
@@ -189,6 +192,12 @@ void PlayerActivity::refreshSubtitlePanel() {
         on ? current : (choices.empty() ? "None available" : "Off"));
     m_subPillValues[SUB_SIZE]->setText(kSizeNames[std::clamp((int)s.subtitleSize, 0, 2)]);
     m_subPillValues[SUB_STYLE]->setText(kStyleNames[std::clamp(s.subtitleStyle, 0, 3)]);
+    if (m_subSearchLang.empty()) m_subSearchLang = s.defaultSubtitleLanguage.empty() ? "en" : s.defaultSubtitleLanguage;
+    m_subPillValues[SUB_SEARCH]->setText("Online (" + m_subSearchLang + ")");
+    // Searching needs the item on the server; a direct file or stream has none.
+    if (m_subPills[SUB_SEARCH] && m_subPills[SUB_SEARCH]->getParent())
+        m_subPills[SUB_SEARCH]->getParent()->setVisibility(
+            m_mediaKey.empty() ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
     if (m_subLangCaption)
         m_subLangCaption->setText("Language (" + std::to_string(choices.size()) + ")");
 
@@ -252,17 +261,17 @@ void PlayerActivity::closeSubtitlePopup() {
     if (!m_subPopup) return;
     const int which = m_subPopupWhich;
     m_subPopupWhich = -1;
-    if (which >= 0 && which < 4 && m_subPillChevrons[which])
+    if (which >= 0 && which < kSubControls && m_subPillChevrons[which])
         setIconRes(m_subPillChevrons[which], "icons/chevron-up.png");
     // Off the focused row before the rows go.
-    if (which >= 0 && which < 4 && m_subPills[which])
+    if (which >= 0 && which < kSubControls && m_subPills[which])
         brls::Application::giveFocus(m_subPills[which]);
     if (playerContainer) playerContainer->removeView(m_subPopup, true);
     m_subPopup = nullptr;
 }
 
 void PlayerActivity::openSubtitlePopup(int which) {
-    if (which < 0 || which > 3 || !m_subPills[which] || !playerContainer) return;
+    if (which < 0 || which >= kSubControls || !m_subPills[which] || !playerContainer) return;
     if (m_subPopupWhich == which) {
         closeSubtitlePopup();
         return;
@@ -273,7 +282,7 @@ void PlayerActivity::openSubtitlePopup(int which) {
     struct Row {
         std::string name;
         bool current;
-        std::function<void()> pick;
+        std::function<void()> pick;   // empty: a line of information, nothing to pick
     };
     std::vector<Row> rows;
     std::string heading;
@@ -304,15 +313,28 @@ void PlayerActivity::openSubtitlePopup(int which) {
                                     if (!sel) selectTrack(TrackSelectMode::SUBTITLE, id);
                                 }});
             }
-            // What the old track list offered besides the tracks.
-            if (!m_mediaKey.empty()) {
-                rows.push_back({"Search online...", false, [this]() {
-                                    hideSubtitlePanel(false);
-                                    showTrackOverlay(TrackSelectMode::SUBTITLE);
-                                    brls::sync([this]() { populateSubtitleSearchResults(); });
-                                }});
+            break;
+        case SUB_SEARCH: {
+            heading = "Search online";
+            if (m_subSearchState == 0) startSubtitleSearch();
+            rows.push_back({"Language: " + m_subSearchLang + " (change)", false,
+                            [this]() { promptSubtitleSearchLanguage(); }});
+            if (m_subSearchState == 1) {
+                rows.push_back({"Searching " + m_subSearchLang + "...", false, nullptr});
+            } else if (m_subSearchResults.empty()) {
+                rows.push_back({"No subtitles found", false, nullptr});
+            } else {
+                for (const auto& r : m_subSearchResults) {
+                    std::string name = r.displayTitle.empty() ? r.language : r.displayTitle;
+                    if (r.hearingImpaired) name += " (SDH)";
+                    if (r.forced) name += " (Forced)";
+                    if (!r.provider.empty()) name += "  -  " + r.provider;
+                    const std::string key = r.key;
+                    rows.push_back({name, false, [this, key, name]() { installSearchedSubtitle(key, name); }});
+                }
             }
             break;
+        }
         case SUB_SIZE:
             heading = "Sizes";
             for (int i = 0; i < 3; i++) {
@@ -403,6 +425,7 @@ void PlayerActivity::openSubtitlePopup(int which) {
 
         auto pick = r.pick;
         item->registerClickAction([this, pick](brls::View*) {
+            if (!pick) return true;
             // After this frame: the pick can close the list this row is in.
             brls::sync([this, pick]() {
                 pick();
@@ -436,6 +459,92 @@ void PlayerActivity::openSubtitlePopup(int which) {
                        playerContainer->getWidth(), containerH);
     if (m_subPillChevrons[which]) setIconRes(m_subPillChevrons[which], "icons/chevron-down.png");
     if (focusRow) brls::Application::giveFocus(focusRow);
+}
+
+// Ask the server for subtitles in m_subSearchLang. The answer reopens the
+// search list if it is still the one open.
+void PlayerActivity::startSubtitleSearch() {
+    if (m_mediaKey.empty()) return;
+    m_subSearchState = 1;
+    m_subSearchResults.clear();
+    const unsigned gen = ++m_subSearchGen;
+    const std::string key = m_mediaKey, lang = m_subSearchLang;
+    std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+    brls::Logger::info("Subtitle panel: searching {} subtitles", lang);
+    asyncRun([this, aliveWeak, gen, key, lang]() {
+        std::vector<PlexClient::SubtitleResult> results;
+        PlexClient::getInstance().searchSubtitles(key, lang, results);
+        brls::sync([this, aliveWeak, gen, results]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !alive->load() || gen != m_subSearchGen) return;
+            m_subSearchResults = results;
+            m_subSearchState = 2;
+            brls::Logger::info("Subtitle panel: {} subtitle(s) found", results.size());
+            if (m_subPopupWhich == SUB_SEARCH) {
+                closeSubtitlePopup();
+                openSubtitlePopup(SUB_SEARCH);
+            }
+        });
+    });
+}
+
+void PlayerActivity::promptSubtitleSearchLanguage() {
+    auto* ime = brls::Application::getImeManager();
+    if (!ime) return;
+    std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+    ime->openForText(
+        [this, aliveWeak](std::string lang) {
+            auto alive = aliveWeak.lock();
+            if (!alive || !alive->load() || lang.empty()) return;
+            m_subSearchLang = lang;
+            refreshSubtitlePanel();
+            startSubtitleSearch();
+            if (m_subPanelVisible) {
+                closeSubtitlePopup();
+                openSubtitlePopup(SUB_SEARCH);
+            }
+        },
+        "Subtitle language (e.g. en, es, fr)", m_subSearchLang, 8, m_subSearchLang);
+}
+
+// Have the server add the found subtitle to the item, then play with it:
+// it becomes one of the item's subtitles, selected, and the stream restarts
+// with it where the video is.
+void PlayerActivity::installSearchedSubtitle(const std::string& subKey, const std::string& name) {
+    MpvPlayer::getInstance().showOSD("Adding subtitle...", 2.0);
+    const std::string mediaKey = m_mediaKey;
+    const int partId = m_partId;
+    std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+    asyncRun([this, aliveWeak, mediaKey, partId, subKey, name]() {
+        const bool ok = PlexClient::getInstance().selectSearchedSubtitle(mediaKey, partId, subKey);
+        std::vector<PlexStream> fresh;
+        int freshPart = partId;
+        if (ok) PlexClient::getInstance().fetchStreams(mediaKey, fresh, freshPart);
+        brls::sync([this, aliveWeak, ok, fresh, freshPart, name]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !alive->load()) return;
+            if (!ok || fresh.empty()) {
+                MpvPlayer::getInstance().showOSD("Couldn't add the subtitle", 2.5);
+                return;
+            }
+            m_plexStreams = fresh;
+            m_partId = freshPart;
+            m_streamsLoaded = true;
+            // The one the server now has selected, else the newest.
+            int id = -1;
+            for (const auto& ps : m_plexStreams)
+                if (ps.streamType == 3 && ps.selected) id = ps.id;
+            if (id < 0)
+                for (const auto& ps : m_plexStreams)
+                    if (ps.streamType == 3) id = ps.id;
+            brls::Logger::info("Subtitle panel: added {} as stream {}", name, id);
+            if (id >= 0) selectTrack(TrackSelectMode::SUBTITLE, id);
+            if (!m_subPanelVisible) return;
+            closeSubtitlePopup();
+            refreshSubtitlePanel();
+            if (brls::View* home = subtitlePanelHome()) brls::Application::giveFocus(home);
+        });
+    });
 }
 
 bool PlayerActivity::subtitlePanelHit(float x, float y) const {

@@ -255,9 +255,17 @@ private:
     brls::View* subtitlePanelHome();                  // where focus rests in it
     brls::Box*   m_subPanel = nullptr;
     brls::Box*   m_subPopup = nullptr;
-    brls::Box*   m_subPills[4] = {nullptr, nullptr, nullptr, nullptr};
-    brls::Label* m_subPillValues[4] = {nullptr, nullptr, nullptr, nullptr};
-    brls::Image* m_subPillChevrons[4] = {nullptr, nullptr, nullptr, nullptr};
+    brls::Box*   m_subPills[5] = {};
+    brls::Label* m_subPillValues[5] = {};
+    brls::Image* m_subPillChevrons[5] = {};
+    // Online search, as on the media page: by language, off the UI thread.
+    void startSubtitleSearch();
+    void installSearchedSubtitle(const std::string& key, const std::string& name);
+    void promptSubtitleSearchLanguage();
+    std::string m_subSearchLang;
+    int m_subSearchState = 0;           // 0 not yet, 1 searching, 2 done
+    unsigned m_subSearchGen = 0;
+    std::vector<PlexClient::SubtitleResult> m_subSearchResults;
     brls::Label* m_subLangCaption = nullptr;
     int  m_subPopupWhich = -1;
     bool m_subPanelVisible = false;
