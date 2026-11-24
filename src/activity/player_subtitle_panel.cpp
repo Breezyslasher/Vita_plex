@@ -39,7 +39,7 @@ namespace {
 // SUB_AUDIO is the audio track list, opened from the OSD's Audio pill with
 // no panel behind it.
 enum Which { SUB_ONOFF = 0, SUB_LANGUAGE = 1, SUB_SIZE = 2, SUB_STYLE = 3, SUB_TIMING = 4,
-             SUB_SEARCH = 5, SUB_AUDIO = 6 };
+             SUB_SEARCH = 5, SUB_AUDIO = 6, SUB_VIDEO = 7 };   // SUB_VIDEO: the top bar's video button
 constexpr int kSubControls = 5;
 
 // "In time", "0.5 s later", "1.25 s earlier".
@@ -318,8 +318,10 @@ void PlayerActivity::closeSubtitlePopup() {
     if (which >= 0 && which < kSubControls && m_subPillChevrons[which])
         setIconRes(m_subPillChevrons[which], "icons/chevron-up.png");
     // Off the focused row before the rows go.
-    if (which == SUB_AUDIO) {
-        if (audioBtn && m_controlsVisible) brls::Application::giveFocus(audioBtn);
+    if (which == SUB_AUDIO || which == SUB_VIDEO) {
+        brls::Box* btn = which == SUB_AUDIO ? audioBtn : videoBtn;
+        if (btn && m_controlsVisible && btn->getVisibility() == brls::Visibility::VISIBLE)
+            brls::Application::giveFocus(btn);
     } else if (which >= 0 && which < kSubControls && m_subPills[which])
         brls::Application::giveFocus(m_subPills[which]);
     else if (brls::View* home = subtitlePanelHome())
@@ -329,10 +331,11 @@ void PlayerActivity::closeSubtitlePopup() {
 }
 
 void PlayerActivity::openSubtitlePopup(int which) {
-    if (which < 0 || which > SUB_AUDIO || !playerContainer) return;
+    if (which < 0 || which > SUB_VIDEO || !playerContainer) return;
     // The search list sits over the language drop-down, or the switch when
     // that is all that shows; the audio list over the Audio pill.
-    brls::Box* anchor = which == SUB_AUDIO    ? audioBtn
+    brls::Box* anchor = which == SUB_VIDEO    ? videoBtn
+                      : which == SUB_AUDIO    ? audioBtn
                       : which == SUB_SEARCH ? dynamic_cast<brls::Box*>(subtitlePanelHome())
                                             : m_subPills[which];
     if (!anchor) return;
@@ -416,6 +419,22 @@ void PlayerActivity::openSubtitlePopup(int which) {
                     rows.push_back({name, false, [this, key, name]() { installSearchedSubtitle(key, name); }});
                 }
             }
+            break;
+        }
+        case SUB_VIDEO: {
+            for (const auto& t : MpvPlayer::getInstance().getTrackList("video")) {
+                if (t.albumArt) continue;   // a cover picture, not a video
+                std::string name = !t.title.empty() ? t.title
+                                 : !t.lang.empty() ? t.lang : "Video " + std::to_string(t.id);
+                if (!t.codec.empty()) name += " [" + t.codec + "]";
+                const int id = t.id;
+                const bool sel = t.selected;
+                rows.push_back({name, sel, [this, id, sel]() {
+                                    if (!sel) selectTrack(TrackSelectMode::VIDEO, id);
+                                }});
+            }
+            heading = "Video (" + std::to_string(rows.size()) + ")";
+            if (rows.empty()) rows.push_back({"No other video tracks", false, nullptr});
             break;
         }
         case SUB_AUDIO: {
@@ -511,13 +530,17 @@ void PlayerActivity::openSubtitlePopup(int which) {
             break;
     }
 
-    // Above the pill it belongs to, left edges lined up.
+    // Above the pill it belongs to, left edges lined up; below it for a
+    // button in the top half (the top bar's video button).
     brls::Box* pill = anchor;
     const float containerH = playerContainer->getHeight();
     const float pillTop = pill->getY() - playerContainer->getY();
+    const float pillBottom = pillTop + pill->getHeight();
+    const bool below = pillTop < containerH * 0.5f;
     const float left = pill->getX() - playerContainer->getX();
     const float rowH = ui(46);
-    const float maxListH = std::max(rowH * 2, std::min(pillTop - ui(70), containerH * 0.55f));
+    const float room = below ? containerH - pillBottom - ui(70) : pillTop - ui(70);
+    const float maxListH = std::max(rowH * 2, std::min(room, containerH * 0.55f));
     const float listH = std::min(maxListH, rowH * (float)std::max<size_t>(rows.size(), 1));
     const float width = std::max(pill->getWidth(), ui(which == SUB_SEARCH ? 460 : 260));
 
@@ -525,7 +548,8 @@ void PlayerActivity::openSubtitlePopup(int which) {
     m_subPopup->setPositionType(brls::PositionType::ABSOLUTE);
     const float popupLeft = std::max(0.0f, std::min(left, playerContainer->getWidth() - width - ui(16)));
     m_subPopup->setPositionLeft(popupLeft);
-    m_subPopup->setPositionBottom(containerH - pillTop + ui(10));
+    if (below) m_subPopup->setPositionTop(pillBottom + ui(10));
+    else       m_subPopup->setPositionBottom(containerH - pillTop + ui(10));
     m_subPopup->setWidth(width);
     m_subPopup->setCornerRadius(ui(14));
     m_subPopup->setBackgroundColor(nvgRGBA(44, 46, 54, 240));
@@ -589,7 +613,7 @@ void PlayerActivity::openSubtitlePopup(int which) {
             const int which = m_subPopupWhich;
             brls::sync([this, pick, which]() {
                 pick();
-                if (which == SUB_AUDIO) {
+                if (which == SUB_AUDIO || which == SUB_VIDEO) {
                     // selectTrack puts focus on the OSD; the list just closes.
                     closeSubtitlePopup();
                     return;
@@ -742,6 +766,11 @@ void PlayerActivity::installSearchedSubtitle(const std::string& subKey, const st
             if (brls::View* home = subtitlePanelHome()) brls::Application::giveFocus(home);
         });
     });
+}
+
+// The top bar's video button: straight to the list of video tracks.
+void PlayerActivity::showVideoTrackPopup() {
+    openSubtitlePopup(SUB_VIDEO);
 }
 
 // The OSD's Audio pill: straight to the list of audio tracks.

@@ -281,6 +281,7 @@ private:
     void applySubtitleDelay();
     bool m_serverBurnsSub = false;   // the current transcode has the subtitle in its picture
     void showAudioTrackPopup();
+    void showVideoTrackPopup();
     // Scale factor for code-built rows shared with the mobile XML; the two mobile designs use different frames (see DESIGN_NOTES).
     float ui(float v) const {
         if (m_mobileLayout) return v * kMobileUiScale;

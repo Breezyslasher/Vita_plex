@@ -1407,6 +1407,11 @@ std::vector<MpvPlayer::TrackInfo> MpvPlayer::getTrackList(const std::string& typ
         mpv_get_property(m_mpv, prop, MPV_FORMAT_FLAG, &def);
         info.isDefault = (def != 0);
 
+        snprintf(prop, sizeof(prop), "track-list/%lld/albumart", (long long)i);
+        int art = 0;
+        mpv_get_property(m_mpv, prop, MPV_FORMAT_FLAG, &art);
+        info.albumArt = (art != 0);
+
         tracks.push_back(info);
     }
 

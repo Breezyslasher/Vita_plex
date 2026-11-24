@@ -995,12 +995,16 @@ void PlayerActivity::onContentAvailable() {
 
         // Video track button - shows track selection overlay
         if (videoBtn) {
-            videoBtn->setVisibility(brls::Visibility::VISIBLE);
+            // Video OSD: shown by updateVideoOsd only when the file has more
+            // than one video track to choose from.
+            videoBtn->setVisibility(m_videoOsd ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
             if (videoIcon) {
                 setIconRes(videoIcon, "icons/video-image.png");
             }
             videoBtn->registerClickAction([this](brls::View* view) {
-                showTrackOverlay(TrackSelectMode::VIDEO);
+                // Video OSD: a drop-down list under the button, like Audio's.
+                if (m_videoOsd) showVideoTrackPopup();
+                else            showTrackOverlay(TrackSelectMode::VIDEO);
                 return true;
             });
             videoBtn->addGestureRecognizer(new brls::TapGestureRecognizer(videoBtn));
@@ -5263,6 +5267,21 @@ void PlayerActivity::updateVideoOsd() {
         while (txt.size() > 1 && txt.back() == '0') txt.pop_back();
         if (!txt.empty() && txt.back() == '.') txt.pop_back();
         l->setText(txt + "x");
+    }
+
+    // The video button only when there is a video track to switch to.
+    if (videoBtn) {
+        // Cover pictures in the file count as video tracks to mpv; not here.
+        int videos = 0;
+        for (const auto& t : player.getTrackList("video"))
+            if (!t.albumArt) videos++;
+        const bool several = videos > 1;
+        const auto want = several ? brls::Visibility::VISIBLE : brls::Visibility::GONE;
+        if (videoBtn->getVisibility() != want) {
+            if (!several && brls::Application::getCurrentFocus() == videoBtn && playBtn)
+                brls::Application::giveFocus(playBtn);
+            videoBtn->setVisibility(want);
+        }
     }
 
     // "Audio · English", "Subs · Off" — the selected track, which is why these are pills and not glyphs.

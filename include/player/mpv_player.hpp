@@ -141,6 +141,7 @@ public:
         std::string codec;       // Codec name (e.g., "h264", "aac")
         bool selected = false;   // Currently selected
         bool isDefault = false;
+        bool albumArt = false;   // a cover picture in the file, not a video
     };
 
     // Tracks
