@@ -2077,6 +2077,7 @@ void PlayerActivity::loadMedia() {
             if (m_directPlay) {
                 brls::Logger::info("PlayerActivity: direct play (original file), resume {}ms",
                                    resumeOffset);
+                m_sidecarCheck = true;   // the file has none of the server's sidecar subtitles
                 m_transcodeBaseOffsetMs = 0;
                 if (resumeOffset > 0) m_pendingSeek = resumeOffset / 1000.0;
             }
@@ -2167,6 +2168,44 @@ void PlayerActivity::updateProgress() {
 
     // Tick the diagnostic overlay with progress; lazy-created, so it costs no layout passes while the toggle is off.
     updateMpvStatsOverlay();
+
+    // Direct play with a sidecar subtitle selected on the server (an .srt
+    // beside the file, or one added by a search): the original file has no
+    // such track, and only a transcode would have carried it, so it is added
+    // to mpv here once the file is playing.
+    if (m_sidecarCheck && !m_mediaKey.empty() && MpvPlayer::getInstance().isPlaying()) {
+        m_sidecarCheck = false;
+        const std::string key = m_mediaKey;
+        std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+        asyncRun([this, aliveWeak, key]() {
+            std::vector<PlexStream> streams;
+            int partId = 0;
+            if (!PlexClient::getInstance().fetchStreams(key, streams, partId)) return;
+            brls::sync([this, aliveWeak, key, streams, partId]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !alive->load() || key != m_mediaKey || !m_directPlay) return;
+                if (!m_streamsLoaded) {
+                    m_plexStreams = streams;
+                    m_partId = partId;
+                    m_streamsLoaded = true;
+                }
+                for (const auto& ps : m_plexStreams) {
+                    if (ps.streamType != 3 || !ps.selected || ps.key.empty()) continue;
+                    brls::Logger::info("PlayerActivity: adding the selected sidecar subtitle {}",
+                                       ps.displayTitle);
+                    // Straight into mpv: already selected on the server, and
+                    // selectTrack would move the focus about.
+                    std::string url = PlexClient::getInstance().getServerUrl() + ps.key;
+                    const std::string& token = PlexClient::getInstance().getAuthToken();
+                    if (!token.empty())
+                        url += (url.find('?') == std::string::npos ? "?" : "&") +
+                               std::string("X-Plex-Token=") + token;
+                    MpvPlayer::getInstance().loadSubtitleUrl(url, /*select=*/true);
+                    break;
+                }
+            });
+        });
+    }
 
     // Keeps the pills, mute glyph and speed honest after anything changes them. No-op in the other two layouts.
     updateVideoOsd();
@@ -4249,6 +4288,42 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
             break;
 
         case TrackSelectMode::SUBTITLE:
+            // Playing the file itself (direct play, or a download): the
+            // subtitle changes in mpv, with no reload. Reloading went through
+            // the transcoder, which turned a direct-played file into a
+            // transcode for a subtitle (and, one log, failed its decision
+            // and was dropped while the first load was still pending).
+            if ((m_directPlay || m_isLocalFile) && hasPlexStreams) {
+                const PlexStream* side = nullptr;
+                for (const auto& ps : m_plexStreams)
+                    if (ps.id == trackId && ps.streamType == 3 && !ps.key.empty()) side = &ps;
+                if (trackId < 0 || side) {
+                    if (m_partId > 0) {
+                        const int partId = m_partId, sub = trackId < 0 ? 0 : trackId;
+                        asyncRun([partId, sub]() {
+                            PlexClient::getInstance().setStreamSelection(partId, -1, sub);
+                        });
+                    }
+                    for (auto& ps : m_plexStreams)
+                        if (ps.streamType == 3 || ps.streamType == 4)
+                            ps.selected = (ps.id == trackId);
+                    if (trackId < 0) {
+                        player.removeExternalSubtitles();
+                        player.showOSD("Subtitles off", 1.5);
+                    } else {
+                        const std::string& server = PlexClient::getInstance().getServerUrl();
+                        const std::string& token = PlexClient::getInstance().getAuthToken();
+                        std::string url = server + side->key;
+                        if (!token.empty())
+                            url += (url.find('?') == std::string::npos ? "?" : "&") +
+                                   std::string("X-Plex-Token=") + token;
+                        player.loadSubtitleUrl(url, /*select=*/true);
+                        player.showOSD("Subtitles: " + (side->displayTitle.empty() ? side->language
+                                                                                   : side->displayTitle), 2.0);
+                    }
+                    break;
+                }
+            }
             if (trackId < 0) {
                 // Disable subtitles
                 if (m_partId > 0) {

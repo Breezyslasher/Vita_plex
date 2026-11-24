@@ -22,6 +22,8 @@
 #include <borealis.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -569,16 +571,36 @@ void PlayerActivity::promptSubtitleSearchLanguage() {
 // it becomes one of the item's subtitles, selected, and the stream restarts
 // with it where the video is.
 void PlayerActivity::installSearchedSubtitle(const std::string& subKey, const std::string& name) {
-    MpvPlayer::getInstance().showOSD("Adding subtitle...", 2.0);
+    MpvPlayer::getInstance().showOSD("Adding subtitle...", 4.0);
     const std::string mediaKey = m_mediaKey;
     const int partId = m_partId;
+    std::vector<int> known;
+    for (const auto& ps : m_plexStreams)
+        if (ps.streamType == 3) known.push_back(ps.id);
     std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
-    asyncRun([this, aliveWeak, mediaKey, partId, subKey, name]() {
+    asyncRun([this, aliveWeak, mediaKey, partId, subKey, name, known]() {
         const bool ok = PlexClient::getInstance().selectSearchedSubtitle(mediaKey, partId, subKey);
         std::vector<PlexStream> fresh;
         int freshPart = partId;
-        if (ok) PlexClient::getInstance().fetchStreams(mediaKey, fresh, freshPart);
-        brls::sync([this, aliveWeak, ok, fresh, freshPart, name]() {
+        // The server answers at once but fetches the file afterwards: the
+        // item lists the new subtitle only some time later (not yet a quarter
+        // of a second on, in a log). Ask again until a subtitle it did not
+        // have shows up, for up to 15 s.
+        for (int attempt = 0; ok && attempt < 15; attempt++) {
+            if (attempt > 0) std::this_thread::sleep_for(std::chrono::seconds(1));
+            auto alive = aliveWeak.lock();
+            if (!alive || !alive->load()) return;
+            fresh.clear();
+            freshPart = partId;
+            PlexClient::getInstance().fetchStreams(mediaKey, fresh, freshPart);
+            bool added = false;
+            for (const auto& ps : fresh)
+                if (ps.streamType == 3 &&
+                    std::find(known.begin(), known.end(), ps.id) == known.end())
+                    added = true;
+            if (added) break;
+        }
+        brls::sync([this, aliveWeak, ok, fresh, freshPart, name, known]() {
             auto alive = aliveWeak.lock();
             if (!alive || !alive->load()) return;
             if (!ok || fresh.empty()) {
@@ -588,15 +610,25 @@ void PlayerActivity::installSearchedSubtitle(const std::string& subKey, const st
             m_plexStreams = fresh;
             m_partId = freshPart;
             m_streamsLoaded = true;
-            // The one the server now has selected, else the newest.
+            // The one that was not there before, else the one the server has
+            // selected, else the last.
             int id = -1;
             for (const auto& ps : m_plexStreams)
-                if (ps.streamType == 3 && ps.selected) id = ps.id;
+                if (ps.streamType == 3 && std::find(known.begin(), known.end(), ps.id) == known.end())
+                    id = ps.id;
+            if (id < 0)
+                for (const auto& ps : m_plexStreams)
+                    if (ps.streamType == 3 && ps.selected) id = ps.id;
             if (id < 0)
                 for (const auto& ps : m_plexStreams)
                     if (ps.streamType == 3) id = ps.id;
+            if (id < 0) {
+                MpvPlayer::getInstance().showOSD("The server has not added the subtitle yet", 3.0);
+                brls::Logger::warning("Subtitle panel: {} not listed by the server after 15 s", name);
+                return;
+            }
             brls::Logger::info("Subtitle panel: added {} as stream {}", name, id);
-            if (id >= 0) selectTrack(TrackSelectMode::SUBTITLE, id);
+            selectTrack(TrackSelectMode::SUBTITLE, id);
             if (!m_subPanelVisible) return;
             closeSubtitlePopup();
             refreshSubtitlePanel();

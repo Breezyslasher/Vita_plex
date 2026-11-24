@@ -162,7 +162,7 @@ public:
     void applySubtitleStyle();
     void setAudioDelay(double seconds);
     void disableSubtitles();
-    void loadSubtitleUrl(const std::string& url);   // Load external subtitle (e.g. lyrics) by URL
+    void loadSubtitleUrl(const std::string& url, bool select = false);   // Load external subtitle (e.g. lyrics) by URL; select shows it now
     void removeExternalSubtitles();                   // Remove all external subtitle tracks
 
     // Get available tracks by type

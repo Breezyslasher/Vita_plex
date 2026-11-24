@@ -1422,7 +1422,7 @@ void MpvPlayer::toggleSubtitles() {
     m_subtitlesVisible = !m_subtitlesVisible;
 }
 
-void MpvPlayer::loadSubtitleUrl(const std::string& url) {
+void MpvPlayer::loadSubtitleUrl(const std::string& url, bool select) {
     if (!m_mpv || m_stopping) return;
 
     std::string subUrl = url;
@@ -1439,8 +1439,12 @@ void MpvPlayer::loadSubtitleUrl(const std::string& url) {
 #endif
 
     brls::Logger::info("MpvPlayer: Loading external subtitle: {}", redactTokensInUrl(subUrl));
-    const char* cmd[] = {"sub-add", subUrl.c_str(), "auto", NULL};
+    const char* cmd[] = {"sub-add", subUrl.c_str(), select ? "select" : "auto", NULL};
     mpv_command_async(m_mpv, 0, cmd);
+    if (select) {
+        const char* yes = "yes";
+        mpv_set_property_async(m_mpv, 0, "sub-visibility", MPV_FORMAT_STRING, &yes);
+    }
     m_subtitlesVisible = true;
 }
 

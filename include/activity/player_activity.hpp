@@ -530,6 +530,7 @@ private:
     std::vector<PlexStream> m_plexStreams;  // Cached streams from Plex
     int m_partId = 0;                       // Plex part ID for stream selection
     bool m_streamsLoaded = false;
+    bool m_sidecarCheck = false;   // direct play: add the server's selected sidecar subtitle once playing
     int m_selectedTrackIndex = 0;  // Index of selected item in track list for focus
 
     void showTrackOverlay(TrackSelectMode mode);
