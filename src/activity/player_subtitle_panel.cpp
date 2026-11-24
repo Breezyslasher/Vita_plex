@@ -162,7 +162,7 @@ void PlayerActivity::showSubtitlePanel() {
     hideControls();
     m_subPanelVisible = true;
     m_subPanel->setVisibility(brls::Visibility::VISIBLE);
-    brls::Application::giveFocus(m_subPills[SUB_LANGUAGE]);
+    brls::Application::giveFocus(subtitlePanelHome());
 }
 
 void PlayerActivity::refreshSubtitlePanel() {
@@ -184,6 +184,22 @@ void PlayerActivity::refreshSubtitlePanel() {
     m_subPillValues[SUB_STYLE]->setText(kStyleNames[std::clamp(s.subtitleStyle, 0, 3)]);
     if (m_subLangCaption)
         m_subLangCaption->setText("Language (" + std::to_string(choices.size()) + ")");
+
+    // Off: the language, size and style mean nothing, so only On / Off shows.
+    for (int i = SUB_LANGUAGE; i <= SUB_STYLE; i++) {
+        brls::View* col = m_subPills[i] ? m_subPills[i]->getParent() : nullptr;
+        if (col) col->setVisibility(on ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
+    }
+}
+
+// Where focus rests in the panel: the language when subtitles are on, the
+// on / off switch when they are off (the only one showing then).
+brls::View* PlayerActivity::subtitlePanelHome() {
+    brls::View* lang = m_subPills[SUB_LANGUAGE];
+    if (lang && lang->getParent() &&
+        lang->getParent()->getVisibility() == brls::Visibility::VISIBLE)
+        return lang;
+    return m_subPills[SUB_ONOFF];
 }
 
 void PlayerActivity::hideSubtitlePanel(bool restoreControls) {
@@ -357,7 +373,7 @@ void PlayerActivity::openSubtitlePopup(int which) {
                 refreshSubtitlePanel();
                 // selectTrack ends by putting focus back on the OSD's buttons;
                 // the panel is still up, so back to its own row.
-                if (m_subPills[SUB_LANGUAGE]) brls::Application::giveFocus(m_subPills[SUB_LANGUAGE]);
+                if (brls::View* home = subtitlePanelHome()) brls::Application::giveFocus(home);
             });
             return true;
         });
