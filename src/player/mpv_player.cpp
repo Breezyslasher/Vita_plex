@@ -5,6 +5,7 @@
  */
 
 #include <algorithm>   // std::max in seekRelative
+#include <cstdio>      // snprintf in hangReport
 #include "player/mpv_player.hpp"
 #if defined(__ANDROID__)
 #include <sys/stat.h>  // mkdir
@@ -1530,6 +1531,62 @@ void MpvPlayer::removeExternalSubtitles() {
     m_subtitlesVisible = false;
 }
 
+
+// ---------------------------------------------------------------------------
+// Hang reports: what holds the pump lock, and which blocking call the UI is in.
+// ---------------------------------------------------------------------------
+struct PumpNote {
+    const MpvPlayer* p;
+    bool outer;
+    PumpNote(const MpvPlayer* player, const char* what) : p(player), outer(false) {
+        if (p->m_pumpWhat.load() == nullptr) {
+            outer = true;
+            p->m_pumpOnUi.store(brls::Application::isMainThread());
+            p->m_pumpSinceUs.store((int64_t)brls::getCPUTimeUsec());
+            p->m_pumpEvent.store(-1);
+            p->m_pumpWhat.store(what);
+        }
+    }
+    ~PumpNote() {
+        if (outer) {
+            p->m_pumpWhat.store(nullptr);
+            p->m_pumpEvent.store(-1);
+        }
+    }
+};
+
+MpvPlayer::CallNote::CallNote(const MpvPlayer* p, const char* what) : player(p), set(false) {
+    if (brls::Application::isMainThread() && p->m_callWhat.load() == nullptr) {
+        set = true;
+        p->m_callSinceUs.store((int64_t)brls::getCPUTimeUsec());
+        p->m_callWhat.store(what);
+    }
+}
+
+MpvPlayer::CallNote::~CallNote() {
+    if (set) player->m_callWhat.store(nullptr);
+}
+
+std::string MpvPlayer::hangReport(int64_t nowUs) const {
+    std::string out;
+    if (const char* what = m_pumpWhat.load()) {
+        char buf[200];
+        std::snprintf(buf, sizeof(buf), "pump held by the %s thread in %s (event %d) for %.1fs",
+                      m_pumpOnUi.load() ? "UI" : "event", what, m_pumpEvent.load(),
+                      (nowUs - m_pumpSinceUs.load()) / 1e6);
+        out = buf;
+    } else {
+        out = "pump free";
+    }
+    if (const char* call = m_callWhat.load()) {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "; UI thread in libmpv call %s for %.1fs", call,
+                      (nowUs - m_callSinceUs.load()) / 1e6);
+        out += buf;
+    }
+    return out;
+}
+
 MpvPlayer::Snapshot MpvPlayer::snapshot() {
     std::lock_guard<std::recursive_mutex> pump(m_pumpMutex);
     Snapshot s;
@@ -1556,6 +1613,7 @@ double MpvPlayer::getPosition() const {
     if (!m_mpv) return 0.0;
 
     double pos = 0.0;
+    CallNote note(this, "getPosition");
     mpv_get_property(m_mpv, "playback-time", MPV_FORMAT_DOUBLE, &pos);
     return pos;
 }
@@ -1576,6 +1634,7 @@ double MpvPlayer::getDuration() const {
     if (!m_mpv) return 0.0;
 
     double dur = 0.0;
+    CallNote note(this, "getDuration");
     mpv_get_property(m_mpv, "duration", MPV_FORMAT_DOUBLE, &dur);
     return dur;
 }
@@ -1722,6 +1781,7 @@ void MpvPlayer::eventMainLoop() {
     // See m_pumpMutex: the event thread and the UI thread both drain here.
     std::lock_guard<std::recursive_mutex> pump(m_pumpMutex);
     if (!m_mpv) return;   // shutdown may have won the race for the lock
+    PumpNote note(this, "eventMainLoop");
 
     // Process all pending events (matching switchfin's approach)
     while (true) {
@@ -1730,6 +1790,7 @@ void MpvPlayer::eventMainLoop() {
         if (!event || event->event_id == MPV_EVENT_NONE) {
             return;
         }
+        m_pumpEvent.store((int)event->event_id);
 
         switch (event->event_id) {
             case MPV_EVENT_LOG_MESSAGE: {
@@ -1995,6 +2056,7 @@ void MpvPlayer::updatePlaybackInfo() {
     // which holds this same lock, so taking it here is what keeps the struct
     // from being written by both at once.
     std::lock_guard<std::recursive_mutex> pump(m_pumpMutex);
+    PumpNote note(this, "updatePlaybackInfo");
 
     // Get video codec info if not yet fetched
     if (m_playbackInfo.videoCodec.empty() && m_state == MpvPlayerState::PLAYING) {

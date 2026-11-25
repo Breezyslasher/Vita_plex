@@ -11,6 +11,7 @@
 #include "app/plex_palette.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
+#include "utils/hang_watch.hpp"
 #include "utils/http_client.hpp"
 #include "app/music_queue.hpp"
 #include "app/downloads_manager.hpp"
@@ -414,6 +415,7 @@ void LibrarySectionTab::loadContent() {
     std::string sectionType = m_sectionType;
     std::string params = buildListParams();   // current sort + filter fragment
     asyncRun([this, key, sectionType, params, aliveWeak]() {
+        hang::TaskNote taskNote("LibrarySectionTab::loadContent", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
         int totalCount = 0;
@@ -433,9 +435,10 @@ void LibrarySectionTab::loadContent() {
             }
 
             brls::sync([this, items, totalCount, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::loadContent result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) {
-                    brls::Logger::debug("LibrarySectionTab: Tab destroyed, skipping UI update");
+                    brls::Logger::info("LibrarySectionTab: page closed, its items dropped");
                     return;
                 }
 
@@ -454,6 +457,7 @@ void LibrarySectionTab::loadContent() {
         } else {
             brls::Logger::error("LibrarySectionTab: Failed to load content for section {}", key);
             brls::sync([this, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::loadContent result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
                 m_loaded = true;
@@ -479,6 +483,7 @@ void LibrarySectionTab::loadCollections() {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, key, aliveWeak]() {
+        hang::TaskNote taskNote("LibrarySectionTab::loadCollections", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> collections;
 
@@ -486,6 +491,7 @@ void LibrarySectionTab::loadCollections() {
             brls::Logger::info("LibrarySectionTab: Got {} collections for section {}", collections.size(), key);
 
             brls::sync([this, collections, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::loadCollections result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -500,6 +506,7 @@ void LibrarySectionTab::loadCollections() {
         } else {
             brls::Logger::debug("LibrarySectionTab: No collections for section {}", key);
             brls::sync([this, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::loadCollections result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -517,6 +524,7 @@ void LibrarySectionTab::loadGenres() {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, key, aliveWeak]() {
+        hang::TaskNote taskNote("LibrarySectionTab::loadGenres", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<GenreItem> genres;
 
@@ -524,6 +532,7 @@ void LibrarySectionTab::loadGenres() {
             brls::Logger::info("LibrarySectionTab: Got {} genres for section {}", genres.size(), key);
 
             brls::sync([this, genres, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::loadGenres result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -533,6 +542,7 @@ void LibrarySectionTab::loadGenres() {
         } else {
             brls::Logger::debug("LibrarySectionTab: No genres for section {}", key);
             brls::sync([this, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::loadGenres result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -558,6 +568,7 @@ void LibrarySectionTab::loadNextPage() {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, key, sectionType, offset, params, aliveWeak]() {
+        hang::TaskNote taskNote("LibrarySectionTab::loadNextPage", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
@@ -572,6 +583,7 @@ void LibrarySectionTab::loadNextPage() {
             }
 
             brls::sync([this, items, offset, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::loadNextPage result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -583,6 +595,7 @@ void LibrarySectionTab::loadNextPage() {
             });
         } else {
             brls::sync([this, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::loadNextPage result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
                 m_contentGrid->setHasMore(false);
@@ -634,6 +647,7 @@ void LibrarySectionTab::reloadAllItems() {
     std::string params = buildListParams();
     std::weak_ptr<bool> aliveWeak = m_alive;
     asyncRun([this, key, sectionType, params, aliveWeak]() {
+        hang::TaskNote taskNote("LibrarySectionTab::reloadAllItems", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
         int totalCount = 0;
@@ -645,6 +659,7 @@ void LibrarySectionTab::reloadAllItems() {
         if (client.fetchLibraryContent(key, items, metadataType, libraryPageSize(), 0, &totalCount, params)) {
             for (auto& item : items) item.trimForGrid();
             brls::sync([this, items, totalCount, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::reloadAllItems result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
                 m_items = items;
@@ -857,9 +872,11 @@ void LibrarySectionTab::openFilterValuePicker(const std::string& field,
     std::string key = m_sectionKey;
     std::weak_ptr<bool> aliveWeak = m_alive;
     asyncRun([this, key, field, fieldLabel, aliveWeak]() {
+        hang::TaskNote taskNote("LibrarySectionTab::openFilterValuePicker", aliveWeak);
         std::vector<GenreItem> values;
         PlexClient::getInstance().fetchFilterValues(key, field, values);
         brls::sync([this, field, fieldLabel, values, aliveWeak]() {
+            hang::UiNote uiNote("LibrarySectionTab::openFilterValuePicker result");
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
             m_filterValueCache[field] = values;
@@ -1384,6 +1401,7 @@ void LibrarySectionTab::onCollectionSelected(const MediaItem& collection) {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, collectionKey, filterTitle, aliveWeak]() {
+        hang::TaskNote taskNote("LibrarySectionTab::onCollectionSelected", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
@@ -1391,6 +1409,7 @@ void LibrarySectionTab::onCollectionSelected(const MediaItem& collection) {
             brls::Logger::info("LibrarySectionTab: Got {} items in collection", items.size());
 
             brls::sync([this, items, filterTitle, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::onCollectionSelected result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -1405,6 +1424,7 @@ void LibrarySectionTab::onCollectionSelected(const MediaItem& collection) {
         } else {
             brls::Logger::error("LibrarySectionTab: Failed to load collection content");
             brls::sync([aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::onCollectionSelected result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
                 brls::Application::notify("Failed to load collection");
@@ -1426,6 +1446,7 @@ void LibrarySectionTab::onGenreSelected(const GenreItem& genre) {
 
     std::string secType = m_sectionType;
     asyncRun([this, key, genreKey, genreTitle, filterTitle, secType, aliveWeak]() {
+        hang::TaskNote taskNote("LibrarySectionTab::onGenreSelected", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
@@ -1440,6 +1461,7 @@ void LibrarySectionTab::onGenreSelected(const GenreItem& genre) {
             brls::Logger::info("LibrarySectionTab: Got {} items for genre", items.size());
 
             brls::sync([this, items, filterTitle, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::onGenreSelected result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -1454,6 +1476,7 @@ void LibrarySectionTab::onGenreSelected(const GenreItem& genre) {
         } else {
             brls::Logger::error("LibrarySectionTab: Failed to load genre content");
             brls::sync([aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::onGenreSelected result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
                 brls::Application::notify("Failed to load category");
@@ -1466,6 +1489,7 @@ void LibrarySectionTab::loadPlaylists() {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, aliveWeak]() {
+        hang::TaskNote taskNote("LibrarySectionTab::loadPlaylists", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<Playlist> playlists;
 
@@ -1473,6 +1497,7 @@ void LibrarySectionTab::loadPlaylists() {
             brls::Logger::info("LibrarySectionTab: Got {} music playlists", playlists.size());
 
             brls::sync([this, playlists, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::loadPlaylists result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -1486,6 +1511,7 @@ void LibrarySectionTab::loadPlaylists() {
         } else {
             brls::Logger::debug("LibrarySectionTab: Failed to load playlists or none found");
             brls::sync([this, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::loadPlaylists result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -1542,6 +1568,7 @@ void LibrarySectionTab::onPlaylistSelected(const Playlist& playlist) {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, playlistId, playlistTitle, aliveWeak]() {
+        hang::TaskNote taskNote("LibrarySectionTab::onPlaylistSelected", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<PlaylistItem> items;
 
@@ -1556,6 +1583,7 @@ void LibrarySectionTab::onPlaylistSelected(const Playlist& playlist) {
             }
 
             brls::sync([this, mediaItems, playlistTitle, playlistId, aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::onPlaylistSelected result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -1564,6 +1592,7 @@ void LibrarySectionTab::onPlaylistSelected(const Playlist& playlist) {
         } else {
             brls::Logger::error("LibrarySectionTab: Failed to load playlist content");
             brls::sync([aliveWeak]() {
+                hang::UiNote uiNote("LibrarySectionTab::onPlaylistSelected result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
                 brls::Application::notify("Failed to load playlist");
@@ -1889,6 +1918,7 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
     addDialogButtonIcon("playlist-plus.png", false, false, "Add to Queue", [capturedPlaylist](brls::View*) {
         std::string playlistId = capturedPlaylist.ratingKey;
         asyncRun([playlistId]() {
+            hang::TaskNote taskNote("LibrarySectionTab::showPlaylistContextMenu");
             PlexClient& client = PlexClient::getInstance();
             std::vector<PlaylistItem> items;
             if (client.fetchPlaylistItems(playlistId, items) && !items.empty()) {
@@ -1897,6 +1927,7 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
                     tracks.push_back(item.media);
                 }
                 brls::sync([tracks, playlistId]() {
+                    hang::UiNote uiNote("LibrarySectionTab::showPlaylistContextMenu result");
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
                         brls::Application::pushActivity(
@@ -1909,6 +1940,7 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
                 });
             } else {
                 brls::sync([]() {
+                    hang::UiNote uiNote("LibrarySectionTab::showPlaylistContextMenu result");
                     brls::Application::notify("Cannot queue playlist - server unreachable");
                 });
             }
@@ -1921,6 +1953,7 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
         std::string playlistTitle = capturedPlaylist.title;
         std::string playlistThumb = capturedPlaylist.thumb.empty() ? capturedPlaylist.composite : capturedPlaylist.thumb;
         asyncRun([playlistId, playlistTitle, playlistThumb]() {
+            hang::TaskNote taskNote("LibrarySectionTab::showPlaylistContextMenu");
             PlexClient& client = PlexClient::getInstance();
             std::vector<PlaylistItem> items;
             int queued = 0;
@@ -1953,6 +1986,7 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
 
             DownloadsManager::getInstance().startDownloads();
             brls::sync([queued, skipped]() {
+                hang::UiNote uiNote("LibrarySectionTab::showPlaylistContextMenu result");
                 std::string msg = "Queued " + std::to_string(queued) + " tracks for download";
                 if (skipped > 0) {
                     msg += " (" + std::to_string(skipped) + " already downloaded)";
@@ -2005,12 +2039,14 @@ void LibrarySectionTab::showPlaylistOptionsDialog(const Playlist& playlist) {
                 std::weak_ptr<bool> aliveWeak = m_alive;
 
                 asyncRun([this, playlistId, aliveWeak]() {
+                    hang::TaskNote taskNote("LibrarySectionTab::showPlaylistOptionsDialog", aliveWeak);
                     PlexClient& client = PlexClient::getInstance();
 
                     if (client.deletePlaylist(playlistId)) {
                         brls::Logger::info("LibrarySectionTab: Deleted playlist");
 
                         brls::sync([this, aliveWeak]() {
+                            hang::UiNote uiNote("LibrarySectionTab::showPlaylistOptionsDialog result");
                             auto alive = aliveWeak.lock();
                             if (!alive || !*alive) return;
 
@@ -2034,6 +2070,7 @@ void LibrarySectionTab::playPlaylistWithQueue(const std::string& playlistId, int
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, playlistId, startIndex, userPickedTrack, aliveWeak]() {
+        hang::TaskNote taskNote("LibrarySectionTab::playPlaylistWithQueue", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<PlaylistItem> items;
 
@@ -2044,6 +2081,7 @@ void LibrarySectionTab::playPlaylistWithQueue(const std::string& playlistId, int
             }
 
             brls::sync([tracks, startIndex, userPickedTrack, aliveWeak, playlistId]() {
+                hang::UiNote uiNote("LibrarySectionTab::playPlaylistWithQueue result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -2054,6 +2092,7 @@ void LibrarySectionTab::playPlaylistWithQueue(const std::string& playlistId, int
             });
         } else {
             brls::sync([]() {
+                hang::UiNote uiNote("LibrarySectionTab::playPlaylistWithQueue result");
                 brls::Application::notify("Cannot play playlist - server unreachable");
             });
         }

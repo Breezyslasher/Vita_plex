@@ -4,6 +4,7 @@
  */
 
 #include "app/music_controller.hpp"
+#include "utils/hang_watch.hpp"
 
 #include <algorithm>
 
@@ -321,9 +322,11 @@ void MusicController::prefetchNextTrack() {
     // Capturing `this` is safe here in a way it would not be in an activity:
     // MusicController is a singleton that outlives the whole session.
     asyncRun([this, key, version]() {
+        hang::TaskNote taskNote("MusicController::prefetchNextTrack");
         std::string url, session;
         const bool ok = PlexClient::getInstance().getTranscodeUrlSpeculative(key, url, session);
         brls::sync([this, key, version, url, session, ok]() {
+            hang::UiNote uiNote("MusicController::prefetchNextTrack result");
             m_prefetchInFlight = false;
             // Recorded either way: on failure the empty URL is what keeps this from being retried on every tick.
             m_prefetchKey     = key;
@@ -603,6 +606,7 @@ void MusicController::setCurrentTrackLiked(bool liked) {
     publishNowPlaying();
     // The PUT is network I/O; nothing on screen depends on the answer.
     asyncRun([key, liked]() {
+        hang::TaskNote taskNote("MusicController::setCurrentTrackLiked");
         const bool ok = PlexClient::getInstance().rateItem(key, liked ? 10.0f : 0.0f);
         brls::Logger::info("MusicController: rate {} -> {} ({})",
                            key, liked ? "liked" : "cleared", ok ? "ok" : "failed");
@@ -713,9 +717,11 @@ void MusicController::restartTranscodeAtMs(long long ms) {
     // Two blocking round-trips (/library/metadata, then /decision), so not on
     // the UI thread. Capturing `this` is safe: the controller is a singleton.
     asyncRun([this, key, title, ms]() {
+        hang::TaskNote taskNote("MusicController::restartTranscodeAtMs");
         std::string url;
         const bool ok = PlexClient::getInstance().getTranscodeUrl(key, url, (int)ms);
         brls::sync([this, key, title, url, ms, ok]() {
+            hang::UiNote uiNote("MusicController::restartTranscodeAtMs result");
             m_restartingTranscode = false;
             if (!ok || url.empty()) {
                 brls::Logger::error("MusicController: could not restart the transcode at {}ms", ms);
@@ -1010,8 +1016,10 @@ void MusicController::recoveryTick() {
     const uint32_t gen = m_recoverGen;
     // Capturing `this` is safe: the controller is a singleton.
     asyncRun([this, gen]() {
+        hang::TaskNote taskNote("MusicController::recoveryTick");
         const bool up = PlexClient::getInstance().isServerReachable(8);
         brls::sync([this, gen, up]() {
+            hang::UiNote uiNote("MusicController::recoveryTick result");
             if (gen != m_recoverGen || !m_recover.active) return;
             m_recover.busy = false;
             if (up) recoveryReload();
@@ -1035,9 +1043,11 @@ void MusicController::recoveryReload() {
     const uint32_t gen = m_recoverGen;
     // Two blocking round-trips (/library/metadata, then /decision): off the UI thread.
     asyncRun([this, gen, key, title, durationMs, posMs]() {
+        hang::TaskNote taskNote("MusicController::recoveryReload");
         std::string url;
         const bool ok = PlexClient::getInstance().getTranscodeUrl(key, url, (int)posMs);
         brls::sync([this, gen, key, title, durationMs, posMs, url, ok]() {
+            hang::UiNote uiNote("MusicController::recoveryReload result");
             if (gen != m_recoverGen || !m_recover.active) return;
             m_recover.busy = false;
             if (posMs != m_recover.positionMs) {

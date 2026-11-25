@@ -217,6 +217,20 @@ public:
     // which must never wait on the player (background_audio_psv.cpp).
     bool trySnapshot(Snapshot* out);
 
+    // For a hang report, without taking any lock: what holds the pump lock
+    // (the drain, the event being handled, on which thread, for how long) and
+    // what blocking libmpv call the UI thread is in, if any. Times from
+    // brls::getCPUTimeUsec().
+    std::string hangReport(int64_t nowUs) const;
+    // Set around a blocking libmpv call made outside the pump (getPosition,
+    // getDuration): on a hang, the report names it.
+    struct CallNote {
+        CallNote(const MpvPlayer* p, const char* what);
+        ~CallNote();
+        const MpvPlayer* player;
+        bool set;
+    };
+
     // OSD
     void showOSD(const std::string& text, double durationSec = 2.0);
     void toggleOSD();
@@ -323,6 +337,14 @@ private:
     // because an event handler runs callbacks, and one of those reaching
     // update() again must not deadlock the thread that is already draining.
     std::recursive_mutex m_pumpMutex;
+    // Who holds m_pumpMutex, for hangReport (outermost holder only).
+    mutable std::atomic<const char*> m_pumpWhat{nullptr};
+    mutable std::atomic<int> m_pumpEvent{-1};
+    mutable std::atomic<bool> m_pumpOnUi{false};
+    mutable std::atomic<int64_t> m_pumpSinceUs{0};
+    mutable std::atomic<const char*> m_callWhat{nullptr};
+    mutable std::atomic<int64_t> m_callSinceUs{0};
+    friend struct PumpNote;
 
     // Static callback for render updates (called from MPV thread)
     static void onRenderUpdate(void* ctx);
