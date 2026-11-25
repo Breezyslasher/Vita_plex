@@ -287,7 +287,8 @@
             justifyContent="center"
             alignItems="center"
             cornerRadius="53"
-            backgroundColor="#E5A00D">
+            backgroundColor="#E5A00D"
+            hideHighlightBackground="true">
             <brls:Image
                 id="player/play_pause_icon"
                 width="39"
@@ -536,6 +537,7 @@
             alignItems="center"
             cornerRadius="112"
             backgroundColor="#E5A00D"
+            hideHighlightBackground="true"
             focusable="true">
             <brls:Image
                 id="player/music_play_icon"
@@ -1261,6 +1263,7 @@
                     alignItems="center"
                     cornerRadius="99"
                     backgroundColor="#E5A00D"
+                    hideHighlightBackground="true"
                     marginLeft="124"
                     marginRight="124"
                     focusable="true">
