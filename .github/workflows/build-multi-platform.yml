@@ -165,7 +165,7 @@ jobs:
           git push
 
   upload-release:
-    needs: [ resolve-version, build-mingw, build-nx, build-macos, build-appimage, build-aur, build-ps4, build-vita, build-android ]
+    needs: [ resolve-version, build-mingw, build-nx, build-macos, build-appimage, build-aur, build-ps4, build-vita, build-android, build-ios, build-flatpak ]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -222,7 +222,10 @@ jobs:
               VitaPlex-nx-*/*.nro \
               VitaPlex-ps4-*/* \
               VitaPlex-vita-*/*.vpk \
-              VitaPlex-appimage-*/*.AppImage; do
+              VitaPlex-appimage-*/*.AppImage \
+              VitaPlex-ios-*/*.ipa \
+              VitaPlex-tvos-*/*.ipa \
+              VitaPlex-flatpak-*/*.flatpak; do
             [ -f "$f" ] || continue
             case "$f" in *.sig) continue ;; esac
             openssl dgst -sha256 -sign "$keyfile" -out "$f.sig" "$f"
@@ -255,6 +258,12 @@ jobs:
             VitaPlex-appimage-*/*.AppImage.sig
             VitaPlex-aur-*/*.pkg.tar.*
             VitaPlex-android-*/*
+            VitaPlex-ios-*/*.ipa
+            VitaPlex-ios-*/*.ipa.sig
+            VitaPlex-tvos-*/*.ipa
+            VitaPlex-tvos-*/*.ipa.sig
+            VitaPlex-flatpak-*/*.flatpak
+            VitaPlex-flatpak-*/*.flatpak.sig
       # draft: true above is what keeps the upload working on a repo with
       # immutable releases, but nothing published the draft afterwards, so
       # every tag-triggered release stopped at "Draft" until someone
@@ -271,7 +280,7 @@ jobs:
   # Pre-release — manually triggered
   # ───────────────────────────────────────────────
   upload-prerelease:
-    needs: [resolve-version, build-mingw, build-nx, build-macos, build-appimage, build-aur, build-ps4, build-vita, build-android, build-deb]
+    needs: [resolve-version, build-mingw, build-nx, build-macos, build-appimage, build-aur, build-ps4, build-vita, build-android, build-deb, build-ios, build-flatpak]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -372,6 +381,17 @@ jobs:
           for f in $(find . -name "*.pkg.tar.zst"); do
             cp "$f" "release/VitaPlex.${FVER}-Linux.pkg.tar.zst"
           done
+
+          # iPhone / iPad and Apple TV .ipa (unsigned: sideload with AltStore,
+          # Sideloadly or the like). build-ios uploads VitaPlex-<target>.ipa.
+          for t in ios tvos; do
+            f=$(find . -name "VitaPlex-${t}.ipa" | head -1)
+            [ -n "$f" ] && cp "$f" "release/VitaPlex.${FVER}-${t}.ipa"
+          done
+
+          # Flatpak bundle
+          f=$(find . -name "VitaPlex.flatpak" | head -1)
+          [ -n "$f" ] && cp "$f" "release/VitaPlex.${FVER}.flatpak"
 
           echo "Release files:"
           ls -lh release/
