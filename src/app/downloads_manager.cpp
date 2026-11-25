@@ -866,34 +866,68 @@ void DownloadsManager::waitForDownloadThread(int timeoutMs) {
 }
 
 void DownloadsManager::clearCompleted() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    for (auto& item : m_downloads) {
-        if (item.state == DownloadState::COMPLETED) {
-            // Delete media file
-            if (!item.localPath.empty()) {
-#ifdef __vita__
-                sceIoRemove(item.localPath.c_str());
-#else
-                std::remove(item.localPath.c_str());
-#endif
-            }
-            // Delete cover art file
+    // The list changes here, at once; the files go on a background thread.
+    // Deleting them here, on the UI thread under m_mutex, froze the Vita for
+    // 40 s with ~200 songs done (a song, its cover and its small cover each,
+    // on a memory card the music was reading from).
+    std::vector<std::string> files;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& item : m_downloads) {
+            if (item.state != DownloadState::COMPLETED) continue;
+            if (!item.localPath.empty()) files.push_back(item.localPath);
             if (!item.thumbPath.empty()) {
+                files.push_back(item.thumbPath);
 #ifdef __vita__
-                sceIoRemove(item.thumbPath.c_str());
                 const std::string small = smallCoverPath(item.thumbPath);
-                if (!small.empty()) sceIoRemove(small.c_str());
-#else
-                std::remove(item.thumbPath.c_str());
+                if (!small.empty()) files.push_back(small);
 #endif
             }
             item.state = DownloadState::CANCELLED;
         }
+        purgeCancelledUnlocked();
+        saveStateUnlocked();
     }
-    purgeCancelledUnlocked();
-    saveStateUnlocked();
-    brls::Logger::info("DownloadsManager: Cleared completed downloads");
+    brls::Logger::info("DownloadsManager: Cleared completed downloads ({} files to delete)",
+                       files.size());
+    if (files.empty()) return;
+
+    asyncRun([this, files]() {
+        const auto start = std::chrono::steady_clock::now();
+        size_t removed = 0, kept = 0;
+        for (const auto& path : files) {
+            {
+                // A song downloaded again since keeps its file.
+                std::lock_guard<std::mutex> lock(m_mutex);
+                bool inUse = false;
+                for (const auto& item : m_downloads) {
+                    if (item.state == DownloadState::CANCELLED) continue;
+                    bool same = item.localPath == path || item.thumbPath == path;
+#ifdef __vita__
+                    same = same || (!item.thumbPath.empty() && smallCoverPath(item.thumbPath) == path);
+#endif
+                    if (same) {
+                        inUse = true;
+                        break;
+                    }
+                }
+                if (inUse) {
+                    ++kept;
+                    continue;
+                }
+            }
+#ifdef __vita__
+            if (sceIoRemove(path.c_str()) >= 0) ++removed;
+#else
+            if (std::remove(path.c_str()) == 0) ++removed;
+#endif
+        }
+        const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - start).count();
+        brls::Logger::info("DownloadsManager: deleted {} of {} cleared files in {} ms ({} in use "
+                           "again, kept)",
+                           removed, files.size(), ms, kept);
+    });
 }
 
 void DownloadsManager::purgeCancelledUnlocked() {
