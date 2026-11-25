@@ -4,6 +4,7 @@
 
 #include "view/media_detail_view.hpp"
 #include "view/rail_scroll_frame.hpp"
+#include "view/list_scroll_frame.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/livetv_actions.hpp"
 #include "view/recycling_grid.hpp"
@@ -6129,7 +6130,9 @@ void MediaDetailView::showMultiToggleDialog(
     // Scrollable, height-capped list.
     auto* listBox = new brls::Box();
     listBox->setAxis(brls::Axis::COLUMN);
-    auto* scroll = new brls::ScrollingFrame();
+    // Row by row: a press onto a row below the edge shows that row, not
+    // several (natural scrolling slid the list for as long as it was held).
+    auto* scroll = new ListScrollFrame();
     scroll->setContentView(listBox);
     float maxH = screenH * 0.5f;
     if (maxH < 180.0f) maxH = 180.0f;
