@@ -3281,7 +3281,7 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
         if (wantRows > availForRows && availForRows > 132.0f) {
             auto* rowsBox = new brls::Box();
             rowsBox->setAxis(brls::Axis::COLUMN);
-            auto* scrollFrame = new brls::ScrollingFrame();
+            auto* scrollFrame = new ListScrollFrame();
             scrollFrame->setContentView(rowsBox);
             scrollFrame->setHeight(availForRows);
             panel->addView(scrollFrame);
@@ -5783,7 +5783,7 @@ void MediaDetailView::showCenteredChoice(const std::string& title,
     if (scrollable) {
         auto* rowsBox = new brls::Box();
         rowsBox->setAxis(brls::Axis::COLUMN);
-        auto* scrollFrame = new brls::ScrollingFrame();
+        auto* scrollFrame = new ListScrollFrame();
         scrollFrame->setContentView(rowsBox);
         const float screenH = platform::viewportHeight();
         float maxRows = screenH * 0.62f;   // leave room for title + margins
@@ -5959,7 +5959,7 @@ void MediaDetailView::showMultiSelectFilter(
     // Scrollable, height-capped value list.
     auto* listBox = new brls::Box();
     listBox->setAxis(brls::Axis::COLUMN);
-    auto* scroll = new brls::ScrollingFrame();
+    auto* scroll = new ListScrollFrame();
     scroll->setContentView(listBox);
     float maxH = screenH * 0.5f;
     if (maxH < 180.0f) maxH = 180.0f;

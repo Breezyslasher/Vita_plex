@@ -3,6 +3,7 @@
  */
 
 #include "activity/login_activity.hpp"
+#include "view/list_scroll_frame.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
@@ -1061,7 +1062,7 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
         std::floor(brls::Application::contentHeight * 0.42f / rowStride));
     const float probesH    = std::min(static_cast<float>(totalConnections), maxVisible) * rowStride;
 
-    auto* scroll = new brls::ScrollingFrame();
+    auto* scroll = new ListScrollFrame();   // row by row, as the dialogs' lists
     scroll->setWidth(innerW);
     scroll->setHeight(probesH);
     scroll->setMarginTop(18);
