@@ -34,6 +34,32 @@
 ---
 <table>
   <tr>
+    <th colspan="2" align="center">Audio Track Dialog</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.1.9</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/audio_track.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/audio_track.png" width="400"/></td>
+  </tr>
+</table>
+<table>
+  <tr>
+    <th colspan="2" align="center">Subtitle Dialog</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.1.9</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/Subtitle.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/Subtitle.png" width="400"/></td>
+  </tr>
+</table>
+<table>
+  <tr>
     <th colspan="2" align="center">Music Queue Mobile</th>
   </tr>
   <tr>
