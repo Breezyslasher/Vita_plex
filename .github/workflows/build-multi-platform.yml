@@ -698,7 +698,10 @@ jobs:
       # than built, so that every app ships the same file of a version: the
       # first app to load it in a boot is the one all of them talk to. Keep
       # SC_TAG on the release whose commit lib/vita-shell-companion is pinned
-      # to, so the client built into VitaPlex and the plugin match.
+      # to, so the client built into VitaPlex and the plugin match. The
+      # submodule is at a050cd7, which only moved the files into vita/ and
+      # common/: the plugin it builds is byte-identical to Alpha-0.0.5's
+      # (0.3.2), so that release stays until one is made from a050cd7 or later.
       - name: Download shell_companion plugin
         env:
           SC_TAG: Alpha-0.0.5

@@ -45,6 +45,8 @@
 #include <borealis/core/input.hpp>
 #include <borealis/core/util.hpp>
 #include <borealis/core/view.hpp>
+
+#include <cmath>  // VitaPlex patch: std::fabs in drawHighlight
 #include <borealis/views/applet_frame.hpp>
 #include <fstream>
 
@@ -705,12 +707,28 @@ void View::drawHighlight(NVGcontext* vg, Theme theme, float alpha, Style style, 
 
         NVGcolor highlightColor1 = theme["brls/highlight/color1"];
 
+        // VitaPlex patch: a view filled with (nearly) the ring's own colour,
+        // like the player's gold play button, hid its focus ring: the ring
+        // is white on it instead, and so is the halo around it.
+        bool ringOnOwnColour = false;
+        if (this->background == ViewBackground::SHAPE_COLOR && this->backgroundColor.a > 0.6f)
+        {
+            const float d = std::fabs(this->backgroundColor.r - highlightColor1.r) +
+                std::fabs(this->backgroundColor.g - highlightColor1.g) +
+                std::fabs(this->backgroundColor.b - highlightColor1.b);
+            if (d < 0.45f)
+            {
+                ringOnOwnColour = true;
+                highlightColor1 = nvgRGB(255, 255, 255);
+            }
+        }
+
         NVGcolor pulsationColor = RGBAf((color * highlightColor1.r) + (1 - color) * highlightColor1.r,
             (color * highlightColor1.g) + (1 - color) * highlightColor1.g,
             (color * highlightColor1.b) + (1 - color) * highlightColor1.b,
             alpha);
 
-        NVGcolor borderColor = theme["brls/highlight/color2"];
+        NVGcolor borderColor = ringOnOwnColour ? nvgRGB(255, 255, 255) : theme["brls/highlight/color2"];
         borderColor.a        = 0.5f * alpha * this->getAlpha();
 
         float strokeWidth = style["brls/highlight/stroke_width"];

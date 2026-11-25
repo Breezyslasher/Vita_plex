@@ -1068,17 +1068,17 @@ int main() {
     target_sources(${PROJECT_NAME} PRIVATE
         src/utils/background_audio_psv.cpp
         src/utils/shell_companion_psv.cpp
-        ${SC_DIR}/client/shell_companion.c
-        ${SC_DIR}/client/sc_files.c
-        ${SC_DIR}/client/sc_cover.c
-        ${SC_DIR}/client/sc_link_stub.S
+        ${SC_DIR}/vita/client/shell_companion.c
+        ${SC_DIR}/vita/client/sc_files.c
+        ${SC_DIR}/vita/client/sc_cover.c
+        ${SC_DIR}/vita/client/sc_link_stub.S
         lib/libshellaudio/ShellAudio.c
         lib/libshellaudio/shellsvc_stub.S)
     target_include_directories(${PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio
         ${CMAKE_CURRENT_SOURCE_DIR}/src/handover_psv
-        ${SC_DIR}/include
-        ${SC_DIR}/client)
+        ${SC_DIR}/common
+        ${SC_DIR}/vita/client)
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         VITAPLEX_TITLEID=\"${VITA_TITLEID}\")
 elseif(PLATFORM_SWITCH)

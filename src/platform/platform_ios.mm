@@ -48,17 +48,20 @@ namespace platform {
 
 const ImageConstraints& getImageConstraints() {
 #if TARGET_OS_TV
-    // Apple TV runs at 1920x1080 (4K downsampled by tvOS for UI). It's a
-    // living-room device viewed from couch distance, so use the desktop
-    // landscape numbers verbatim — large covers, big fonts.
+    // Apple TV: viewed from couch distance, so large covers and big fonts.
+    // The UI is laid out 1280 wide whatever the TV (Application::
+    // setWindowSize), so the grid has to fit in 1280 less the sidebar and
+    // the library page's padding (40 + 20): 6 columns of 220 did not even
+    // fit without a sidebar, and the fifth and sixth ran off the screen.
+    // 4 of 216 do with a sidebar up to 340 (1280 - 340 - 60 = 880 >= 864).
     static const ImageConstraints landscape = {
         /* posterWidth        */ 200,
         /* posterHeight       */ 300,
         /* squareCoverSize    */ 200,
         /* landscapeWidth     */ 280,
         /* landscapeHeight    */ 158,
-        /* gridColumns        */   6,
-        /* gridCellSpacing    */  20,
+        /* gridColumns        */   4,
+        /* gridCellSpacing    */  16,
         /* titleFontSize      */  20,
         /* subtitleFontSize   */  16,
         /* descriptionFontSize*/  14,
@@ -79,7 +82,7 @@ const ImageConstraints& getImageConstraints() {
         /* maxLiveTVChannelChars    */  24,
 
         /* sidebarMinWidth          */ 300,
-        /* sidebarMaxWidth          */ 500,
+        /* sidebarMaxWidth          */ 340,
 
         /* dialogWidth              */ 640,
 
