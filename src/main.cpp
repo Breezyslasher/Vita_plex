@@ -16,6 +16,9 @@
 
 #include <borealis.hpp>
 #include <nanovg.h>
+#ifdef __ANDROID__
+#include <SDL2/SDL.h>   // the screen-keyboard hint
+#endif
 #ifdef USE_LIBROMFS
 #include <romfs/romfs.hpp>
 #endif
@@ -69,6 +72,25 @@ static void loadCjkFallbackFont() {
     }
 #endif
 }
+
+// One keyboard at a time on Android. Text fields open borealis' own
+// on-screen keyboard (EditTextDialog) when a remote or controller is in use,
+// and SDL_StartTextInput(), which that dialog also calls, raised Android's
+// keyboard on top of it (a TV screenshot: both at once). SDL shows the
+// system keyboard only while SDL_HINT_ENABLE_SCREEN_KEYBOARD is on (SDL
+// 2.32: on Android that is all StartTextInput does besides enabling text
+// events), so it follows the input in use: touch gets Android's keyboard
+// (borealis hides its own then), a remote or controller gets borealis'.
+// A hardware keyboard still types either way.
+#ifdef __ANDROID__
+static void followInputForScreenKeyboard() {
+    auto apply = [](brls::InputType t) {
+        SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, t == brls::InputType::TOUCH ? "1" : "0");
+    };
+    apply(brls::Application::getInputType());
+    brls::Application::getGlobalInputTypeChangeEvent()->subscribe(apply);
+}
+#endif
 
 static void registerCustomViews() {
     brls::Application::registerXMLView("MediaItemCell", vitaplex::MediaItemCell::create);
@@ -161,6 +183,9 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     // Create window
     brls::Application::createWindow(APP_DISPLAY_NAME);
     loadCjkFallbackFont();
+#ifdef __ANDROID__
+    followInputForScreenKeyboard();
+#endif
 
     // Set theme colors (Plex-like)
     brls::Application::getPlatform()->getThemeVariant();
