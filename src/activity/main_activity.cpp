@@ -27,6 +27,9 @@
 #if defined(__ANDROID__)
 #include <SDL2/SDL_system.h>
 #endif
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -178,6 +181,12 @@ void MainActivity::onContentAvailable() {
         brls::Application::setHoldAToOpenMenu(true);
         brls::Logger::info("MainActivity: Android TV detected — hold-OK opens Options menu");
     }
+#elif defined(__APPLE__) && TARGET_OS_TV
+    // The same on Apple TV: the Siri Remote has no Menu/Guide key the app
+    // gets (its Menu button is Back), so holding the click (SDL's Return,
+    // borealis' A) is the only way to reach an Options menu.
+    brls::Application::setHoldAToOpenMenu(true);
+    brls::Logger::info("MainActivity: Apple TV — hold-OK opens Options menu");
 #endif
 
     if (tabFrame) {
@@ -231,7 +240,7 @@ void MainActivity::onContentAvailable() {
         // the same button every media cell uses for its Options/context menu.
         // Reusing START (rather than Y) means the editor inherits the app's
         // existing context-menu plumbing for free, including Android TV's
-        // hold-Enter helper: SDL_IsAndroidTV() enables setHoldAToOpenMenu, so a
+        // hold-Enter helper: Android TV and Apple TV enable setHoldAToOpenMenu, so a
         // held OK fires a synthetic GUIDE that the rootBox handler below
         // re-dispatches to the focused view's START action — which now walks up
         // to this one. Registered on the sidebar view (the ancestor of every
