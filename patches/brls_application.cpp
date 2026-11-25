@@ -1252,6 +1252,17 @@ void Application::deferLayout(View* view)
     layoutPending = true;
 }
 
+// A cell under a popup was on the focus stack, to get the focus back when
+// the popup closed; its grid was rebuilt meanwhile, the cell deleted, and
+// closing the popup gave the focus to freed memory. The next button press
+// walked the freed view's actions (a Vita crash dump: data abort in
+// handleAction copying a MediaItemCell's action list, its memory reused).
+void Application::forgetFocus(View* view)
+{
+    for (View*& v : focusStack)
+        if (v == view) v = nullptr;
+}
+
 void Application::forgetLayout(View* view)
 {
     g_deferredLayout.erase(std::remove(g_deferredLayout.begin(), g_deferredLayout.end(), view), g_deferredLayout.end());
@@ -1359,7 +1370,14 @@ bool Application::popActivity(TransitionAnimation animation, std::function<void(
     {
         View* newFocus = Application::focusStack[Application::focusStack.size() - 1];
 
-        if (!toShow || newFocus->getParentActivity() == toShow)
+        // VitaPlex patch: the saved view was deleted meanwhile
+        // (forgetFocus): the activity shown again picks its own focus.
+        if (!newFocus)
+        {
+            if (toShow)
+                Application::giveFocus(toShow->getContentView());
+        }
+        else if (!toShow || newFocus->getParentActivity() == toShow)
         {
             Logger::debug("Giving focus to {}, and removing it from the focus stack", newFocus->describe());
             Application::giveFocus(newFocus);

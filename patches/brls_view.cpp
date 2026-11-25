@@ -1643,6 +1643,8 @@ View::~View()
     // Focus sanity check
     if (Application::getCurrentFocus() == this)
         Application::giveFocus(nullptr);
+    // VitaPlex patch: nor kept to be given the focus back later.
+    Application::forgetFocus(this);
 
     Application::tryDeinitFirstResponder(this);
     for (GestureRecognizer* recognizer : this->gestureRecognizers)

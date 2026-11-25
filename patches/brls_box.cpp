@@ -246,6 +246,11 @@ void Box::removeView(View* view, bool free)
     if (!found)
         return;
 
+    // VitaPlex patch: nor remembered as the child to focus again (only
+    // clearViews forgot it): getDefaultFocus would hand out the removed view.
+    if (lastFocusedView == view)
+        lastFocusedView = nullptr;
+
     // Remove it
     if (!view->isDetached())
         YGNodeRemoveChild(this->ygNode, view->getYGNode());
