@@ -60,6 +60,8 @@ int sceAppMgrReceiveEventNum(int* eventNum);
 int sceAppMgrReceiveEvent(void* event);
 int sceAppMgrAcquireBgmPortWithPriority(int priority);
 int sceAppMgrReleaseBgmPort(void);
+// visibility 0 hidden, 1 shown; color 0 black; transparency 0 opaque.
+int sceAppMgrSetInfobarState(int visibility, int color, int transparency);
 // patches/psv_platform.cpp's: the main loop's pace while VitaPlex is left.
 void vitaplex_set_app_away(bool away);
 }
@@ -379,8 +381,17 @@ void onDeactivate(SceInt64 now) {
     }
 }
 
+// The system's status bar (clock, battery) off. As a non-game app (gdc, see
+// CMakeLists.txt) VitaPlex has it shown over the top of its screen, which hid
+// the top 30 px of every page: the UI is laid out for the whole 960x544.
+void hideStatusBar(const char* when) {
+    const int rc = sceAppMgrSetInfobarState(0, 0, 0);
+    if (rc < 0) brls::Logger::warning("[bgaudio] status bar not hidden ({}): {}", when, hex(rc));
+}
+
 // In front again: the main loop at its own pace.
 void onActivate() {
+    hideStatusBar("in front again");
     vitaplex_set_app_away(false);
     g_away = false;
     brls::Logger::info("[bgaudio] activated (in front again)");
@@ -1751,6 +1762,7 @@ void init(int outsideMusic) {
     g_outsideMusic = outsideMusic;
     g_keepPlaying = outsideMusic != kOutsideStops;
     shellcomp::init();
+    hideStatusBar("start");
     brls::Logger::info("[bgaudio] music after leaving: {}",
                        outsideMusic == kOutsidePlaysOn     ? "plays on, then SceShell"
                        : outsideMusic == kOutsideHandsOver ? "SceShell at once"
