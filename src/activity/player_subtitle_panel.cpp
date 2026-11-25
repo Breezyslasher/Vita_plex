@@ -34,6 +34,66 @@ namespace vitaplex {
 
 namespace {
 
+// The panel's row of controls, which wraps onto a second line on a narrow
+// screen. Box's own navigation follows the order of the children, so Right
+// from the end of the first line went down to the second and Up / Down did
+// nothing. Here Left / Right stay on the line, and Up / Down go to the
+// nearest control on the line above / below.
+class WrapRow : public brls::Box {
+  public:
+    WrapRow() : brls::Box(brls::Axis::ROW) {}
+
+    brls::View* getNextFocus(brls::FocusDirection direction, brls::View* currentView) override {
+        if (!currentView) return nullptr;
+        const float cy = currentView->getY();
+        const float cx = currentView->getX() + currentView->getWidth() / 2.0f;
+        const bool horizontal = direction == brls::FocusDirection::LEFT ||
+                                direction == brls::FocusDirection::RIGHT;
+        const bool forward = direction == brls::FocusDirection::RIGHT ||
+                             direction == brls::FocusDirection::DOWN;
+
+        // Up / Down: the y of the nearest line that way.
+        float lineY = 0.0f;
+        bool haveLine = false;
+        if (!horizontal) {
+            for (brls::View* c : getChildren()) {
+                if (c == currentView || c->getVisibility() != brls::Visibility::VISIBLE) continue;
+                const float y = c->getY();
+                if (std::fabs(y - cy) < 1.0f) continue;
+                if (forward ? y < cy : y > cy) continue;
+                if (!haveLine || (forward ? y < lineY : y > lineY)) {
+                    lineY = y;
+                    haveLine = true;
+                }
+            }
+            if (!haveLine) return nullptr;
+        }
+
+        brls::View* best = nullptr;
+        float bestDist = 0.0f;
+        for (brls::View* c : getChildren()) {
+            if (c == currentView || c->getVisibility() != brls::Visibility::VISIBLE) continue;
+            brls::View* focus = c->getDefaultFocus();
+            if (!focus) continue;
+            const float x = c->getX() + c->getWidth() / 2.0f;
+            float dist;
+            if (horizontal) {
+                if (std::fabs(c->getY() - cy) >= 1.0f) continue;   // another line
+                if (forward ? x <= cx : x >= cx) continue;
+                dist = std::fabs(x - cx);
+            } else {
+                if (std::fabs(c->getY() - lineY) >= 1.0f) continue;
+                dist = std::fabs(x - cx);
+            }
+            if (!best || dist < bestDist) {
+                best = focus;
+                bestDist = dist;
+            }
+        }
+        return best;   // none: focus stays where it is
+    }
+};
+
 // SUB_SEARCH is a list with no drop-down of its own: it opens from the
 // language list, or by itself when subtitles are turned on and there are none.
 // SUB_AUDIO is the audio track list, opened from the OSD's Audio pill with
@@ -122,7 +182,7 @@ void PlayerActivity::showSubtitlePanel() {
         heading->setMarginBottom(ui(14));
         m_subPanel->addView(heading);
 
-        auto* row = new brls::Box(brls::Axis::ROW);
+        auto* row = new WrapRow();
         row->setAlignItems(brls::AlignItems::FLEX_END);
         // On a phone the five controls are wider than the screen: what does
         // not fit (Timing, then Style) goes onto a second line instead of
@@ -182,9 +242,7 @@ void PlayerActivity::showSubtitlePanel() {
                 return true;
             });
             pill->addGestureRecognizer(new brls::TapGestureRecognizer(pill));
-            // The row is the whole panel: Up and Down stay in it.
-            pill->setCustomNavigationRoute(brls::FocusDirection::UP, pill);
-            pill->setCustomNavigationRoute(brls::FocusDirection::DOWN, pill);
+            // The row is the whole panel: WrapRow keeps Up and Down in it.
 
             col->addView(pill);
             row->addView(col);
