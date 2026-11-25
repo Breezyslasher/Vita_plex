@@ -39,6 +39,28 @@ void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height
         return;
     }
 
+    // A full-screen video goes to the screen's edges, past the safe area
+    // the UI is kept in (Application::setWindowSize): on Apple TV, 80 px at
+    // the sides and 60 at the top and bottom, which otherwise showed the
+    // app's background as a frame around the picture. The UI is drawn
+    // translated by the inset and scaled by windowScale, so the whole
+    // window is, in the view's units, from -inset / scale and
+    // window / scale wide. The margin is black, as letterboxing is.
+    const float scale = brls::Application::windowScale;
+    const bool insets = brls::Application::safeInsetLeft > 0 || brls::Application::safeInsetTop > 0 ||
+                        brls::Application::safeInsetRight > 0 || brls::Application::safeInsetBottom > 0;
+    if (insets && scale > 0 && width >= brls::Application::contentWidth - 1 &&
+        height >= brls::Application::contentHeight - 1) {
+        x = -brls::Application::safeInsetLeft / scale;
+        y = -brls::Application::safeInsetTop / scale;
+        width = (float)brls::Application::windowWidth / scale;
+        height = (float)brls::Application::windowHeight / scale;
+        nvgBeginPath(vg);
+        nvgRect(vg, x, y, width, height);
+        nvgFillColor(vg, nvgRGB(0, 0, 0));
+        nvgFill(vg);
+    }
+
     // Calculate video dimensions while maintaining aspect ratio
     float videoWidth = (float)player.getVideoWidth();
     float videoHeight = (float)player.getVideoHeight();
