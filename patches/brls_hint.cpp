@@ -2,7 +2,9 @@
     VitaPlex patch of borealis's views/hint.cpp (CMakeLists.txt copies it
     over the submodule's): Hints::refillHints leaves the hints as they are
     when the focus's actions would give the same ones. It rebuilt them on
-    every focus change, and with them the layout. Nothing else changed.
+    every focus change, and with them the layout. And a Hint shows the
+    platform's own picture of its button when the app supplies one
+    (hintIconImageResolver), in place of the Switch-style glyph.
 */
 /*
     Copyright 2021 XITRIX
@@ -29,6 +31,8 @@
 #include <borealis/core/util.hpp>
 #include <borealis/views/applet_frame.hpp>
 #include <borealis/views/hint.hpp>
+#include <borealis/views/image.hpp>
+#include <functional>
 
 using namespace brls::literals;
 
@@ -61,6 +65,14 @@ const std::string hintXML = R"xml(
     </brls:Box>
 )xml";
 
+// VitaPlex patch: the app's per-platform button pictures (a resource path,
+// or "" to keep the glyph). Set once at start-up by vitaplex::HintIcons.
+std::function<std::string(ControllerButton)>& hintIconImageResolver()
+{
+    static std::function<std::string(ControllerButton)> resolver;
+    return resolver;
+}
+
 Hint::Hint(std::shared_ptr<Action> action, bool allowAButtonTouch)
     : Box(Axis::ROW)
       , action(action)
@@ -70,6 +82,25 @@ Hint::Hint(std::shared_ptr<Action> action, bool allowAButtonTouch)
 
     icon->setText(getKeyIcon(static_cast<ControllerButton>(action->getButton())));
     hint->setText(action->getHintText());
+
+    // VitaPlex patch: the platform's own picture of the button (✕ / ○ on a
+    // PlayStation, the keyboard key on a desktop, ...) where there is one.
+    if (auto& resolve = hintIconImageResolver())
+    {
+        const ControllerButton shown =
+            InputManager::mapControllerState(static_cast<ControllerButton>(action->getButton()));
+        const std::string path = resolve(shown);
+        if (!path.empty())
+        {
+            auto* picture = new Image();
+            picture->setWidth(26.0f);
+            picture->setHeight(26.0f);
+            picture->setScalingType(ImageScalingType::FIT);
+            picture->setImageFromRes(path);
+            icon->setVisibility(Visibility::GONE);
+            this->addView(picture, 0);
+        }
+    }
 
     if ((action->getButton() != BUTTON_A || allowAButtonTouch) && action->isAvailable() && !Application::isInputBlocks())
     {
