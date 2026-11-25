@@ -60,6 +60,10 @@ modules:
       - -DUSE_STATIC_MBEDTLS_LIBRARY=OFF
       - -DENABLE_TESTING=OFF
       - -DENABLE_PROGRAMS=OFF
+      # The 25.08 SDK's GCC 15 warns on 3.6.2's fixed-length TLS 1.3 labels
+      # (-Wunterminated-string-initialization), and mbedtls builds with
+      # warnings as errors by default.
+      - -DMBEDTLS_FATAL_WARNINGS=OFF
     sources:
       - type: archive
         url: https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.2/mbedtls-3.6.2.tar.bz2
