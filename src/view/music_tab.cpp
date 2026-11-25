@@ -3,6 +3,7 @@
  */
 
 #include "view/music_tab.hpp"
+#include "utils/hang_watch.hpp"
 #include "view/rail_scroll_frame.hpp"
 #include "view/filter_chip.hpp"
 #include "app/plex_palette.hpp"
@@ -231,6 +232,7 @@ void MusicTab::loadSections() {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, aliveWeak]() {
+        hang::TaskNote taskNote("MusicTab::loadSections", aliveWeak);
         brls::Logger::debug("MusicTab: Fetching library sections (async)...");
         PlexClient& client = PlexClient::getInstance();
         std::vector<LibrarySection> allSections;
@@ -248,6 +250,7 @@ void MusicTab::loadSections() {
 
             // Update UI on main thread
             brls::sync([this, musicSections, aliveWeak]() {
+                hang::UiNote uiNote("MusicTab::loadSections result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -297,6 +300,7 @@ void MusicTab::loadSections() {
         } else {
             brls::Logger::error("MusicTab: Failed to fetch sections");
             brls::sync([this, aliveWeak]() {
+                hang::UiNote uiNote("MusicTab::loadSections result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
                 m_loaded = true;
@@ -318,6 +322,7 @@ void MusicTab::loadContent(const std::string& sectionKey) {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, key, aliveWeak]() {
+        hang::TaskNote taskNote("MusicTab::loadContent", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
@@ -327,6 +332,7 @@ void MusicTab::loadContent(const std::string& sectionKey) {
 
             // Update UI on main thread
             brls::sync([this, items, aliveWeak]() {
+                hang::UiNote uiNote("MusicTab::loadContent result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -401,6 +407,7 @@ void MusicTab::loadAlbumsByType(const std::string& sectionKey) {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, key, aliveWeak]() {
+        hang::TaskNote taskNote("MusicTab::loadAlbumsByType", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> allAlbums;
 
@@ -446,6 +453,7 @@ void MusicTab::loadAlbumsByType(const std::string& sectionKey) {
             albums.size(), singles.size(), eps.size(), compilations.size(), soundtracks.size(), live.size(), other.size());
 
         brls::sync([this, albums, singles, eps, compilations, soundtracks, live, other, aliveWeak]() {
+            hang::UiNote uiNote("MusicTab::loadAlbumsByType result");
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
 
@@ -482,6 +490,7 @@ void MusicTab::loadPlaylists() {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, aliveWeak]() {
+        hang::TaskNote taskNote("MusicTab::loadPlaylists", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<Playlist> playlists;
 
@@ -489,6 +498,7 @@ void MusicTab::loadPlaylists() {
             brls::Logger::info("MusicTab: Got {} music playlists", playlists.size());
 
             brls::sync([this, playlists, aliveWeak]() {
+                hang::UiNote uiNote("MusicTab::loadPlaylists result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -543,6 +553,7 @@ void MusicTab::loadCollections(const std::string& sectionKey) {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, key, aliveWeak]() {
+        hang::TaskNote taskNote("MusicTab::loadCollections", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> collections;
 
@@ -550,6 +561,7 @@ void MusicTab::loadCollections(const std::string& sectionKey) {
             brls::Logger::info("MusicTab: Got {} collections for section {}", collections.size(), key);
 
             brls::sync([this, collections, aliveWeak]() {
+                hang::UiNote uiNote("MusicTab::loadCollections result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -579,6 +591,7 @@ void MusicTab::loadCollections(const std::string& sectionKey) {
         } else {
             brls::Logger::debug("MusicTab: No collections for section {}", key);
             brls::sync([this, aliveWeak]() {
+                hang::UiNote uiNote("MusicTab::loadCollections result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -623,6 +636,7 @@ void MusicTab::onPlaylistSelected(const Playlist& playlist) {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, playlistId, playlistTitle, aliveWeak]() {
+        hang::TaskNote taskNote("MusicTab::onPlaylistSelected", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<PlaylistItem> items;
 
@@ -636,6 +650,7 @@ void MusicTab::onPlaylistSelected(const Playlist& playlist) {
             }
 
             brls::sync([this, mediaItems, playlistTitle, playlistId, aliveWeak]() {
+                hang::UiNote uiNote("MusicTab::onPlaylistSelected result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -653,6 +668,7 @@ void MusicTab::onPlaylistSelected(const Playlist& playlist) {
         } else {
             brls::Logger::error("MusicTab: Failed to load playlist content");
             brls::sync([aliveWeak]() {
+                hang::UiNote uiNote("MusicTab::onPlaylistSelected result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
                 brls::Application::notify("Cannot load playlist - server unreachable");
@@ -666,6 +682,7 @@ void MusicTab::playPlaylistWithQueue(const std::string& playlistId, int startInd
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, playlistId, startIndex, userPickedTrack, aliveWeak]() {
+        hang::TaskNote taskNote("MusicTab::playPlaylistWithQueue", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<PlaylistItem> items;
 
@@ -677,6 +694,7 @@ void MusicTab::playPlaylistWithQueue(const std::string& playlistId, int startInd
             }
 
             brls::sync([tracks, startIndex, userPickedTrack, aliveWeak, playlistId]() {
+                hang::UiNote uiNote("MusicTab::playPlaylistWithQueue result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -688,6 +706,7 @@ void MusicTab::playPlaylistWithQueue(const std::string& playlistId, int startInd
             });
         } else {
             brls::sync([]() {
+                hang::UiNote uiNote("MusicTab::playPlaylistWithQueue result");
                 brls::Application::notify("Cannot play playlist - server unreachable");
             });
         }
@@ -702,6 +721,7 @@ void MusicTab::onCollectionSelected(const MediaItem& collection) {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
     asyncRun([this, collectionKey, collectionTitle, aliveWeak]() {
+        hang::TaskNote taskNote("MusicTab::onCollectionSelected", aliveWeak);
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
@@ -709,6 +729,7 @@ void MusicTab::onCollectionSelected(const MediaItem& collection) {
             brls::Logger::info("MusicTab: Got {} items in collection", items.size());
 
             brls::sync([this, items, collectionTitle, aliveWeak]() {
+                hang::UiNote uiNote("MusicTab::onCollectionSelected result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
@@ -737,6 +758,7 @@ void MusicTab::showCreatePlaylistDialog() {
         if (playlistName.empty()) return;
 
         asyncRun([this, playlistName, aliveWeak]() {
+            hang::TaskNote taskNote("MusicTab::showCreatePlaylistDialog", aliveWeak);
             PlexClient& client = PlexClient::getInstance();
             Playlist result;
 
@@ -744,6 +766,7 @@ void MusicTab::showCreatePlaylistDialog() {
                 brls::Logger::info("MusicTab: Created playlist: {}", result.title);
 
                 brls::sync([this, aliveWeak]() {
+                    hang::UiNote uiNote("MusicTab::showCreatePlaylistDialog result");
                     auto alive = aliveWeak.lock();
                     if (!alive || !*alive) return;
 
@@ -752,6 +775,7 @@ void MusicTab::showCreatePlaylistDialog() {
             } else {
                 brls::Logger::error("MusicTab: Failed to create playlist");
                 brls::sync([]() {
+                    hang::UiNote uiNote("MusicTab::showCreatePlaylistDialog result");
                     brls::Application::notify("Failed to create playlist");
                 });
             }
@@ -781,10 +805,12 @@ void MusicTab::showAlbumContextMenu(const MediaItem& album) {
     addDialogButton("Play Now (Clear Queue)", [capturedAlbum, dialog](brls::View*) {
         dialog->dismiss();
         asyncRun([capturedAlbum]() {
+            hang::TaskNote taskNote("MusicTab::showAlbumContextMenu");
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> tracks;
             if (client.fetchChildren(capturedAlbum.ratingKey, tracks) && !tracks.empty()) {
                 brls::sync([tracks]() {
+                    hang::UiNote uiNote("MusicTab::showAlbumContextMenu result");
                     auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                     brls::Application::pushActivity(playerActivity);
                 });
@@ -796,10 +822,12 @@ void MusicTab::showAlbumContextMenu(const MediaItem& album) {
     addDialogButton("Play Next", [capturedAlbum, dialog](brls::View*) {
         dialog->dismiss();
         asyncRun([capturedAlbum]() {
+            hang::TaskNote taskNote("MusicTab::showAlbumContextMenu");
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> tracks;
             if (client.fetchChildren(capturedAlbum.ratingKey, tracks)) {
                 brls::sync([tracks]() {
+                    hang::UiNote uiNote("MusicTab::showAlbumContextMenu result");
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
                         auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
@@ -819,10 +847,12 @@ void MusicTab::showAlbumContextMenu(const MediaItem& album) {
     addDialogButton("Add to Bottom of Queue", [capturedAlbum, dialog](brls::View*) {
         dialog->dismiss();
         asyncRun([capturedAlbum]() {
+            hang::TaskNote taskNote("MusicTab::showAlbumContextMenu");
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> tracks;
             if (client.fetchChildren(capturedAlbum.ratingKey, tracks)) {
                 brls::sync([tracks]() {
+                    hang::UiNote uiNote("MusicTab::showAlbumContextMenu result");
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
                         auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
@@ -879,6 +909,7 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
     addDialogButtonIcon("playlist-plus.png", false, false, "Add to Queue", [capturedPlaylist](brls::View*) {
         std::string playlistId = capturedPlaylist.ratingKey;
         asyncRun([playlistId]() {
+            hang::TaskNote taskNote("MusicTab::showPlaylistOptionsDialog");
             PlexClient& client = PlexClient::getInstance();
             std::vector<PlaylistItem> items;
             if (client.fetchPlaylistItems(playlistId, items) && !items.empty()) {
@@ -887,6 +918,7 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
                     tracks.push_back(item.media);
                 }
                 brls::sync([tracks, playlistId]() {
+                    hang::UiNote uiNote("MusicTab::showPlaylistOptionsDialog result");
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
                         brls::Application::pushActivity(
@@ -899,6 +931,7 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
                 });
             } else {
                 brls::sync([]() {
+                    hang::UiNote uiNote("MusicTab::showPlaylistOptionsDialog result");
                     brls::Application::notify("Cannot queue playlist - server unreachable");
                 });
             }
@@ -911,6 +944,7 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
         std::string playlistTitle = capturedPlaylist.title;
         std::string playlistThumb = capturedPlaylist.thumb.empty() ? capturedPlaylist.composite : capturedPlaylist.thumb;
         asyncRun([playlistId, playlistTitle, playlistThumb]() {
+            hang::TaskNote taskNote("MusicTab::showPlaylistOptionsDialog");
             PlexClient& client = PlexClient::getInstance();
             std::vector<PlaylistItem> items;
             int queued = 0;
@@ -943,6 +977,7 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
 
             DownloadsManager::getInstance().startDownloads();
             brls::sync([queued, skipped]() {
+                hang::UiNote uiNote("MusicTab::showPlaylistOptionsDialog result");
                 std::string msg = "Queued " + std::to_string(queued) + " tracks for download";
                 if (skipped > 0) {
                     msg += " (" + std::to_string(skipped) + " already downloaded)";
@@ -962,12 +997,14 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
                 std::string playlistId = capturedPlaylist.ratingKey;
 
                 asyncRun([this, playlistId, aliveWeak]() {
+                    hang::TaskNote taskNote("MusicTab::showPlaylistOptionsDialog", aliveWeak);
                     PlexClient& client = PlexClient::getInstance();
 
                     if (client.deletePlaylist(playlistId)) {
                         brls::Logger::info("MusicTab: Deleted playlist");
 
                         brls::sync([this, aliveWeak]() {
+                            hang::UiNote uiNote("MusicTab::showPlaylistOptionsDialog result");
                             auto alive = aliveWeak.lock();
                             if (!alive || !*alive) return;
 

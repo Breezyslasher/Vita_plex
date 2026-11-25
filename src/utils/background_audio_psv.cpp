@@ -19,6 +19,7 @@
 #include "player/mpv_player.hpp"
 #include "app/application.hpp"
 #include "utils/http_client.hpp"
+#include "utils/hang_watch.hpp"
 #include "utils/now_playing.hpp"
 #include "utils/shell_companion_psv.hpp"
 
@@ -535,14 +536,41 @@ void quickMenuTick(SceInt64 now) {
     }
 }
 
-// The player's pump held for long, as the watcher sees it each tick: logged
-// once as it passes kPlayerStuckUs and again as it ends, with whether VitaPlex
-// was away. A UI thread stuck in libmpv shows here, the music frozen.
+// The player's pump held for long, or the UI thread not running frames, as the
+// watcher sees it each tick: logged as it passes kPlayerStuckUs, again every
+// kStuckRepeatUs while it lasts, and as it ends, with what holds the pump, what
+// the UI thread is in and which loads are running (utils/hang_watch.hpp).
 constexpr SceInt64 kPlayerStuckUs = 3 * 1000000;
+constexpr SceInt64 kStuckRepeatUs = 10 * 1000000;
+
+std::string stuckReport() {
+    const int64_t nowUs = (int64_t)brls::getCPUTimeUsec();
+    return MpvPlayer::getInstance().hangReport(nowUs) + "; " + hang::report(nowUs);
+}
 
 void watchPlayer(SceInt64 now) {
     static SceInt64 lastFree = 0;
+    static SceInt64 lastReport = 0;
     static bool reported = false;
+    static bool uiReported = false;
+    static SceInt64 uiLastReport = 0;
+
+    // The UI thread, whether or not the pump is what holds it.
+    const int64_t beat = hang::g_uiBeatUs.load();
+    const int64_t uiAgeUs = beat ? (int64_t)brls::getCPUTimeUsec() - beat : 0;
+    if (uiAgeUs > kPlayerStuckUs) {
+        if (!uiReported || now - uiLastReport > kStuckRepeatUs) {
+            brls::Logger::warning("[hang] the UI thread has not run a frame for {:.1f}s{}: {}",
+                                  uiAgeUs / 1e6, g_away ? " (VitaPlex away)" : "",
+                                  stuckReport());
+            uiReported = true;
+            uiLastReport = now;
+        }
+    } else if (uiReported) {
+        brls::Logger::info("[hang] the UI thread runs again");
+        uiReported = false;
+    }
+
     MpvPlayer::Snapshot s;
     if (MpvPlayer::getInstance().trySnapshot(&s)) {
         if (reported)
@@ -553,11 +581,12 @@ void watchPlayer(SceInt64 now) {
         return;
     }
     if (lastFree == 0) lastFree = now;
-    if (!reported && now - lastFree > kPlayerStuckUs) {
+    if (now - lastFree > kPlayerStuckUs && (!reported || now - lastReport > kStuckRepeatUs)) {
+        brls::Logger::warning("[bgaudio] the player's pump held for {:.1f}s{}: {}",
+                              (now - lastFree) / 1e6, g_away ? ", VitaPlex away" : "",
+                              stuckReport());
         reported = true;
-        brls::Logger::warning("[bgaudio] the player's pump held for {:.1f}s{}: the UI thread "
-                              "is stuck in it",
-                              (now - lastFree) / 1e6, g_away ? ", VitaPlex away" : "");
+        lastReport = now;
     }
 }
 

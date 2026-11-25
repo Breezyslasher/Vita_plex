@@ -4,6 +4,7 @@
 
 #include "utils/frame_profiler.hpp"
 #include "app/application.hpp"
+#include "utils/hang_watch.hpp"
 #include "app/video_background.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
@@ -132,7 +133,8 @@ void Application::run() {
 
     // Main loop handled by Borealis
     while (brls::Application::mainLoop()) {
-        // Application keeps running
+        // For the hang report (utils/hang_watch.hpp).
+        hang::uiBeat();
     }
 }
 

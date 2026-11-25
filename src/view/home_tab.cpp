@@ -6,6 +6,7 @@
  */
 
 #include "utils/frame_profiler.hpp"
+#include "utils/hang_watch.hpp"
 #include <algorithm>
 #include <map>
 #include <memory>
@@ -518,12 +519,14 @@ void HomeTab::tuneChannel(const LiveTVChannel& channel) {
     }
 
     asyncRun([channel, tuneCh, programMetadataKey]() {
+        hang::TaskNote taskNote("HomeTab::tuneChannel");
         PlexClient& client = PlexClient::getInstance();
         std::string streamUrl;
         std::string liveSessionUuid;
 
         if (client.tuneLiveTVChannel(tuneCh, streamUrl, liveSessionUuid, programMetadataKey)) {
             brls::sync([streamUrl, liveSessionUuid, channel]() {
+                hang::UiNote uiNote("HomeTab::tuneChannel result");
                 std::string title = channel.title;
                 if (!channel.currentProgram.empty()) title += " - " + channel.currentProgram;
                 Application::getInstance().pushLiveTVPlayerActivity(streamUrl, title, liveSessionUuid);
@@ -531,6 +534,7 @@ void HomeTab::tuneChannel(const LiveTVChannel& channel) {
         } else {
             brls::Logger::error("HomeTab: Failed to tune channel {}", channel.title);
             brls::sync([channel]() {
+                hang::UiNote uiNote("HomeTab::tuneChannel result");
                 brls::Dialog* dialog = new brls::Dialog("Failed to tune channel: " + channel.title);
                 dialog->addButton("OK", []() {});
                 dialog->open();
@@ -583,8 +587,10 @@ void HomeTab::onFocusGained() {
 void HomeTab::removeFromContinueWatching(const MediaItem& item, std::weak_ptr<bool> aliveWeak) {
     const std::string key = item.ratingKey;
     asyncRun([this, key, aliveWeak]() {
+        hang::TaskNote taskNote("HomeTab::removeFromContinueWatching", aliveWeak);
         const bool ok = PlexClient::getInstance().removeFromContinueWatching(key);
         brls::sync([this, key, ok, aliveWeak]() {
+            hang::UiNote uiNote("HomeTab::removeFromContinueWatching result");
             if (!ok) {
                 brls::Application::notify("Couldn't remove it from Continue Watching");
                 return;
@@ -621,6 +627,7 @@ void HomeTab::loadContent() {
 
     // Load continue watching asynchronously
     asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+        hang::TaskNote taskNote("HomeTab::loadContent", aliveWeak);
         brls::Logger::debug("HomeTab: Fetching continue watching (async)...");
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
@@ -632,6 +639,7 @@ void HomeTab::loadContent() {
             for (auto& item : items) item.trimForGrid();
 
             brls::sync([this, items, aliveWeak]() {
+                hang::UiNote uiNote("HomeTab::loadContent result");
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
                 ForeignFocusGuard focusGuard(this);
@@ -648,6 +656,7 @@ void HomeTab::loadContent() {
 
     // Load recently added by fetching from library sections
     asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+        hang::TaskNote taskNote("HomeTab::loadContent", aliveWeak);
         brls::Logger::debug("HomeTab: Fetching library sections for recently added...");
         PlexClient& client = PlexClient::getInstance();
 
@@ -712,6 +721,7 @@ void HomeTab::loadContent() {
 
         // Update UI on main thread
         brls::sync([this, movies, shows, music, aliveWeak]() {
+            hang::UiNote uiNote("HomeTab::loadContent result");
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
             ForeignFocusGuard focusGuard(this);
@@ -745,6 +755,7 @@ static constexpr time_t kLiveTVCacheTTL = 300;  // 5 minutes
 
 void HomeTab::loadRecentChannels() {
     asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+        hang::TaskNote taskNote("HomeTab::loadRecentChannels", aliveWeak);
         std::vector<MediaItem>     recentItems;
         std::vector<MediaItem>     onNow;
         std::vector<MediaItem>     moviesOnNow;
@@ -814,6 +825,7 @@ void HomeTab::loadRecentChannels() {
         }
 
         brls::sync([this, recentItems, onNow, moviesOnNow, sportsOnNow, channels, aliveWeak]() {
+            hang::UiNote uiNote("HomeTab::loadRecentChannels result");
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
             // Revealing a rail (GONE -> VISIBLE) relayouts and repopulates,
