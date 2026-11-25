@@ -31,21 +31,18 @@ void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height
         return;
     }
 
-    MpvPlayer& player = MpvPlayer::getInstance();
-
-    // Get the video image handle (rendered by onRenderUpdate via brls::sync)
-    int videoImage = player.getVideoImage();
-    if (videoImage == 0) {
-        return;
-    }
-
-    // A full-screen video goes to the screen's edges, past the safe area
-    // the UI is kept in (Application::setWindowSize): on Apple TV, 80 px at
-    // the sides and 60 at the top and bottom, which otherwise showed the
-    // app's background as a frame around the picture. The UI is drawn
-    // translated by the inset and scaled by windowScale, so the whole
-    // window is, in the view's units, from -inset / scale and
-    // window / scale wide. The margin is black, as letterboxing is.
+    // Black behind the picture, wherever it does not reach: the player's
+    // background is clear during video, so letterboxing (a film wider than
+    // the screen) and the moments before the first frame showed the app's
+    // grey instead.
+    //
+    // A full-screen video also goes to the screen's edges, past the safe
+    // area the UI is kept in (Application::setWindowSize; only iOS and
+    // Apple TV report one: 80 px at the sides and 60 at the top and bottom
+    // on Apple TV), which otherwise framed the picture in the app's
+    // background. The UI is drawn translated by the inset and scaled by
+    // windowScale, so the whole window is, in the view's units, from
+    // -inset / scale and window / scale wide.
     const float scale = brls::Application::windowScale;
     const bool insets = brls::Application::safeInsetLeft > 0 || brls::Application::safeInsetTop > 0 ||
                         brls::Application::safeInsetRight > 0 || brls::Application::safeInsetBottom > 0;
@@ -55,10 +52,18 @@ void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height
         y = -brls::Application::safeInsetTop / scale;
         width = (float)brls::Application::windowWidth / scale;
         height = (float)brls::Application::windowHeight / scale;
-        nvgBeginPath(vg);
-        nvgRect(vg, x, y, width, height);
-        nvgFillColor(vg, nvgRGB(0, 0, 0));
-        nvgFill(vg);
+    }
+    nvgBeginPath(vg);
+    nvgRect(vg, x, y, width, height);
+    nvgFillColor(vg, nvgRGB(0, 0, 0));
+    nvgFill(vg);
+
+    MpvPlayer& player = MpvPlayer::getInstance();
+
+    // Get the video image handle (rendered by onRenderUpdate via brls::sync)
+    int videoImage = player.getVideoImage();
+    if (videoImage == 0) {
+        return;
     }
 
     // Calculate video dimensions while maintaining aspect ratio
