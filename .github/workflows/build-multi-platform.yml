@@ -1104,7 +1104,7 @@ jobs:
           path: VitaPlex-${{ matrix.arch }}-${{ github.run_number }}.AppImage
 
   # ───────────────────────────────────────────────
-  # Flatpak — org.freedesktop.Platform 24.08 (Flathub target)
+  # Flatpak — org.freedesktop.Platform 25.08 (Flathub target)
   # ───────────────────────────────────────────────
   build-flatpak:
     needs: [resolve-version]
@@ -1112,7 +1112,9 @@ jobs:
     name: Flatpak
     runs-on: ubuntu-24.04
     container:
-      image: bilelmoussaoui/flatpak-github-actions:freedesktop-24.08
+      # flathub-infra's image (bilelmoussaoui's on Docker Hub stops at 24.08,
+      # which is end-of-life). 25.08 is supported; 26.08 is the newest.
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
       options: --privileged
     steps:
       - uses: actions/checkout@v4

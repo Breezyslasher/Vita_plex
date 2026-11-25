@@ -14,7 +14,7 @@
 #     bundle). For Flathub, switch it to `type: git` pinned to a release commit.
 app-id: io.github.breezyslasher.VitaPlex
 runtime: org.freedesktop.Platform
-runtime-version: '24.08'
+runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
 command: VitaPlex
 finish-args:
