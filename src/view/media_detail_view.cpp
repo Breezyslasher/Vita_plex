@@ -3,6 +3,7 @@
  */
 
 #include "view/media_detail_view.hpp"
+#include "view/rail_scroll_frame.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/livetv_actions.hpp"
 #include "view/recycling_grid.hpp"
@@ -235,7 +236,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             m_childrenLabel->setMarginBottom(10);
             m_mediaContentBox->addView(m_childrenLabel);
 
-            m_childrenScroll = new brls::HScrollingFrame();
+            m_childrenScroll = new RailScrollFrame();
             // Episodes use landscape cells, seasons use portrait cells — pick
             // the right platform-tuned row height so covers aren't clipped on
             // non-Vita targets where cells are taller.
@@ -267,7 +268,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             m_extrasLabel->setVisibility(brls::Visibility::GONE);
             m_mediaContentBox->addView(m_extrasLabel);
 
-            m_extrasScroll = new brls::HScrollingFrame();
+            m_extrasScroll = new RailScrollFrame();
             m_extrasScroll->setHeight(platform::getImageConstraints().landscapeRowHeight);
             m_extrasScroll->setMarginBottom(20);
             m_extrasScroll->setVisibility(brls::Visibility::GONE);
@@ -768,7 +769,7 @@ void MediaDetailView::buildMovieLayout() {
         return l;
     };
     auto rowScroll = [](int height) -> brls::HScrollingFrame* {
-        auto* s = new brls::HScrollingFrame();
+        auto* s = new RailScrollFrame();
         s->setHeight(height);
         s->setMarginBottom(16);
         s->setVisibility(brls::Visibility::GONE);
@@ -1137,7 +1138,7 @@ brls::HScrollingFrame* MediaDetailView::createMediaRow(const std::string& title,
     }
     m_musicCategoriesBox->addView(labelRow);
 
-    auto* scrollFrame = new brls::HScrollingFrame();
+    auto* scrollFrame = new RailScrollFrame();
     // Music artist detail page: "Albums", "Related Artists", etc. rows of
     // square covers. Height scales per platform so album art isn't clipped.
     scrollFrame->setHeight(platform::getImageConstraints().squareRowHeight);
@@ -1494,7 +1495,7 @@ void MediaDetailView::buildPeopleAndRecommendedRows(brls::Box* parent) {
     m_peopleLabel->setVisibility(brls::Visibility::GONE);
     parent->addView(m_peopleLabel);
 
-    m_peopleScroll = new brls::HScrollingFrame();
+    m_peopleScroll = new RailScrollFrame();
     m_peopleScroll->setHeight(ic.squareRowHeight);
     m_peopleScroll->setMarginBottom(20);
     m_peopleScroll->setVisibility(brls::Visibility::GONE);
@@ -1513,7 +1514,7 @@ void MediaDetailView::buildPeopleAndRecommendedRows(brls::Box* parent) {
     m_recommendationsLabel->setVisibility(brls::Visibility::GONE);
     parent->addView(m_recommendationsLabel);
 
-    m_recommendationsScroll = new brls::HScrollingFrame();
+    m_recommendationsScroll = new RailScrollFrame();
     m_recommendationsScroll->setHeight(ic.homeRowHeight);
     m_recommendationsScroll->setMarginBottom(20);
     m_recommendationsScroll->setVisibility(brls::Visibility::GONE);

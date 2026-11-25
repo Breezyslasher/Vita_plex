@@ -3,6 +3,7 @@
  */
 
 #include "view/music_tab.hpp"
+#include "view/rail_scroll_frame.hpp"
 #include "view/filter_chip.hpp"
 #include "app/plex_palette.hpp"
 #include "view/media_item_cell.hpp"
@@ -156,7 +157,7 @@ brls::Box* MusicTab::createHorizontalRow(const std::string& title) {
 
     rowBox->addView(headerBox);
 
-    auto* scrollFrame = new brls::HScrollingFrame();
+    auto* scrollFrame = new RailScrollFrame();
     // Top-level music carousels (recently added, favorites) show square album
     // art — row height comes from the platform layer so art isn't clipped.
     scrollFrame->setHeight(platform::getImageConstraints().squareRowHeight);
@@ -354,7 +355,7 @@ brls::Box* MusicTab::createAlbumScrollRow(const std::string& title, const std::v
     titleLabel->setMarginBottom(10);
     rowBox->addView(titleLabel);
 
-    auto* scrollFrame = new brls::HScrollingFrame();
+    auto* scrollFrame = new RailScrollFrame();
     // Category rows (albums, playlists, genres) — square covers.
     scrollFrame->setHeight(platform::getImageConstraints().squareRowHeight);
 
