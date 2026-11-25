@@ -465,6 +465,10 @@ class Application
     inline static std::unordered_map<const char*, int> layoutCauses;
     inline static std::unordered_map<const char*, int> layoutReaders;
     static void forgetLayout(View* view);
+    // VitaPlex patch: a view being deleted leaves the focus stack (its slot
+    // emptied, so the stack still lines up with the activities). Called by
+    // View::~View.
+    static void forgetFocus(View* view);
     static bool isMainThread();
     inline static std::unordered_map<const char*, std::pair<Time, int>> viewDrawSamples;
 
