@@ -5458,6 +5458,10 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     row->setPaddingLeft(uiRow(10));
     row->setPaddingRight(uiRow(10));
     row->setCornerRadius(uiRow(9));
+    // Focused, current and grabbed rows paint their own tints (setQueueGrab,
+    // the focus handler, the current track's gold); borealis' grey focus
+    // fill would cover them.
+    row->setHideHighlightBackground(true);
     row->setFocusable(true);
     row->setMarginBottom(uiRow(kQueueRowGap));
     row->setBackgroundColor(nvgRGBA(0, 0, 0, 0));

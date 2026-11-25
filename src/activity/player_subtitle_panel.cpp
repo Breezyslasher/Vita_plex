@@ -638,7 +638,11 @@ void PlayerActivity::openSubtitlePopup(int which) {
         item->setCornerRadius(ui(8));
         item->setHighlightCornerRadius(ui(8) + 2.5f);
         item->setFocusable(true);
-        if (r.current) item->setBackgroundColor(vitaplex::palette::gold);
+        // The current one is gold; borealis' grey focus fill would cover it.
+        if (r.current) {
+            item->setBackgroundColor(vitaplex::palette::gold);
+            item->setHideHighlightBackground(true);
+        }
 
         auto* label = new brls::Label();
         label->setText(r.name);

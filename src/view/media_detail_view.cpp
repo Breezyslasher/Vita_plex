@@ -1970,6 +1970,7 @@ void MediaDetailView::showPersonResults(const std::string& personName,
                     chip->setCornerRadius(17);
                     chip->setPadding(0, 14, 0, 14);
                     chip->setMarginLeft(8);
+                    chip->setHideHighlightBackground(true);   // the active one stays gold while focused
                     chip->setFocusable(true);
                     chip->setBackgroundColor(personui::surface3());
                     auto* lbl = new brls::Label();
@@ -6035,6 +6036,7 @@ void MediaDetailView::showMultiSelectFilter(
     apply->setMarginTop(10.0f);
     apply->setFocusable(true);
     apply->setHighlightCornerRadius(10.0f);
+    apply->setHideHighlightBackground(true);   // stays gold while focused
     apply->setBackgroundColor(pc::gold());
     auto* applyLbl = new brls::Label();
     applyLbl->setText("Apply");
@@ -6215,6 +6217,7 @@ void MediaDetailView::showMultiToggleDialog(
     apply->setMarginTop(10.0f);
     apply->setFocusable(true);
     apply->setHighlightCornerRadius(10.0f);
+    apply->setHideHighlightBackground(true);   // stays gold while focused
     apply->setBackgroundColor(pc::gold());
     auto* applyLbl = new brls::Label();
     applyLbl->setText("Apply");

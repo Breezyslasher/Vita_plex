@@ -304,7 +304,11 @@ private:
         row->setAlignItems(brls::AlignItems::CENTER);
         row->setHeight(m_rowH);
         row->setFocusable(true);
-        if (grabbed) row->setBackgroundColor(pal::goldTint());
+        if (grabbed) {
+            // The grabbed row is the focused one: keep its gold, not the grey focus fill.
+            row->setBackgroundColor(pal::goldTint());
+            row->setHideHighlightBackground(true);
+        }
 
         // Gold accent rect on the left, like the sidebar's active item — shown
         // when grabbed. Reserves its slot otherwise so labels stay aligned.
