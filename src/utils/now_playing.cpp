@@ -15,6 +15,9 @@
 #include <SDL2/SDL.h>
 #include <jni.h>
 #endif
+#ifdef __vita__
+#include "utils/background_audio.hpp"
+#endif
 
 namespace vitaplex {
 namespace nowplaying {
@@ -267,6 +270,28 @@ void smtcClear();
 }
 void update(const Info& info) { detail::smtcUpdate(info); }
 void clear() { detail::smtcClear(); }
+void setQueue(const std::vector<QueueEntry>&, int64_t) {}
+
+#elif defined(__vita__)  // ---- PS Vita: the quick menu's Music row ----
+
+// background_audio_psv.cpp puts it on the row through VitaPlex's quick menu
+// plugin, and sends the row's presses back through dispatchTransport.
+void update(const Info& info) {
+    bgaudio::quickMenuNowPlaying(info.title, info.artist, info.album, info.artUrl, info.playing);
+}
+void clear() { bgaudio::quickMenuNowPlayingCleared(); }
+void setQueue(const std::vector<QueueEntry>&, int64_t) {}
+
+#elif defined(VITAPLEX_APPLE_NOWPLAYING)  // ---- iOS / tvOS: lock screen + audio session ----
+
+// now_playing_ios.mm: MPNowPlayingInfoCenter, MPRemoteCommandCenter and the
+// AVAudioSession that keeps music playing in the background.
+namespace detail {
+void iosUpdate(const Info& info);
+void iosClear();
+}
+void update(const Info& info) { detail::iosUpdate(info); }
+void clear() { detail::iosClear(); }
 void setQueue(const std::vector<QueueEntry>&, int64_t) {}
 
 #else  // ---- other platforms: no OS media session ----

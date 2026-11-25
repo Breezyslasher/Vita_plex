@@ -34,6 +34,9 @@ struct HttpRequest {
     std::string body;
     std::map<std::string, std::string> headers;
     int timeout = 30;
+    // Seconds to reach the server (name lookup, connection, TLS), within
+    // timeout; 0 for what timeout implies (up to 60 s).
+    int connectTimeout = 0;
     bool followRedirects = true;
 
     // Stop receiving as soon as the response body contains one complete,

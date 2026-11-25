@@ -16,6 +16,6 @@
     android:hint="@string/search_hint"
     android:searchSettingsDescription="@string/search_settings_description"
     android:includeInGlobalSearch="true"
-    android:searchSuggestAuthority="org.VitaPlex.app.search"
+    android:searchSuggestAuthority="@string/search_authority"
     android:searchSuggestIntentAction="android.intent.action.VIEW"
     android:queryAfterZeroResults="false" />

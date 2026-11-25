@@ -26,6 +26,8 @@ on:
         - android
         - aur
         - deb
+        - ios
+        - tvos
       pre_release:
         description: 'Upload artifacts to a GitHub pre-release'
         type: boolean
@@ -163,7 +165,7 @@ jobs:
           git push
 
   upload-release:
-    needs: [ resolve-version, build-mingw, build-nx, build-macos, build-appimage, build-aur, build-ps4, build-vita, build-android ]
+    needs: [ resolve-version, build-mingw, build-nx, build-macos, build-appimage, build-aur, build-ps4, build-vita, build-android, build-ios, build-flatpak ]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -192,12 +194,6 @@ jobs:
             done
             rm -rf "$p"
           done
-      # build-vita's second artifact (the background-test apps and VitaPlex
-      # BG) is for trying on a console, not for release: the Vita globs below
-      # take every .vpk, and the in-app updater installs the first asset
-      # whose name ends in .vpk.
-      - name: Leave out the Vita test packages
-        run: rm -rf VitaPlex-vita-bgtest-*
       # Sign every asset so the in-app updater can verify authenticity before
       # installing (see src/utils/update_verify.cpp): detached ECDSA-P256 /
       # SHA-256 signatures published beside each asset as "<asset>.sig". No-op
@@ -226,7 +222,10 @@ jobs:
               VitaPlex-nx-*/*.nro \
               VitaPlex-ps4-*/* \
               VitaPlex-vita-*/*.vpk \
-              VitaPlex-appimage-*/*.AppImage; do
+              VitaPlex-appimage-*/*.AppImage \
+              VitaPlex-ios-*/*.ipa \
+              VitaPlex-tvos-*/*.ipa \
+              VitaPlex-flatpak-*/*.flatpak; do
             [ -f "$f" ] || continue
             case "$f" in *.sig) continue ;; esac
             openssl dgst -sha256 -sign "$keyfile" -out "$f.sig" "$f"
@@ -259,6 +258,12 @@ jobs:
             VitaPlex-appimage-*/*.AppImage.sig
             VitaPlex-aur-*/*.pkg.tar.*
             VitaPlex-android-*/*
+            VitaPlex-ios-*/*.ipa
+            VitaPlex-ios-*/*.ipa.sig
+            VitaPlex-tvos-*/*.ipa
+            VitaPlex-tvos-*/*.ipa.sig
+            VitaPlex-flatpak-*/*.flatpak
+            VitaPlex-flatpak-*/*.flatpak.sig
       # draft: true above is what keeps the upload working on a repo with
       # immutable releases, but nothing published the draft afterwards, so
       # every tag-triggered release stopped at "Draft" until someone
@@ -275,7 +280,7 @@ jobs:
   # Pre-release — manually triggered
   # ───────────────────────────────────────────────
   upload-prerelease:
-    needs: [resolve-version, build-mingw, build-nx, build-macos, build-appimage, build-aur, build-ps4, build-vita, build-android, build-deb]
+    needs: [resolve-version, build-mingw, build-nx, build-macos, build-appimage, build-aur, build-ps4, build-vita, build-android, build-deb, build-ios, build-flatpak]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -299,9 +304,8 @@ jobs:
           find . -name "*.nro" -print 2>/dev/null || true
           echo "======================================="
 
-          # Vita VPK. VitaPlex.vpk only: build-vita's second artifact holds
-          # the background-test apps and VitaPlex BG, and every file this
-          # loop finds is copied to the same name, the last one winning.
+          # Vita VPK. VitaPlex.vpk only: every file this loop finds is copied
+          # to the same name, the last one winning.
           for f in $(find . -name "VitaPlex.vpk"); do
             cp "$f" "release/VitaPlex.${FVER}.vpk"
           done
@@ -377,6 +381,17 @@ jobs:
           for f in $(find . -name "*.pkg.tar.zst"); do
             cp "$f" "release/VitaPlex.${FVER}-Linux.pkg.tar.zst"
           done
+
+          # iPhone / iPad and Apple TV .ipa (unsigned: sideload with AltStore,
+          # Sideloadly or the like). build-ios uploads VitaPlex-<target>.ipa.
+          for t in ios tvos; do
+            f=$(find . -name "VitaPlex-${t}.ipa" | head -1)
+            [ -n "$f" ] && cp "$f" "release/VitaPlex.${FVER}-${t}.ipa"
+          done
+
+          # Flatpak bundle
+          f=$(find . -name "VitaPlex.flatpak" | head -1)
+          [ -n "$f" ] && cp "$f" "release/VitaPlex.${FVER}.flatpak"
 
           echo "Release files:"
           ls -lh release/
@@ -524,16 +539,16 @@ jobs:
         # a future base swap doesn't fail the build again.
         run: |
           set -eu
-          pkgs_apk="cmake ninja git zstd tar pkgconf"
-          pkgs_apt="cmake ninja-build git zstd tar pkg-config"
+          pkgs_apk="cmake ninja git zstd tar pkgconf patch"
+          pkgs_apt="cmake ninja-build git zstd tar pkg-config patch"
           if command -v apk >/dev/null 2>&1; then
             apk update && apk add $pkgs_apk
           elif command -v apt-get >/dev/null 2>&1; then
             apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $pkgs_apt
           elif command -v dnf >/dev/null 2>&1; then
-            dnf install -y cmake ninja-build git zstd tar pkgconf-pkg-config
+            dnf install -y cmake ninja-build git zstd tar pkgconf-pkg-config patch
           elif command -v pacman >/dev/null 2>&1; then
-            pacman -Sy --noconfirm cmake ninja git zstd tar pkgconf
+            pacman -Sy --noconfirm cmake ninja git zstd tar pkgconf patch
           else
             echo "No supported package manager found; relying on the image's toolchain"
           fi
@@ -543,7 +558,7 @@ jobs:
             elif command -v apt-get >/dev/null 2>&1; then apt-get install -y --no-install-recommends wget
             fi
           fi
-          for tool in cmake ninja git wget; do
+          for tool in cmake ninja git wget patch; do
             command -v "$tool" >/dev/null 2>&1 || { echo "::error::$tool missing after dependency install"; exit 1; }
           done
 
@@ -558,6 +573,23 @@ jobs:
       # transfer that crawls below 100 KB/s for 30s and retries: GitHub's
       # release-asset CDN intermittently serves an edge at dial-up speed,
       # and a retry lands on a healthy one instead of waiting it out.
+      # Compiler cache. Best effort: if ccache cannot be installed the build
+      # below runs as before, only without reuse (see CMakeLists.txt).
+      - name: Install ccache
+        continue-on-error: true
+        run: |
+          if command -v apk >/dev/null 2>&1; then apk add ccache
+          elif command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ccache
+          elif command -v dnf >/dev/null 2>&1; then dnf install -y ccache
+          elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm ccache
+          fi
+          ccache --version | head -1
+      - name: Cache compiled objects
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-vita-${{ github.run_id }}
+          restore-keys: ccache-vita-
       - name: Cache Vita portlibs
         id: cache-vita-portlibs
         uses: actions/cache@v4
@@ -661,35 +693,53 @@ jobs:
 
           git config --system --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Build
+      # vita-shell-companion's SceShell plugin, shipped in the VPK as
+      # module/shell_companion.suprx, taken from the plugin's release rather
+      # than built, so that every app ships the same file of a version: the
+      # first app to load it in a boot is the one all of them talk to. Keep
+      # SC_TAG on the release whose commit lib/vita-shell-companion is pinned
+      # to, so the client built into VitaPlex and the plugin match.
+      - name: Download shell_companion plugin
+        env:
+          SC_TAG: Alpha-0.0.5
         run: |
+          mkdir -p build-sc
+          curl -fsSL --retry 4 --retry-all-errors -o build-sc/shell_companion.suprx \
+            "https://github.com/Breezyslasher/vita-shell-companion/releases/download/$SC_TAG/shell_companion.suprx"
+          ls -l build-sc/shell_companion.suprx
+
+      - name: Build
+        env:
+          VITAPLEX_USE_CCACHE: "1"
+          CCACHE_COMPRESS: "1"
+          CCACHE_MAXSIZE: 600M
+          CCACHE_NOHASHDIR: "1"
+        run: |
+          # In a container job github.workspace is the host's path, so the
+          # cache location comes from the container's own $GITHUB_WORKSPACE.
+          export CCACHE_DIR="$GITHUB_WORKSPACE/.ccache" CCACHE_BASEDIR="$GITHUB_WORKSPACE"
           cmake -B build -G Ninja -DPLATFORM_PSV=ON \
           -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
-          -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
+          -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}" \
+          -DSC_PLUGIN_SUPRX="$GITHUB_WORKSPACE/build-sc/shell_companion.suprx"
           cmake --build build
+          ccache -s 2>/dev/null || true
 
       - name: Upload VPK
         uses: actions/upload-artifact@v4
         with:
           name: VitaPlex-vita-${{ github.run_number }}
           path: build/VitaPlex.vpk
-      # The background-test apps (src/bgtest_psv) and VitaPlex packaged as a
-      # non-game app (VitaPlexBG.vpk); separate so the VitaPlex artifact
-      # stays just VitaPlex.
-      - name: Upload background test VPKs
-        uses: actions/upload-artifact@v4
-        with:
-          name: VitaPlex-vita-bgtest-${{ github.run_number }}
-          path: |
-            build/VitaPlexBgTest-*.vpk
-            build/VitaPlexBG.vpk
+      # The linked ELF, with its symbols, for reading the Vita's crash dumps.
+      # Not the .velf: the conversion to it drops every section, the symbol
+      # table among them. The plugin's is vita-shell-companion's release's.
       - name: Upload ELF
         uses: actions/upload-artifact@v4
         with:
           name: VitaPlex-elf-${{ github.run_number }}
-          path: build/VitaSuwayomi.velf
+          path: |
+            build/VitaPlex
 
-             
   # ───────────────────────────────────────────────
   # Android — switchfin-style APK build
   # ───────────────────────────────────────────────
@@ -698,10 +748,19 @@ jobs:
     if: ${{ inputs.platform == 'android' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: Android
     runs-on: ubuntu-latest
+    env:
+      HAS_PLAY_KEY: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 != '' }}
     steps:
     - uses: actions/checkout@v4
       with:
         submodules: recursive
+    # Java 17 for the Android Gradle plugin, which cannot run on the runner's
+    # default Java once that is newer than it supports ("Unsupported class
+    # file major version 69", build 2108).
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
     - uses: nttld/setup-ndk@v1
       id: setup-ndk
       with:
@@ -764,25 +823,70 @@ jobs:
           mkdir -p "${dst_libdir}"
           find "${src_libdir}" -maxdepth 1 \( -name "*.so" -o -name "*.so.*" \) -exec cp -a {} "${dst_libdir}/" \;
         done
+    # Compiler cache. Best effort: if ccache cannot be installed the build
+    # below runs as before, only without reuse (see CMakeLists.txt).
+    - name: Install ccache
+      continue-on-error: true
+      run: |
+        sudo apt-get install -y --no-install-recommends ccache
+        ccache --version | head -1
+    - name: Cache compiled objects
+      uses: actions/cache@v4
+      with:
+        path: .ccache
+        key: ccache-android-${{ github.run_id }}
+        restore-keys: ccache-android-
     - name: Build APK
       # build_libromfs_generator.sh must run before Gradle/CMake configure because
       # borealis's toolchain.cmake unconditionally checks that the generator binary
       # exists when PLATFORM_ANDROID is set — even though USE_LIBROMFS=OFF means
       # the generator is never actually used to embed anything.
       # Resources are loaded via APK assets (see build.gradle syncBorealisResources).
+      env:
+        VITAPLEX_USE_CCACHE: "1"
+        CCACHE_DIR: ${{ github.workspace }}/.ccache
+        CCACHE_BASEDIR: ${{ github.workspace }}
+        CCACHE_COMPRESS: "1"
+        CCACHE_MAXSIZE: 600M
+        CCACHE_NOHASHDIR: "1"
       run: |
         ${{ github.workspace }}/lib/borealis/build_libromfs_generator.sh
         # Pass the CI-resolved version through to the native cmake build (via
         # build.gradle) so the in-app Settings version matches the APK
         # versionName instead of the possibly-stale VERSION file.
-        cd app/platform/android && ./gradlew assembleRelease \
+        cd app/platform/android && ./gradlew assembleGithubRelease \
           -PappVersion="${{ needs.resolve-version.outputs.version_number }}" \
           -PappDisplayVersion="${{ needs.resolve-version.outputs.version }}"
+        ccache -s 2>/dev/null || true
     - name: Upload dist
       uses: actions/upload-artifact@v4
       with:
         name: VitaPlex-android-${{ github.run_number }}
-        path: app/platform/android/app/build/outputs/apk/release/*.apk
+        path: app/platform/android/app/build/outputs/apk/github/release/*.apk
+    # The Google Play app bundle: only once the upload key is in the
+    # repository's secrets (ANDROID_UPLOAD_KEYSTORE_BASE64, the keystore file
+    # in base64, and VITAPLEX_KEYSTORE_PASSWORD, VITAPLEX_KEY_ALIAS,
+    # VITAPLEX_KEY_PASSWORD). Without it the step is left out.
+    - name: Build Google Play bundle
+      if: ${{ env.HAS_PLAY_KEY == 'true' }}
+      env:
+        KEYSTORE_B64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+        VITAPLEX_KEYSTORE_PASSWORD: ${{ secrets.VITAPLEX_KEYSTORE_PASSWORD }}
+        VITAPLEX_KEY_ALIAS: ${{ secrets.VITAPLEX_KEY_ALIAS }}
+        VITAPLEX_KEY_PASSWORD: ${{ secrets.VITAPLEX_KEY_PASSWORD }}
+      run: |
+        export VITAPLEX_KEYSTORE="${{ runner.temp }}/upload.jks"
+        echo "$KEYSTORE_B64" | base64 -d > "$VITAPLEX_KEYSTORE"
+        cd app/platform/android && ./gradlew bundlePlayRelease \
+          -PappVersion="${{ needs.resolve-version.outputs.version_number }}" \
+          -PappDisplayVersion="${{ needs.resolve-version.outputs.version }}"
+        rm -f "$VITAPLEX_KEYSTORE"
+    - name: Upload Google Play bundle
+      if: ${{ env.HAS_PLAY_KEY == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: VitaPlex-play-bundle-${{ github.run_number }}
+        path: app/platform/android/app/build/outputs/bundle/playRelease/*.aab
 
   # ───────────────────────────────────────────────
   # AppImage — portable Linux (x86_64 + aarch64)
@@ -1020,7 +1124,7 @@ jobs:
           path: VitaPlex-${{ matrix.arch }}-${{ github.run_number }}.AppImage
 
   # ───────────────────────────────────────────────
-  # Flatpak — org.freedesktop.Platform 24.08 (Flathub target)
+  # Flatpak — org.freedesktop.Platform 25.08 (Flathub target)
   # ───────────────────────────────────────────────
   build-flatpak:
     needs: [resolve-version]
@@ -1028,7 +1132,9 @@ jobs:
     name: Flatpak
     runs-on: ubuntu-24.04
     container:
-      image: bilelmoussaoui/flatpak-github-actions:freedesktop-24.08
+      # flathub-infra's image (bilelmoussaoui's on Docker Hub stops at 24.08,
+      # which is end-of-life). 25.08 is supported; 26.08 is the newest.
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
       options: --privileged
     steps:
       - uses: actions/checkout@v4
@@ -1043,6 +1149,22 @@ jobs:
         # builds, missing the build number on dev builds), the same divergence
         # the Android build had. Stamp the resolved version so they match.
         run: echo "${{ needs.resolve-version.outputs.version }}" > VERSION
+      - name: Copy the image's Flatpak installation onto the container's own layer
+        # flatpak-builder (--install-deps-from=flathub) updates the runtime the
+        # image ships whenever Flathub has a newer commit, and the update
+        # failed: "Failed to update org.freedesktop.Sdk: Invalid cross-device
+        # link", then a segfault. Deploying an update renames directories in
+        # /var/lib/flatpak, and on Docker's overlay filesystem renaming a
+        # directory that comes from the image's (lower) layer returns EXDEV.
+        # A copy made in the container is wholly in its own (upper) layer,
+        # where renames work.
+        run: |
+          if [ -d /var/lib/flatpak ]; then
+            cp -a /var/lib/flatpak /var/lib/flatpak.copy
+            rm -rf /var/lib/flatpak
+            mv /var/lib/flatpak.copy /var/lib/flatpak
+            du -sh /var/lib/flatpak
+          fi
       - name: Build Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
@@ -1156,25 +1278,28 @@ jobs:
   # MoltenVK / libplacebo inside Libmpv.xcframework, so the seven Libav*
   # frameworks plus Libmpv are everything we need.
   #
-  # Builds for the SIMULATOR so no code-signing identity is required in CI
-  # (device builds need a provisioning profile). The produced .app runs in
-  # the iOS / tvOS Simulator; for a device install, build locally with
-  # -DPLATFORM=OS64 / TVOS and sign in Xcode.
+  # Builds for real iPhones and iPads (arm64), UNSIGNED, and packs the app
+  # as VitaPlex.ipa. A sideloading tool (Sideloadly, AltStore, SideStore)
+  # signs it with the user's own Apple ID at install, so CI needs no
+  # certificate or provisioning profile and no Mac is needed at home.
+  # tvOS is built the same way; sideloading tools install it on an Apple TV
+  # through a paired Mac or, on Linux/Windows, over the network where the
+  # tool supports it.
+  #
+  # Not a release gate: the release jobs do not wait on it, so a failure
+  # here only costs the .ipa, not the other platforms' downloads.
   # ───────────────────────────────────────────────
   build-ios:
     needs: [resolve-version]
-    # Temporarily disabled — the Apple Mobile (iOS/tvOS) build can't be tested
-    # right now, so it's skipped to keep CI green. Re-enable by restoring:
-    #   if: ${{ inputs.platform == 'ios' || inputs.platform == 'tvos' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
-    if: false
+    if: ${{ inputs.platform == 'ios' || inputs.platform == 'tvos' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: Apple Mobile (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
         include:
-        - { target: ios,  cmake_flag: PLATFORM_IOS,  platform_for_toolchain: SIMULATORARM64,      sdk: iphonesimulator }
-        - { target: tvos, cmake_flag: PLATFORM_TVOS, platform_for_toolchain: SIMULATORARM64_TVOS, sdk: appletvsimulator }
-    runs-on: macos-14
+        - { target: ios,  cmake_flag: PLATFORM_IOS,  platform_for_toolchain: OS64, sdk: iphoneos,  slice: ios-arm64 }
+        - { target: tvos, cmake_flag: PLATFORM_TVOS, platform_for_toolchain: TVOS, sdk: appletvos, slice: tvos-arm64 }
+    runs-on: macos-15
     env:
       # Pin to a release whose asset names match the loop below. All eight
       # frameworks MUST come from the same release so libmpv and its ffmpeg
@@ -1208,11 +1333,12 @@ jobs:
           CURL_VERSION=8.14.1
           PREFIX="${{ github.workspace }}/libcurl-install"
           SDK_PATH=$(xcrun --sdk ${{ matrix.sdk }} --show-sdk-path)
-          if [ "${{ matrix.target }}" = "ios" ]; then
-            MIN_FLAG="-mios-simulator-version-min=14.0"
-          else
-            MIN_FLAG="-mappletvsimulator-version-min=14.0"
-          fi
+          case "${{ matrix.sdk }}" in
+            iphoneos)         MIN_FLAG="-miphoneos-version-min=14.0" ;;
+            iphonesimulator)  MIN_FLAG="-mios-simulator-version-min=14.0" ;;
+            appletvos)        MIN_FLAG="-mappletvos-version-min=14.0" ;;
+            *)                MIN_FLAG="-mappletvsimulator-version-min=14.0" ;;
+          esac
           mkdir -p "$PREFIX"
           cd /tmp
           curl -fL "https://curl.se/download/curl-${CURL_VERSION}.tar.gz" | tar xz
@@ -1250,6 +1376,19 @@ jobs:
         run: |
           echo "LIBCURL_LIBRARY=${{ github.workspace }}/libcurl-install/lib/libcurl.a" >> $GITHUB_ENV
           echo "LIBCURL_INCLUDE=${{ github.workspace }}/libcurl-install/include" >> $GITHUB_ENV
+      # Compiler cache. Best effort: if ccache cannot be installed the build
+      # below runs as before, only without reuse (see CMakeLists.txt).
+      - name: Install ccache
+        continue-on-error: true
+        run: |
+          brew install ccache
+          ccache --version | head -1
+      - name: Cache compiled objects
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-apple-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: ccache-apple-${{ matrix.target }}-
       - name: Build libromfs-generator
         # borealis's iOS / tvOS toolchain requires this generator to be
         # built ahead of configure (it embeds resources/ via libromfs).
@@ -1326,6 +1465,13 @@ jobs:
           echo "Frameworks staged:"; ls -la "$FW_DIR"
           test -d "$FW_DIR/Libmpv.xcframework"
       - name: Configure
+        env:
+          VITAPLEX_USE_CCACHE: "1"
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_COMPRESS: "1"
+          CCACHE_MAXSIZE: 600M
+          CCACHE_NOHASHDIR: "1"
         run: |
           cmake -G Xcode -B build \
             -D${{ matrix.cmake_flag }}=ON \
@@ -1339,21 +1485,70 @@ jobs:
             -DLIBCURL_INCLUDE_DIR=${{ env.LIBCURL_INCLUDE }} \
             -DLIBCURL_LIBRARY=${{ env.LIBCURL_LIBRARY }}
       - name: Build
+        env:
+          VITAPLEX_USE_CCACHE: "1"
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_BASEDIR: ${{ github.workspace }}
+          CCACHE_COMPRESS: "1"
+          CCACHE_MAXSIZE: 600M
+          CCACHE_NOHASHDIR: "1"
+          # Xcode passes options ccache would otherwise refuse to cache.
+          CCACHE_SLOPPINESS: clang_index_store,ivfsoverlay,include_file_ctime,include_file_mtime,modules,pch_defines,time_macros,system_headers
         run: |
           cmake --build build --config Release -- \
             -sdk ${{ matrix.sdk }} \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          ccache -s 2>/dev/null || true
       - name: Locate and stage .app
         run: |
           APP="$(find build -name 'VitaPlex.app' -type d | head -1)"
           if [ -z "$APP" ]; then echo "VitaPlex.app not produced"; exit 1; fi
           echo "Built: $APP"
           mkdir -p stage && cp -R "$APP" stage/
-      - name: Upload app
+      - name: Embed the dynamic frameworks
+        # Any framework the binary loads through @rpath has to ship inside
+        # the app (VitaPlex.app/Frameworks) on a device, or it dies at launch
+        # with "Library not loaded". Copy each from its xcframework's device
+        # slice; static ones are already linked in and are skipped.
+        run: |
+          set -eu
+          APP="stage/VitaPlex.app"
+          BIN="$APP/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Info.plist")"
+          FW_DIR="${{ github.workspace }}/mpv-frameworks"
+          mkdir -p "$APP/Frameworks"
+          embedded=0
+          for dep in $(otool -L "$BIN" | awk '/@rpath\/.*\.framework/ {print $1}'); do
+            name=$(echo "$dep" | sed -E 's|@rpath/([^/]+)\.framework/.*|\1|')
+            src=$(ls -d "$FW_DIR"/*.xcframework/${{ matrix.slice }}/"$name".framework 2>/dev/null | head -1 || true)
+            if [ -z "$src" ]; then echo "::warning::no ${{ matrix.slice }} slice for $name"; continue; fi
+            echo "Embedding $name from $src"
+            cp -R "$src" "$APP/Frameworks/"
+            embedded=$((embedded + 1))
+          done
+          if [ "$embedded" -gt 0 ] && ! otool -l "$BIN" | grep -q '@executable_path/Frameworks'; then
+            install_name_tool -add_rpath @executable_path/Frameworks "$BIN"
+          fi
+          [ "$embedded" -gt 0 ] || rmdir "$APP/Frameworks"
+          echo "Embedded $embedded framework(s)"
+          otool -L "$BIN"
+      - name: Pack .ipa
+        run: |
+          set -eu
+          # What a sideloading tool reads to decide iPhone/iPad vs Apple TV.
+          echo "Info.plist platform keys:"
+          plutil -p stage/VitaPlex.app/Info.plist \
+            | grep -E -A3 'CFBundleSupportedPlatforms|UIDeviceFamily|DTPlatformName|DTSDKName|MinimumOSVersion' || true
+          mkdir -p ipa/Payload
+          cp -R stage/VitaPlex.app ipa/Payload/
+          # Named per device: both used to be VitaPlex.ipa, and the iPhone one
+          # is easy to pick for an Apple TV by mistake.
+          (cd ipa && zip -qry ../VitaPlex-${{ matrix.target }}.ipa Payload)
+          ls -la VitaPlex-${{ matrix.target }}.ipa
+      - name: Upload .ipa
         uses: actions/upload-artifact@v4
         with:
           name: VitaPlex-${{ matrix.target }}-${{ github.run_number }}
-          path: stage/VitaPlex.app
+          path: VitaPlex-${{ matrix.target }}.ipa
 
   # ───────────────────────────────────────────────
   # PS4
@@ -1419,7 +1614,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - { tag: Silicon, arch: arm64, target: "11.0", runner: macos-14 }
+        - { tag: Silicon, arch: arm64, target: "11.0", runner: macos-15 }
         - { tag: Intel, arch: x86_64, target: "11.0", runner: macos-15-intel }
     runs-on: ${{ matrix.runner }}
     steps:

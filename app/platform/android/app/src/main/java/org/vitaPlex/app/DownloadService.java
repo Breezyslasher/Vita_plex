@@ -81,6 +81,23 @@ public final class DownloadService extends Service {
         return START_NOT_STICKY;
     }
 
+    // Android 15 on, a data-sync foreground service gets 6 hours a day: past
+    // them the system calls this, and a service still in the foreground a few
+    // seconds later crashes the app. It leaves the foreground and stops; the
+    // download goes on for as long as the process lives, as it does when
+    // startForeground is refused.
+    @Override
+    public void onTimeout(int startId, int fgsType) {
+        Log.w(TAG, "foreground time used up (Android's daily limit for downloads): leaving the foreground");
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_DETACH);
+            else stopForeground(false);
+        } catch (Throwable t) {
+            Log.w(TAG, "stopForeground failed", t);
+        }
+        stopSelf();
+    }
+
     @Override
     public void onDestroy() {
         releaseLocks();

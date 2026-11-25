@@ -6,6 +6,11 @@
 
 #include <algorithm>   // std::max in seekRelative
 #include "player/mpv_player.hpp"
+#if defined(__ANDROID__)
+#include <sys/stat.h>  // mkdir
+#include <unistd.h>    // getcwd, symlink
+#endif
+#include "utils/pip.h"
 #include "app/application.hpp"
 #include "platform/platform.hpp"
 #include "utils/background_audio.hpp"
@@ -245,7 +250,8 @@ bool MpvPlayer::init() {
     // Subtitles follow the platform's accessibility caption settings where it
     // has any. Someone who set large high-contrast captions system-wide was
     // still getting small white text here. valid is false on every port that
-    // exposes nothing, so their subtitle styling is untouched.
+    // exposes nothing, so their subtitle styling is untouched. The caption
+    // size goes in with the Subtitle Size setting, below.
     {
         const auto& cs = platform::getSystemCaptionStyle();
         if (cs.valid) {
@@ -255,10 +261,6 @@ bool MpvPlayer::init() {
                 snprintf(buf, sizeof(buf), "#%08X", argb);
                 return std::string(buf);
             };
-            if (cs.fontScale > 0.01f && cs.fontScale != 1.0f) {
-                mpv_set_option_string(m_mpv, "sub-scale",
-                                      std::to_string(cs.fontScale).c_str());
-            }
             if (cs.hasForeground) {
                 mpv_set_option_string(m_mpv, "sub-color",
                                       argbToMpv(cs.foreground).c_str());
@@ -294,6 +296,26 @@ bool MpvPlayer::init() {
                     break;
             }
         }
+    }
+
+    // Subtitle Size, with the system caption size (Application::subtitleScale).
+    // A change after this point reaches mpv through applySubtitleSize().
+    {
+        char scale[16];
+        snprintf(scale, sizeof(scale), "%.3f",
+                 Application::subtitleScale(Application::getInstance().getSettings().subtitleSize));
+        mpv_set_option_string(m_mpv, "sub-scale", scale);
+    }
+
+    // A Style picked in the subtitle panel other than the first.
+    if (Application::getInstance().getSettings().subtitleStyle != 0) {
+        const int style = Application::getInstance().getSettings().subtitleStyle;
+        mpv_set_option_string(m_mpv, "sub-color", style == 2 ? "#FFFFE14D" : "#FFFFFFFF");
+        mpv_set_option_string(m_mpv, "sub-border-color", "#FF000000");
+        mpv_set_option_string(m_mpv, "sub-back-color", style == 1 ? "#C0000000" : "#00000000");
+        mpv_set_option_string(m_mpv, "sub-border-size", style == 1 ? "0" : style == 3 ? "5" : "3");
+        mpv_set_option_string(m_mpv, "sub-shadow-offset", style == 3 ? "1" : "0");
+        if (style == 1) mpv_set_option_string(m_mpv, "sub-border-style", "background-box");
     }
 
     // Audio passthrough. Without it mpv decodes Dolby/DTS to PCM and downmixes
@@ -336,6 +358,64 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "sub-fonts-dir", "sdmc:/VitaPlex");
     mpv_set_option_string(m_mpv, "watch-later-dir", "sdmc:/VitaPlex/watch-later");
     mpv_set_option_string(m_mpv, "gpu-shader-cache-dir", "sdmc:/VitaPlex/cache");
+#endif
+
+    // A font for subtitles and mpv's own messages. libass finds fonts through
+    // a system font provider (fontconfig, CoreText, DirectWrite), and these
+    // ports have none: an Android log has "can't find selected font provider"
+    // and "failed to find any fallback ... for font: (sans-serif ...)", and a
+    // subtitle loaded into mpv (sid=1, timed right) never showed on screen,
+    // while the ones the server burned into the picture did. The app ships
+    // DejaVu Sans with its resources; libass is pointed at that folder and
+    // asked for it by name. (iOS / tvOS have CoreText, the desktops their
+    // own providers.)
+#if defined(__ANDROID__) || defined(__vita__) || defined(__PS4__) || defined(__SWITCH__)
+    {
+        std::string fontDir = RESOURCE_PREFIX "font";
+        // Characters DejaVu Sans lacks (Chinese, Japanese, Korean) come from
+        // a CJK font. With no font provider, libass's only fallback is
+        // "subfont.ttf" in mpv's config folder, which it uses when the chosen
+        // font has no glyph for a character (FreeType reads it from disk as
+        // needed). The app ships one (resources/cjk, Noto Sans CJK cut down
+        // to the common characters). mpv looks in its config folder only with
+        // "config" on; the folder holds nothing else for it to load.
+        std::string cjkDir = RESOURCE_PREFIX "cjk";
+#if defined(__ANDROID__)
+        // resources/ is relative to the folder the assets were extracted to.
+        char cwd[1024];
+        if (getcwd(cwd, sizeof(cwd))) {
+            fontDir = std::string(cwd) + "/" + fontDir;
+            cjkDir = std::string(cwd) + "/" + cjkDir;
+            // The device's own CJK font has every character; a link to it is
+            // used instead when there is one.
+            static const char* kSystemCjk[] = {
+                "/system/fonts/NotoSansCJK-Regular.ttc",
+                "/system/fonts/NotoSansCJKjp-Regular.otf",
+                "/system/fonts/NotoSansSC-Regular.otf",
+                "/system/fonts/NotoSansJP-Regular.otf",
+                "/system/fonts/DroidSansFallbackFull.ttf",
+                "/system/fonts/DroidSansFallback.ttf",
+            };
+            for (const char* f : kSystemCjk) {
+                if (access(f, R_OK) != 0) continue;
+                const std::string dir = std::string(cwd) + "/mpv";
+                mkdir(dir.c_str(), 0700);
+                const std::string link = dir + "/subfont.ttf";
+                unlink(link.c_str());
+                if (symlink(f, link.c_str()) == 0) cjkDir = dir;
+                break;
+            }
+        }
+#endif
+        mpv_set_option_string(m_mpv, "sub-font-provider", "none");
+        mpv_set_option_string(m_mpv, "sub-fonts-dir", fontDir.c_str());
+        mpv_set_option_string(m_mpv, "osd-fonts-dir", fontDir.c_str());
+        mpv_set_option_string(m_mpv, "sub-font", "DejaVu Sans");
+        mpv_set_option_string(m_mpv, "osd-font", "DejaVu Sans");
+        mpv_set_option_string(m_mpv, "config", "yes");
+        mpv_set_option_string(m_mpv, "config-dir", cjkDir.c_str());
+        brls::Logger::info("MpvPlayer: subtitle font from {}, fallback from {}", fontDir, cjkDir);
+    }
 #endif
 
     // ========================================
@@ -496,7 +576,19 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "5");  // Read 5 seconds ahead
         mpv_set_option_string(m_mpv, "demuxer-max-bytes", "512KiB");  // Allow some buffering for audio
 
-        // The background-audio experiment (utils/background_audio.hpp).
+        // ffmpeg's stream probe (avformat_find_stream_info) of an MP3 reads
+        // to its byte limit, 5 MB, as the Vita's mp3_vita decoder gives no
+        // frame size and the stream never looks complete ("Could not find
+        // codec parameters ... unspecified frame size"). Three MP3s on the
+        // card took 1.0 to 1.3 s to open, 0.8 s of it before that warning,
+        // where an M4A took 0.35 s (logs 72ac5052, b63e93ca, d87c0489). The
+        // limit is 256 KiB here, what the probe finds the same. mpv detects
+        // the format with a buffer of its own, which this leaves alone (mpv
+        // 0.36, demux/demux_lavf.c). demuxer-lavf-probe-info, which skips the
+        // probe, crashed on the Vita (below).
+        mpv_set_option_string(m_mpv, "demuxer-lavf-probesize", "262144");
+
+        // Music after leaving the app (utils/background_audio.hpp).
         // ao_vita opens the BGM port for anything under 48 kHz and the MAIN
         // port at 48 kHz, and the BGM port is the one an app may keep once it
         // is not in front. Most music is 44.1 kHz already; this makes it all.
@@ -584,7 +676,7 @@ bool MpvPlayer::init() {
     {
         const auto& vc = platform::getVideoConstraints();
         std::string headerFields =
-            std::string("X-Plex-Client-Identifier: ") + PLEX_CLIENT_NAME + "," +
+            std::string("X-Plex-Client-Identifier: ") + PLEX_CLIENT_ID + "," +
             "X-Plex-Product: " + PLEX_CLIENT_NAME + "," +
             "X-Plex-Version: " + PLEX_CLIENT_VERSION + "," +
             "X-Plex-Platform: " + vc.plexPlatform + "," +
@@ -818,10 +910,20 @@ void MpvPlayer::setAudioOnly(bool audioOnly) {
 }
 
 bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
-                        int64_t expectedDurationMs, double startSec) {
+                        int64_t expectedDurationMs, double startSec, bool startPaused) {
     // Set before anything can fail, and unconditionally, so a value from the
     // previous track can never be read against this one.
     m_expectedDurationMs.store(expectedDurationMs);
+    m_streamRefused.store(false);
+
+    // The picture back for this file, should the last have had it turned off.
+    if (m_videoDisabled) {
+        m_videoDisabled = false;
+        if (m_mpv && !m_audioOnly) {
+            const char* value = "auto";
+            mpv_set_property_async(m_mpv, 0, "vid", MPV_FORMAT_STRING, &value);
+        }
+    }
 
     // A terminated core accepts commands and never runs them, so rebuild
     // it before loading rather than queueing into a dead handle. init()
@@ -907,7 +1009,6 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
 #endif
 
     brls::Logger::info("MpvPlayer: Loading URL: {}", redactTokensInUrl(normalizedUrl));
-    if (m_audioOnly) bgaudio::onTrackLoad();
 
     m_currentUrl = normalizedUrl;
     m_playbackInfo = MpvPlaybackInfo();
@@ -936,13 +1037,16 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
     }
 #endif
 
-    // Every new file starts playing, at startSec. Both are set here on every
-    // load, so nothing can carry over from before: not the pause keep-open
-    // applies at the end of a track, not a pause pressed while nothing was
-    // loaded, not an earlier load's start point. mpv runs requests from one
-    // client in order on its core thread, so these land ahead of the loadfile.
-    int unpaused = 0;
-    mpv_set_property_async(m_mpv, 0, "pause", MPV_FORMAT_FLAG, &unpaused);
+    // Every new file starts playing, at startSec, unless asked to start
+    // paused there. Both are set here on every load, so nothing can carry over
+    // from before: not the pause keep-open applies at the end of a track, not
+    // a pause pressed while nothing was loaded, not an earlier load's start
+    // point. mpv runs requests from one client in order on its core thread, so
+    // these land ahead of the loadfile. Paused, mpv still opens the file and
+    // fills its audio buffer, and sends PLAYBACK_RESTART, which update()
+    // reads the pause flag at (mpv 0.36, player/playloop.c).
+    int pauseFlag = startPaused ? 1 : 0;
+    mpv_set_property_async(m_mpv, 0, "pause", MPV_FORMAT_FLAG, &pauseFlag);
     char startStr[32] = "none";
     if (startSec > 0.0) snprintf(startStr, sizeof(startStr), "%.3f", startSec);
     const char* startArg = startStr;
@@ -1237,6 +1341,18 @@ void MpvPlayer::setVideoTrack(int track) {
     mpv_set_property_async(m_mpv, 0, "vid", MPV_FORMAT_INT64, &vid);
 }
 
+void MpvPlayer::setVideoEnabled(bool enabled) {
+    if (m_audioOnly) return;   // no picture either way
+    if (enabled == !m_videoDisabled) return;
+    m_videoDisabled = !enabled;
+    if (!m_mpv || m_stopping) return;
+    // Asked without waiting for it, as setVideoTrack asks: the UI thread
+    // must not wait on mpv's core while that tears a video output down.
+    const char* value = enabled ? "auto" : "no";
+    mpv_set_property_async(m_mpv, 0, "vid", MPV_FORMAT_STRING, &value);
+    brls::Logger::info("MpvPlayer: picture {}", enabled ? "on" : "off (the sound plays on)");
+}
+
 void MpvPlayer::disableSubtitles() {
     if (!m_mpv || m_stopping) return;
 
@@ -1291,6 +1407,11 @@ std::vector<MpvPlayer::TrackInfo> MpvPlayer::getTrackList(const std::string& typ
         mpv_get_property(m_mpv, prop, MPV_FORMAT_FLAG, &def);
         info.isDefault = (def != 0);
 
+        snprintf(prop, sizeof(prop), "track-list/%lld/albumart", (long long)i);
+        int art = 0;
+        mpv_get_property(m_mpv, prop, MPV_FORMAT_FLAG, &art);
+        info.albumArt = (art != 0);
+
         tracks.push_back(info);
     }
 
@@ -1303,10 +1424,67 @@ void MpvPlayer::setSubtitleDelay(double seconds) {
     mpv_set_property_async(m_mpv, 0, "sub-delay", MPV_FORMAT_DOUBLE, &seconds);
 }
 
+void MpvPlayer::setSubtitlePosition(int percent) {
+    if (!m_mpv || m_stopping) return;
+    int64_t pos = percent;
+    mpv_set_property_async(m_mpv, 0, "sub-pos", MPV_FORMAT_INT64, &pos);
+}
+
 void MpvPlayer::setAudioDelay(double seconds) {
     if (!m_mpv || m_stopping) return;
 
     mpv_set_property_async(m_mpv, 0, "audio-delay", MPV_FORMAT_DOUBLE, &seconds);
+}
+
+void MpvPlayer::applySubtitleSize() {
+    if (!m_mpv || m_stopping) return;
+
+    double scale = Application::subtitleScale(Application::getInstance().getSettings().subtitleSize);
+    mpv_set_property_async(m_mpv, 0, "sub-scale", MPV_FORMAT_DOUBLE, &scale);
+}
+
+// The look of text subtitles (SRT and the like; styled ASS keeps its own).
+// Every property is set each time, so going from one style to another leaves
+// nothing of the first behind. Style 0 is what the player starts with: the
+// system's caption style where it has one (see the init), else mpv's own.
+void MpvPlayer::applySubtitleStyle() {
+    if (!m_mpv || m_stopping) return;
+    const int style = Application::getInstance().getSettings().subtitleStyle;
+
+    std::string color = "#FFFFFFFF", border = "#FF000000", back = "#00000000";
+    std::string borderSize = "3", shadow = "0", borderStyle = "outline-and-shadow";
+    if (style == 0) {
+        const auto& cs = platform::getSystemCaptionStyle();
+        if (cs.valid) {
+            char buf[16];
+            if (cs.hasForeground) { snprintf(buf, sizeof(buf), "#%08X", cs.foreground); color = buf; }
+            if (cs.hasBackground) { snprintf(buf, sizeof(buf), "#%08X", cs.background); back = buf; }
+            if (cs.hasEdgeColor)  { snprintf(buf, sizeof(buf), "#%08X", cs.edgeColor); border = buf; }
+            if (cs.edgeType >= 2 && cs.edgeType <= 4) shadow = "2";
+        }
+    } else if (style == 1) {          // white on a dark box
+        back = "#C0000000";
+        borderSize = "0";
+        borderStyle = "background-box";
+    } else if (style == 2) {          // yellow
+        color = "#FFFFE14D";
+    } else if (style == 3) {          // heavy outline
+        borderSize = "5";
+        shadow = "1";
+    }
+
+    auto set = [this](const char* name, const std::string& value) {
+        const char* v = value.c_str();   // MPV_FORMAT_STRING takes a char**
+        mpv_set_property_async(m_mpv, 0, name, MPV_FORMAT_STRING, &v);
+    };
+    // Older mpv has no sub-border-style; the async set then fails quietly and
+    // the box is drawn behind the glyphs only, which still reads as a box.
+    set("sub-border-style", borderStyle);
+    set("sub-color", color);
+    set("sub-border-color", border);
+    set("sub-back-color", back);
+    set("sub-border-size", borderSize);
+    set("sub-shadow-offset", shadow);
 }
 
 void MpvPlayer::toggleSubtitles() {
@@ -1317,7 +1495,7 @@ void MpvPlayer::toggleSubtitles() {
     m_subtitlesVisible = !m_subtitlesVisible;
 }
 
-void MpvPlayer::loadSubtitleUrl(const std::string& url) {
+void MpvPlayer::loadSubtitleUrl(const std::string& url, bool select) {
     if (!m_mpv || m_stopping) return;
 
     std::string subUrl = url;
@@ -1334,8 +1512,12 @@ void MpvPlayer::loadSubtitleUrl(const std::string& url) {
 #endif
 
     brls::Logger::info("MpvPlayer: Loading external subtitle: {}", redactTokensInUrl(subUrl));
-    const char* cmd[] = {"sub-add", subUrl.c_str(), "auto", NULL};
+    const char* cmd[] = {"sub-add", subUrl.c_str(), select ? "select" : "auto", NULL};
     mpv_command_async(m_mpv, 0, cmd);
+    if (select) {
+        const char* yes = "yes";
+        mpv_set_property_async(m_mpv, 0, "sub-visibility", MPV_FORMAT_STRING, &yes);
+    }
     m_subtitlesVisible = true;
 }
 
@@ -1357,6 +1539,17 @@ MpvPlayer::Snapshot MpvPlayer::snapshot() {
     s.position = m_playbackInfo.position;
     s.outSampleRate = m_playbackInfo.outSampleRate;
     return s;
+}
+
+bool MpvPlayer::trySnapshot(Snapshot* out) {
+    std::unique_lock<std::recursive_mutex> pump(m_pumpMutex, std::try_to_lock);
+    if (!pump.owns_lock()) return false;
+    out->state = m_state.load();
+    out->initialized = m_mpv != nullptr;
+    out->audioOnly = m_audioOnly;
+    out->position = m_playbackInfo.position;
+    out->outSampleRate = m_playbackInfo.outSampleRate;
+    return true;
 }
 
 double MpvPlayer::getPosition() const {
@@ -1549,6 +1742,11 @@ void MpvPlayer::eventMainLoop() {
                     // exists to stop. Every level goes through it; the cost is
                     // a copy on a line we were already formatting.
                     const std::string text = redactTokensInUrl(msg->text ? msg->text : "");
+                    // A stream that dropped, its reconnect refused: "HTTP
+                    // error 400 Bad Request", three times, 13 to 17 s after
+                    // a transcode decision for the queue's next song (logs
+                    // 7c97dfa5, 6f40de92). See streamRefused().
+                    if (text.find("HTTP error 4") != std::string::npos) m_streamRefused.store(true);
                     if (msg->log_level <= MPV_LOG_LEVEL_ERROR) {
                         brls::Logger::error("mpv {}: {}", msg->prefix, text);
                     } else if (msg->log_level <= MPV_LOG_LEVEL_WARN) {
@@ -1953,8 +2151,15 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
             mpv_render_context_render(player->m_mpvRenderCtx, swParams);
             mpv_render_context_report_swap(player->m_mpvRenderCtx);
 
+            // iPhone PiP: a copy of the frame for its video layer.
+            if (pip::wantsFrames())
+                pip::pushFrameRGBA(player->m_videoBuffer.data(), player->m_videoWidth,
+                                   player->m_videoHeight, swStride);
+
+            // Not to the screen while the app is in the background (in PiP):
+            // a GL call there gets an iOS app killed.
             NVGcontext* vg = brls::Application::getNVGContext();
-            if (vg && player->m_nvgImage != 0) {
+            if (vg && player->m_nvgImage != 0 && brls::Application::canUploadTextures()) {
                 nvgUpdateImage(vg, player->m_nvgImage, player->m_videoBuffer.data());
             }
 #endif

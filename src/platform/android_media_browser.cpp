@@ -16,6 +16,12 @@
 
 #ifdef __ANDROID__
 
+#include <algorithm>
+#include <atomic>
+#include <cstring>
+#include <random>
+#include <set>
+
 #include <SDL2/SDL.h>
 #include <jni.h>
 
@@ -69,6 +75,21 @@ struct BrowseRow {
     std::string iconUri;
     int flags = FLAG_BROWSABLE;
 };
+
+// A library the user hid (Settings, Manage Hidden Libraries): left out of the
+// browser and its searches, as it is out of the sidebar and Home.
+bool isHiddenLibrary(const std::string& sectionKey) {
+    if (sectionKey.empty()) return false;
+    const std::string& csv = Application::getInstance().getSettings().hiddenLibraries;
+    size_t at = 0;
+    while (at <= csv.size()) {
+        size_t end = csv.find(',', at);
+        if (end == std::string::npos) end = csv.size();
+        if (csv.compare(at, end - at, sectionKey) == 0 && end - at == sectionKey.size()) return true;
+        at = end + 1;
+    }
+    return false;
+}
 
 bool startsWith(const std::string& s, const std::string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
@@ -189,6 +210,7 @@ std::vector<BrowseRow> loadRoot(PlexClient& client) {
     if (client.fetchLibrarySections(sections)) {
         for (const auto& s : sections) {
             if (s.type != "artist") continue;  // music libraries only
+            if (isHiddenLibrary(s.key)) continue;
             BrowseRow r;
             r.id      = "lib/" + s.key;
             r.title   = s.title;
@@ -255,6 +277,51 @@ std::vector<BrowseRow> loadChildrenOf(PlexClient& client, const std::string& rat
     return rows;
 }
 
+// An artist: its albums (/children), then its singles, EPs, compilations and
+// the rest, which /children leaves out (PlexClient::artistReleaseCategories),
+// each with its kind beside its year. One list, not a folder a kind: a car's
+// screen is better with fewer levels to go through.
+std::vector<BrowseRow> loadArtist(PlexClient& client, const std::string& artistKey) {
+    std::vector<BrowseRow> rows = loadChildrenOf(client, artistKey, false);
+
+    MediaItem artist;
+    if (!client.fetchMediaDetails(artistKey, artist) || artist.librarySectionKey.empty())
+        return rows;
+
+    std::set<std::string> seen;
+    for (const auto& r : rows) seen.insert(r.id);
+    std::vector<BrowseRow> typed;
+    for (const auto& cat : PlexClient::artistReleaseCategories()) {
+        for (const char* filter : cat.filters) {
+            std::vector<MediaItem> items;
+            if (!client.fetchArtistAlbumsByFilter(artist.librarySectionKey, artistKey, filter,
+                                                  items))
+                continue;
+            for (const auto& it : items) {
+                const std::string id = "album/" + it.ratingKey;
+                if (!seen.insert(id).second) continue;
+                BrowseRow r;
+                r.id       = id;
+                r.title    = it.title;
+                r.subtitle = it.year > 0 ? std::string(cat.label) + " \xC2\xB7 " +
+                                               std::to_string(it.year)
+                                         : std::string(cat.label);
+                r.iconUri  = artUri(client, it.thumb);
+                r.flags    = FLAG_BROWSABLE | FLAG_PLAYABLE;
+                typed.push_back(std::move(r));
+            }
+        }
+    }
+    // /children can hold the typed releases too: shown once, with their kind.
+    std::set<std::string> typedIds;
+    for (const auto& r : typed) typedIds.insert(r.id);
+    std::vector<BrowseRow> out;
+    for (auto& r : rows)
+        if (!typedIds.count(r.id)) out.push_back(std::move(r));
+    for (auto& r : typed) out.push_back(std::move(r));
+    return out;
+}
+
 std::vector<BrowseRow> loadPlaylists(PlexClient& client) {
     std::vector<BrowseRow> rows;
     std::vector<Playlist> playlists;
@@ -304,7 +371,7 @@ std::vector<BrowseRow> resolveNode(const std::string& parentId) {
     if (startsWith(parentId, "lib/"))
         return loadArtists(client, suffixAfter(parentId, "lib/"));
     if (startsWith(parentId, "artist/"))
-        return loadChildrenOf(client, suffixAfter(parentId, "artist/"), false);
+        return loadArtist(client, suffixAfter(parentId, "artist/"));
     if (startsWith(parentId, "album/"))
         return loadChildrenOf(client, suffixAfter(parentId, "album/"), true);
     if (startsWith(parentId, "playlist/"))
@@ -317,8 +384,163 @@ std::vector<BrowseRow> resolveNode(const std::string& parentId) {
 // default track action. Runs on a worker thread (it does network I/O), hopping
 // to the UI loop only to touch the queue. Shared by the media-id and the
 // voice-search entry points below.
-void playMediaId(const std::string& mediaId) {
+// Requests to play from outside the app (Android Auto, the Assistant): each
+// takes the next number, and only the newest is carried out. With the app
+// closed, every tap and spoken request waits for it to start, and all of them
+// then started at once, each in a player of its own, fighting over the one
+// player underneath: five in 1.3 s, and no music (log 67c6ed49).
+std::atomic<uint64_t> g_playRequest{0};
+
+bool superseded(uint64_t request, const std::string& what) {
+    if (request == g_playRequest.load()) return false;
+    brls::Logger::info("MediaBrowser: {} passed over: a newer request came", what);
+    return true;
+}
+
+std::string lowerCase(std::string s) {
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+// A title or spoken phrase reduced to what speech can carry, for comparing
+// the two: lowercase, apostrophes gone (' ` and the curly ones Plex titles
+// often use, so "Don't" and "dont" are the same), "&" read as "and", other
+// punctuation as a space ("AC/DC" is "ac dc"), spaces collapsed. Letters
+// outside ASCII (Beyoncé) are kept as they are.
+std::string matchKey(const std::string& text) {
+    std::string out;
+    bool space = true;  // drops leading spaces and runs of them
+    auto put = [&](const std::string& piece) {
+        for (char c : piece) {
+            if (c == ' ') {
+                if (!space) out += ' ';
+                space = true;
+            } else {
+                out += c;
+                space = false;
+            }
+        }
+    };
+    for (size_t i = 0; i < text.size(); i++) {
+        const unsigned char c = (unsigned char)text[i];
+        // U+2018 / U+2019, the curly apostrophes: E2 80 98 / E2 80 99.
+        if (c == 0xE2 && i + 2 < text.size() && (unsigned char)text[i + 1] == 0x80 &&
+            ((unsigned char)text[i + 2] == 0x98 || (unsigned char)text[i + 2] == 0x99)) {
+            i += 2;
+            continue;
+        }
+        if (c == '\'' || c == '`') continue;
+        if (c == '&') { put(" and "); continue; }
+        if (c >= 0x80 || std::isalnum(c)) { put(std::string(1, (char)std::tolower(c))); continue; }
+        put(" ");
+    }
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+
+// Prefix on a media id from a voice request that asked for shuffle.
+const char* const kShufflePrefix = "shuffle:";
+
+// All of an artist's tracks, across their albums and other releases.
+std::vector<MediaItem> fetchArtistTracks(PlexClient& client, const std::string& sectionKey,
+                                         const std::string& artistKey) {
+    std::vector<MediaItem> tracks;
+    MediaItem artist;
+    if (!client.fetchMediaDetails(artistKey, artist)) return tracks;
+
+    auto byArtist = [&](const MediaItem& t) {
+        return t.type == "track" &&
+               (t.grandparentRatingKey == artistKey ||
+                matchKey(t.grandparentTitle) == matchKey(artist.title));
+    };
+
+    // One request for the lot. The results are checked against the artist, so
+    // a server that ignores the filter cannot hand back the whole library.
+    if (!sectionKey.empty()) {
+        std::vector<MediaItem> all;
+        if (client.fetchLibraryContent(sectionKey, all, 10, 500, 0, nullptr,
+                                       "&artist.id=" + artistKey)) {
+            for (auto& t : all)
+                if (byArtist(t)) tracks.push_back(std::move(t));
+        }
+        if (!tracks.empty()) return tracks;
+    }
+
+    // Otherwise album by album.
+    std::vector<MediaItem> albums;
+    if (!client.fetchChildren(artistKey, albums)) return tracks;
+    for (size_t i = 0; i < albums.size() && i < 30; i++) {
+        std::vector<MediaItem> albumTracks;
+        if (!client.fetchChildren(albums[i].ratingKey, albumTracks)) continue;
+        for (auto& t : albumTracks)
+            if (t.type == "track") tracks.push_back(std::move(t));
+    }
+    return tracks;
+}
+
+// A random mix from the first music library that is not hidden.
+std::vector<MediaItem> fetchLibraryMix(PlexClient& client) {
+    std::vector<MediaItem> tracks;
+    std::vector<LibrarySection> sections;
+    if (!client.fetchLibrarySections(sections)) return tracks;
+    for (const auto& s : sections) {
+        if (s.type != "artist" || isHiddenLibrary(s.key)) continue;
+        std::vector<MediaItem> items;
+        if (client.fetchLibraryContent(s.key, items, 10, 100, 0, nullptr, "&sort=random")) {
+            for (auto& t : items)
+                if (t.type == "track") tracks.push_back(std::move(t));
+        }
+        if (!tracks.empty()) break;
+    }
+    return tracks;
+}
+
+// A genre's name matched against each visible music library's genres, exact
+// match first. Returns {section, genre key}, or empty strings.
+std::pair<std::string, std::string> findGenre(PlexClient& client, const std::string& name) {
+    const std::string want = matchKey(name);
+    if (want.empty()) return {};
+    std::vector<LibrarySection> sections;
+    if (!client.fetchLibrarySections(sections)) return {};
+    std::pair<std::string, std::string> partial;
+    for (const auto& s : sections) {
+        if (s.type != "artist" || isHiddenLibrary(s.key)) continue;
+        std::vector<GenreItem> genres;
+        if (!client.fetchGenreItems(s.key, genres)) continue;
+        for (const auto& g : genres) {
+            const std::string have = matchKey(g.title);
+            if (have == want) return {s.key, g.key};
+            if (partial.first.empty() && !have.empty() &&
+                (have.find(want) != std::string::npos || want.find(have) != std::string::npos))
+                partial = {s.key, g.key};
+        }
+    }
+    return partial;
+}
+
+// A shuffled mix of a genre: Plex tags genres on albums, so this takes the
+// tracks of up to 15 of the genre's albums picked at random.
+std::vector<MediaItem> fetchGenreMix(PlexClient& client, const std::string& sectionKey,
+                                     const std::string& genreKey) {
+    std::vector<MediaItem> tracks;
+    std::vector<MediaItem> albums;
+    if (!client.fetchByGenreKey(sectionKey, genreKey, albums, 9)) return tracks;
+    std::shuffle(albums.begin(), albums.end(), std::mt19937(std::random_device{}()));
+    for (size_t i = 0; i < albums.size() && i < 15; i++) {
+        std::vector<MediaItem> albumTracks;
+        if (!client.fetchChildren(albums[i].ratingKey, albumTracks)) continue;
+        for (auto& t : albumTracks)
+            if (t.type == "track") tracks.push_back(std::move(t));
+    }
+    return tracks;
+}
+
+void playMediaId(const std::string& requestedId, uint64_t request) {
     if (!ensureClientReady()) return;
+    if (superseded(request, requestedId)) return;
+
+    const bool shuffle = startsWith(requestedId, kShufflePrefix);
+    const std::string mediaId = shuffle ? suffixAfter(requestedId, kShufflePrefix) : requestedId;
 
     PlexClient& client = PlexClient::getInstance();
     std::vector<MediaItem> tracks;
@@ -376,6 +598,20 @@ void playMediaId(const std::string& mediaId) {
         if (client.fetchPlaylistItems(suffixAfter(mediaId, "playlist/"), items)) {
             for (const auto& pi : items) tracks.push_back(pi.media);
         }
+    } else if (startsWith(mediaId, "artistsongs/")) {
+        // artistsongs/<section>/<artist>: everything by an artist, shuffled.
+        const std::string rest = suffixAfter(mediaId, "artistsongs/");
+        const size_t slash = rest.find('/');
+        if (slash == std::string::npos) return;
+        tracks = fetchArtistTracks(client, rest.substr(0, slash), rest.substr(slash + 1));
+    } else if (mediaId == "librarymix") {
+        tracks = fetchLibraryMix(client);
+    } else if (startsWith(mediaId, "genremix/")) {
+        // genremix/<section>/<genre key>
+        const std::string rest = suffixAfter(mediaId, "genremix/");
+        const size_t slash = rest.find('/');
+        if (slash == std::string::npos) return;
+        tracks = fetchGenreMix(client, rest.substr(0, slash), rest.substr(slash + 1));
     }
 
     if (tracks.empty()) {
@@ -383,7 +619,17 @@ void playMediaId(const std::string& mediaId) {
         return;
     }
 
-    brls::sync([tracks, startIndex, singlePick]() {
+    // A shuffle request mixes what is about to play. A single song stays
+    // where it is: there is nothing to mix before it starts.
+    if ((shuffle || startsWith(mediaId, "artistsongs/")) && !singlePick) {
+        std::shuffle(tracks.begin(), tracks.end(), std::mt19937(std::random_device{}()));
+        startIndex = 0;
+    }
+    brls::Logger::info("MediaBrowser: {} -> {} track(s){}", mediaId, tracks.size(),
+                       shuffle ? ", shuffled" : "");
+
+    brls::sync([tracks, startIndex, singlePick, request, mediaId]() {
+        if (superseded(request, mediaId)) return;
         MusicQueue& queue = MusicQueue::getInstance();
         TrackDefaultAction action =
             vitaplex::Application::getInstance().getSettings().trackDefaultAction;
@@ -403,8 +649,20 @@ void playMediaId(const std::string& mediaId) {
             // singlePick doubles as "startIndex is a choice": asking a head unit
             // for a whole album should let shuffle pick where it opens, rather
             // than pinning whatever happens to be first.
-            brls::Application::pushActivity(
-                PlayerActivity::createWithQueue(tracks, startIndex, singlePick));
+            auto open = [tracks, startIndex, singlePick]() {
+                brls::Application::pushActivity(
+                    PlayerActivity::createWithQueue(tracks, startIndex, singlePick));
+            };
+            // A player already on screen is replaced, not covered: each voice
+            // request or car pick used to stack one more player, and leaving
+            // took one Back per request.
+            const auto stack = brls::Application::getActivitiesStack();
+            if (!stack.empty() && dynamic_cast<PlayerActivity*>(stack.back())) {
+                brls::Logger::info("MediaBrowser: replacing the open player");
+                brls::Application::popActivity(brls::TransitionAnimation::NONE, open);
+            } else {
+                open();
+            }
             return;
         }
 
@@ -452,27 +710,204 @@ void playMediaId(const std::string& mediaId) {
     });
 }
 
-// Turn a spoken query into something playable.
-//
-// Assistant hands over free text ("play <album> by <artist>"), so this searches
-// the library and picks the best music hit, preferring the broadest thing that
-// matched: an artist or album gives a full listening session, a bare track only
-// gives three minutes. An exact title match wins over a partial one at the same
-// type, so "play Kid A" doesn't land on a compilation that merely mentions it.
-//
-// Returns a browse-tree media id for playMediaId(), or empty when nothing in
-// the music library matched.
-std::string resolveSearchQuery(PlexClient& client, const std::string& query) {
+// Words of three letters or more, lowercased, punctuation dropped.
+std::vector<std::string> wordsOf(const std::string& text) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : text + " ") {
+        if (std::isalnum((unsigned char)c)) {
+            cur += (char)std::tolower((unsigned char)c);
+        } else {
+            if (cur.size() >= 3) out.push_back(cur);
+            cur.clear();
+        }
+    }
+    return out;
+}
+
+std::string trimSpaces(const std::string& s) {
+    size_t a = s.find_first_not_of(" \t,.!?");
+    if (a == std::string::npos) return {};
+    size_t b = s.find_last_not_of(" \t,.!?");
+    return s.substr(a, b - a + 1);
+}
+
+bool endsWith(const std::string& s, const std::string& tail) {
+    return s.size() >= tail.size() && s.compare(s.size() - tail.size(), tail.size(), tail) == 0;
+}
+
+// Words that stand for "some music" rather than a title: "songs by Green Day",
+// "play some music".
+bool isGenericMusic(const std::string& lowered) {
+    static const std::set<std::string> kGeneric = {
+        "song", "songs", "music", "something", "anything", "stuff", "tracks", "track",
+        "everything", "all", "all songs", "all music", "all the songs", "all the music",
+        "some music", "some songs", "a song", "a few songs", "the songs", "the music",
+        "my music", "my songs", "my library", "random", "random songs", "random music",
+        "a mix", "a random mix"};
+    return kGeneric.count(trimSpaces(lowered)) > 0;
+}
+
+// What a spoken request asked for, once the filler words are off.
+struct SpokenQuery {
+    std::string text;      // what to search for (lowercased)
+    std::string plain;     // as said, less "shuffle" and the app's name
+    std::string kind;      // "track", "album", "playlist", "artist" or "" for any
+    bool shuffle = false;
+};
+
+SpokenQuery parseSpokenQuery(const std::string& query) {
+    SpokenQuery q;
+    std::string t = trimSpaces(lowerCase(query));
+
+    auto dropFront = [&](const std::string& w) {
+        if (startsWith(t, w)) { t = trimSpaces(t.substr(w.size())); return true; }
+        return false;
+    };
+    auto dropBack = [&](const std::string& w) {
+        if (endsWith(t, w)) { t = trimSpaces(t.substr(0, t.size() - w.size())); return true; }
+        return false;
+    };
+
+    for (const char* app : {" on vitaplex", " on vita plex", " on vitastream", " on vita stream"})
+        dropBack(app);
+
+    dropFront("play ");  // the Assistant usually takes it off, not always
+    if (dropFront("shuffle ")) q.shuffle = true;
+    for (const char* w : {" on shuffle", " in shuffle", " shuffled", " on random", " randomly"})
+        if (dropBack(w)) q.shuffle = true;
+    if (t == "shuffle") { q.shuffle = true; t.clear(); }
+    q.plain = t;
+
+    // "the album X", "album X", "X album" and the like.
+    // Titles can hold these words too ("Song 2", "Band of Horses"), which is
+    // why the phrase as said is searched first.
+    static const std::pair<const char*, const char*> kKinds[] = {
+        {"song", "track"}, {"track", "track"}, {"album", "album"},
+        {"playlist", "playlist"}, {"artist", "artist"}, {"band", "artist"}};
+    for (const auto& k : kKinds) {
+        const std::string w = k.first;
+        const bool atBack = w == "song" || w == "album" || w == "playlist";
+        if (dropFront("the " + w + " ") || dropFront(w + " ") ||
+            (atBack && dropBack(" " + w))) {
+            q.kind = k.second;
+            break;
+        }
+    }
+    // "my road trip playlist": "my" goes only with a playlist, so "My Way"
+    // stays as it is.
+    if (q.kind == "playlist") dropFront("my ");
+
+    q.text = t;
+    return q;
+}
+
+// Spellings to try when a search finds nothing: without a leading "the",
+// with or without a trailing "s", and spelled-out letters joined ("ac dc").
+std::vector<std::string> nearSpellings(const std::string& term) {
+    std::vector<std::string> out;
+    auto add = [&](const std::string& v) {
+        const std::string t = trimSpaces(v);
+        if (!t.empty() && t != term &&
+            std::find(out.begin(), out.end(), t) == out.end()) out.push_back(t);
+    };
+    if (startsWith(term, "the ")) add(term.substr(4));
+    if (endsWith(term, "s")) add(term.substr(0, term.size() - 1));
+    else add(term + "s");
+
+    // "a c d c" or "ac dc" -> "acdc".
+    std::string joined;
+    bool allShort = true;
+    int parts = 0;
+    for (const auto& w : [&] {
+             std::vector<std::string> ws;
+             std::string cur;
+             for (char c : term + " ") {
+                 if (c == ' ') { if (!cur.empty()) ws.push_back(cur); cur.clear(); }
+                 else cur += c;
+             }
+             return ws;
+         }()) {
+        parts++;
+        if (w.size() > 2) allShort = false;
+        joined += w;
+    }
+    if (allShort && parts > 1) add(joined);
+
+    // Punctuation dropped: "don't stop" -> "dont stop", "simon & garfunkel"
+    // -> "simon and garfunkel".
+    add(matchKey(term));
+    return out;
+}
+
+// How many of the spoken words appear in the item's artist or album name.
+// Speech recognition mangles names ("Daniel rustige"), so this only ranks
+// results; it never rules one out.
+int hintWordsMatched(const MediaItem& m, const std::string& hint) {
+    std::string owner;
+    if (m.type == "track")       owner = m.grandparentTitle + " " + m.parentTitle;
+    else if (m.type == "album")  owner = m.parentTitle;
+    else if (m.type == "artist") owner = m.title;
+    const std::string have = matchKey(owner);
+    int n = 0;
+    for (const auto& w : wordsOf(matchKey(hint)))
+        if (have.find(w) != std::string::npos) n++;
+    return n;
+}
+
+std::string mediaIdFor(const MediaItem& m) {
+    if (m.type == "album")    return "album/" + m.ratingKey;
+    if (m.type == "playlist") return "playlist/" + m.ratingKey;
+    if (m.type == "track")    return "track/" + m.ratingKey;
+    if (m.type == "artist")   return "artistsongs/" + m.librarySectionKey + "/" + m.ratingKey;
+    return {};
+}
+
+// Playlists by name. Plex's search does not always list playlists, and
+// "my road trip playlist" is said by name.
+std::string findPlaylist(PlexClient& client, const std::string& name) {
+    std::vector<Playlist> playlists;
+    if (!client.fetchMusicPlaylists(playlists)) return {};
+    const std::string want = matchKey(name);
+    const Playlist* best = nullptr;
+    int bestScore = 0;
+    for (const auto& p : playlists) {
+        const std::string t = matchKey(p.title);
+        int sc = 0;
+        if (t == want) sc = 3;
+        else if (startsWith(t, want)) sc = 2;
+        else if (t.find(want) != std::string::npos || want.find(t) != std::string::npos) sc = 1;
+        if (sc > bestScore) { bestScore = sc; best = &p; }
+    }
+    return best ? "playlist/" + best->ratingKey : std::string();
+}
+
+// One search against the library.
+//  - With no hint, the broadest music hit wins: an artist (all their songs)
+//    or an album is a whole listening session, a track three minutes.
+//  - With a hint, from "<title> by <artist>" or "<title> from <album>", the
+//    title is what was asked for, so the item whose title matches wins and
+//    the hint breaks ties.
+//  - kind, when said ("the album X"), keeps only that type. "*" is any type,
+//    but the title has to match.
+std::string resolveOneSearch(PlexClient& client, const std::string& query,
+                             const std::string& hint, const std::string& kind) {
     std::vector<MediaItem> results;
     if (!client.search(query, results) || results.empty()) return {};
 
-    auto lower = [](std::string s) {
-        for (char& c : s) c = (char)std::tolower((unsigned char)c);
-        return s;
-    };
-    const std::string want = lower(query);
+    const std::string want = matchKey(query);
 
-    // Higher is better. Type first (an artist beats a track), exactness second.
+    // 3 exact, 2 starts with, 1 contains either way, 0 none.
+    auto exactness = [&](const MediaItem& m) {
+        const std::string t = matchKey(m.title);
+        if (t == want) return 3;
+        if (startsWith(t, want)) return 2;
+        if (t.find(want) != std::string::npos ||
+            (!t.empty() && want.find(t) != std::string::npos)) return 1;
+        return 0;
+    };
+
+    // Higher is better; -1 means not a candidate.
     auto score = [&](const MediaItem& m) -> int {
         int base;
         if (m.type == "artist")        base = 40;
@@ -480,30 +915,309 @@ std::string resolveSearchQuery(PlexClient& client, const std::string& query) {
         else if (m.type == "playlist") base = 20;
         else if (m.type == "track")    base = 10;
         else                           return -1;   // movies, shows: not music
-        const std::string t = lower(m.title);
-        if (t == want) return base + 3;
-        if (startsWith(t, want)) return base + 2;
-        if (t.find(want) != std::string::npos) return base + 1;
-        return base;
+        if (!kind.empty() && kind != "*" && m.type != kind) return -1;
+        const int ex = exactness(m);
+        if (hint.empty()) {
+            // A kind was said, so the title has to match something.
+            if (!kind.empty() && ex == 0) return -1;
+            return base + ex;
+        }
+
+        // The title has to match something, and an artist named like the
+        // title is not what was asked for.
+        if (ex == 0 || m.type == "artist") return -1;
+        return ex * 100 + hintWordsMatched(m, hint) * 10 + base / 10;
     };
 
     const MediaItem* best = nullptr;
     int bestScore = 0;
     for (const auto& m : results) {
+        if (isHiddenLibrary(m.librarySectionKey)) continue;
         const int s = score(m);
         if (s > bestScore) { bestScore = s; best = &m; }
     }
-    if (!best) return {};
+    return best ? mediaIdFor(*best) : std::string();
+}
 
-    if (best->type == "album")    return "album/" + best->ratingKey;
-    if (best->type == "playlist") return "playlist/" + best->ratingKey;
-    if (best->type == "track")    return "track/" + best->ratingKey;
+// resolveOneSearch, then the near spellings of the term.
+std::string searchWithSpellings(PlexClient& client, const std::string& term,
+                                const std::string& hint, const std::string& kind) {
+    std::string id = resolveOneSearch(client, term, hint, kind);
+    if (!id.empty()) return id;
+    for (const auto& v : nearSpellings(term)) {
+        brls::Logger::info("MediaBrowser: trying \"{}\"", v);
+        id = resolveOneSearch(client, v, hint, kind);
+        if (!id.empty()) return id;
+    }
+    return {};
+}
 
-    // An artist has no single playable node: pick their first album, which
-    // playMediaId() expands into a full track list.
-    std::vector<MediaItem> albums;
-    if (client.fetchChildren(best->ratingKey, albums) && !albums.empty())
-        return "album/" + albums.front().ratingKey;
+// An artist by name, for "songs by <artist>".
+std::string findArtistSongs(PlexClient& client, const std::string& artist) {
+    return searchWithSpellings(client, artist, "", "artist");
+}
+
+// How alike two words are, 0 to 1, by edit distance: "constitution" and
+// "continuation" come out near 0.67, "amalee" and "emily" lower.
+double wordLikeness(const std::string& a, const std::string& b) {
+    if (a == b) return 1.0;
+    if (a.empty() || b.empty()) return 0.0;
+    std::vector<size_t> prev(b.size() + 1), cur(b.size() + 1);
+    for (size_t j = 0; j <= b.size(); j++) prev[j] = j;
+    for (size_t i = 1; i <= a.size(); i++) {
+        cur[0] = i;
+        for (size_t j = 1; j <= b.size(); j++) {
+            const size_t sub = prev[j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1);
+            cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1, sub});
+        }
+        std::swap(prev, cur);
+    }
+    const double longest = (double)std::max(a.size(), b.size());
+    return 1.0 - (double)prev[b.size()] / longest;
+}
+
+// How well a spoken title fits a real one, 0 to 1: each word counts by how
+// alike it is to its closest word in the title (from 0.6 up; less is a
+// different word), over the longer of the two.
+double titleLikeness(const std::string& spoken, const std::string& title) {
+    const std::vector<std::string> said = wordsOf(matchKey(spoken));
+    const std::vector<std::string> real = wordsOf(matchKey(title));
+    if (said.empty() || real.empty()) return 0.0;
+    double sum = 0.0;
+    for (const auto& w : said) {
+        double best = 0.0;
+        for (const auto& r : real) best = std::max(best, wordLikeness(w, r));
+        if (best >= 0.6) sum += best;
+    }
+    return sum / (double)std::max(said.size(), real.size());
+}
+
+// The artist's song that the spoken title sounds most like, for when the
+// title was misheard ("The World's Constitution" for "The World's
+// Continuation"). artistId is an artistsongs/<section>/<artist> id.
+std::string closestArtistTrack(PlexClient& client, const std::string& artistId,
+                               const std::string& spokenTitle) {
+    const std::string rest = suffixAfter(artistId, "artistsongs/");
+    const size_t slash = rest.find('/');
+    if (slash == std::string::npos) return {};
+    const std::vector<MediaItem> tracks =
+        fetchArtistTracks(client, rest.substr(0, slash), rest.substr(slash + 1));
+
+    const MediaItem* best = nullptr;
+    double bestScore = 0.0;
+    for (const auto& t : tracks) {
+        const double sc = titleLikeness(spokenTitle, t.title);
+        if (sc > bestScore) { bestScore = sc; best = &t; }
+    }
+    if (!best || bestScore < 0.5) {
+        brls::Logger::info("MediaBrowser: no song of {} tracks sounds like \"{}\"",
+                           tracks.size(), spokenTitle);
+        return {};
+    }
+    brls::Logger::info("MediaBrowser: \"{}\" sounds most like \"{}\" ({:.2f})", spokenTitle,
+                       best->title, bestScore);
+    return "track/" + best->ratingKey;
+}
+
+// What the Assistant itself made of the request, when it says: the type it
+// took it to be (EXTRA_MEDIA_FOCUS) and the names it heard for each part.
+struct SpokenFields {
+    std::string focus;     // "artist", "album", "track", "playlist", "genre" or ""
+    std::string title;
+    std::string artist;
+    std::string album;
+    std::string playlist;
+    std::string genre;
+    bool any() const {
+        return !title.empty() || !artist.empty() || !album.empty() || !playlist.empty() ||
+               !genre.empty();
+    }
+};
+
+// A request the Assistant has already split up: search for each part as it
+// was heard. Empty when that finds nothing; the words as said are tried next.
+std::string resolveSpokenFields(PlexClient& client, const SpokenFields& f) {
+    if (!f.any()) return {};
+    brls::Logger::info("MediaBrowser: Assistant heard focus=\"{}\" title=\"{}\" artist=\"{}\" "
+                       "album=\"{}\" playlist=\"{}\" genre=\"{}\"",
+                       f.focus, f.title, f.artist, f.album, f.playlist, f.genre);
+    std::string id;
+
+    // "Play some jazz": a shuffled mix of the genre.
+    if (f.focus == "genre" ||
+        (!f.genre.empty() && f.title.empty() && f.artist.empty() && f.album.empty())) {
+        const std::string name = !f.genre.empty() ? f.genre : f.title;
+        const auto g = findGenre(client, name);
+        if (!g.first.empty()) return std::string(kShufflePrefix) + "genremix/" + g.first + "/" + g.second;
+        if (f.focus == "genre") return {};
+    }
+
+    if (f.focus == "playlist" || (!f.playlist.empty() && f.focus.empty())) {
+        const std::string name = !f.playlist.empty() ? f.playlist : f.title;
+        if (!name.empty()) {
+            id = findPlaylist(client, name);
+            if (id.empty()) id = searchWithSpellings(client, name, "", "playlist");
+        }
+        return id;
+    }
+
+    if (f.focus == "artist" || (f.focus.empty() && f.title.empty() && f.album.empty())) {
+        if (!f.artist.empty()) id = findArtistSongs(client, f.artist);
+        return id;
+    }
+
+    if (f.focus == "album" || (f.focus.empty() && f.title.empty() && !f.album.empty())) {
+        const std::string name = !f.album.empty() ? f.album : f.title;
+        if (!name.empty()) id = searchWithSpellings(client, name, f.artist, "album");
+        return id;
+    }
+
+    // A song, said or taken to be one.
+    if (!f.title.empty()) {
+        id = searchWithSpellings(client, f.title, f.artist + " " + f.album, "track");
+        if (!id.empty()) return id;
+        if (!f.artist.empty()) {
+            const std::string artist = findArtistSongs(client, f.artist);
+            if (startsWith(artist, "artistsongs/"))
+                id = closestArtistTrack(client, artist, f.title);
+        }
+    }
+    return id;
+}
+
+// Turn a spoken query into something playable.
+//
+// Assistant hands over free text. Plex's search matches the whole phrase, so
+// anything extra in it ("the album", "by <artist>", a misheard name) finds
+// nothing. In order:
+//  1. Filler off: "shuffle", "the song/album/playlist", "my ... playlist".
+//     The type said is kept, and so is shuffle.
+//  2. Just "music", "something": a random mix of the library.
+//  3. "<generic> by <artist>" ("songs by Green Day"): all of the artist's songs.
+//  4. The whole phrase, as said and then as cleaned up.
+//  5. "<title> by <artist>" / "<title> from <album>": the title, ranked by
+//     how much of the rest matches; then the part after on its own.
+//  6. Each of those with near spellings.
+// All of that comes after the Assistant's own reading, when it sent one.
+//
+//  7. The artist named at the end or the start ("the world's continuation
+//     amalee"), then their song that sounds most like the rest.
+//
+// Returns a media id for playMediaId(), with kShufflePrefix when shuffle was
+// asked for, or empty when nothing in the music library matched.
+std::string resolveSearchQuery(PlexClient& client, const std::string& query,
+                               const SpokenFields& fields) {
+    const SpokenQuery q = parseSpokenQuery(query);
+    const std::string prefix = q.shuffle ? kShufflePrefix : "";
+    auto done = [&](const std::string& id) { return id.empty() ? id : prefix + id; };
+
+    // The Assistant's own split first ("title: The World's Continuation,
+    // artist: AmaLee"), then the guesses below from the words alone.
+    if (const std::string id = resolveSpokenFields(client, fields); !id.empty())
+        return done(id);
+
+    if (q.text.empty() || isGenericMusic(q.text)) {
+        brls::Logger::info("MediaBrowser: \"{}\" -> a mix of the library", query);
+        return kShufflePrefix + std::string("librarymix");
+    }
+
+    // Split "<title> by <artist>" / "<title> from <album>" at the last one.
+    std::string title, hint;
+    bool byArtist = false;
+    for (const char* sep : {" by ", " from "}) {
+        const size_t at = q.text.rfind(sep);
+        if (at == std::string::npos) continue;
+        if (!title.empty() && at < title.size()) continue;
+        title    = trimSpaces(q.text.substr(0, at));
+        hint     = trimSpaces(q.text.substr(at + std::strlen(sep)));
+        byArtist = std::string(sep) == " by ";
+    }
+
+    // "songs by Green Day": everything by the artist.
+    if (byArtist && !hint.empty() && (title.empty() || isGenericMusic(title))) {
+        brls::Logger::info("MediaBrowser: all songs by \"{}\"", hint);
+        const std::string id = findArtistSongs(client, hint);
+        if (!id.empty()) return done(id);
+    }
+
+    // The whole phrase, first as said (titles do start with "My" or "Song"),
+    // then cleaned up, with the type said. As said, only a title match
+    // counts: Plex's search can return near misses for a long phrase.
+    std::string id;
+    if (q.plain != q.text) id = resolveOneSearch(client, q.plain, "", "*");
+    if (id.empty() && q.kind == "playlist") id = findPlaylist(client, q.text);
+    if (id.empty()) id = resolveOneSearch(client, q.text, "", q.kind);
+    if (!id.empty()) return done(id);
+
+    if (!title.empty() && !wordsOf(title).empty()) {
+        brls::Logger::info("MediaBrowser: trying the title \"{}\" ({} \"{}\")", title,
+                           byArtist ? "artist" : "album", hint);
+        id = searchWithSpellings(client, title, hint, q.kind);
+        if (!id.empty()) return done(id);
+    }
+    if (!hint.empty() && !wordsOf(hint).empty()) {
+        brls::Logger::info("MediaBrowser: trying the {} \"{}\"",
+                           byArtist ? "artist" : "album", hint);
+        id = searchWithSpellings(client, hint, "", byArtist ? "artist" : "album");
+        // A song was asked for by an artist that was found: their closest
+        // song, and all of their songs only when none comes close.
+        if (byArtist && startsWith(id, "artistsongs/") && !title.empty() &&
+            q.kind != "album" && q.kind != "playlist") {
+            const std::string track = closestArtistTrack(client, id, title);
+            if (!track.empty()) return done(track);
+        }
+        if (!id.empty()) return done(id);
+    }
+
+    if (title.empty()) {
+        for (const auto& v : nearSpellings(q.text)) {
+            brls::Logger::info("MediaBrowser: trying \"{}\"", v);
+            id = resolveOneSearch(client, v, "", q.kind);
+            if (!id.empty()) return done(id);
+        }
+
+        // An artist at the end or the start, and a song of theirs that
+        // sounds like the rest. Up to three words for the artist, the
+        // shortest first.
+        if (q.kind.empty() || q.kind == "track") {
+            std::vector<std::string> words;
+            {
+                std::string cur;
+                for (char c : q.text + " ") {
+                    if (c == ' ') { if (!cur.empty()) words.push_back(cur); cur.clear(); }
+                    else cur += c;
+                }
+            }
+            auto join = [&](size_t from, size_t to) {
+                std::string out;
+                for (size_t i = from; i < to; i++) out += (out.empty() ? "" : " ") + words[i];
+                return out;
+            };
+            for (size_t n = 1; n <= 3 && n < words.size(); n++) {
+                const std::pair<std::string, std::string> splits[] = {
+                    {join(words.size() - n, words.size()), join(0, words.size() - n)},
+                    {join(0, n), join(n, words.size())}};
+                for (const auto& sp : splits) {
+                    if (wordsOf(sp.first).empty() || wordsOf(sp.second).empty()) continue;
+                    const std::string artist = resolveOneSearch(client, sp.first, "", "artist");
+                    if (!startsWith(artist, "artistsongs/")) continue;
+                    brls::Logger::info("MediaBrowser: artist \"{}\", song \"{}\"", sp.first,
+                                       sp.second);
+                    const std::string track = closestArtistTrack(client, artist, sp.second);
+                    if (!track.empty()) return done(track);
+                }
+            }
+        }
+    }
+
+    // Last: the words name a genre ("play classic rock").
+    if (title.empty() && q.kind.empty()) {
+        const auto g = findGenre(client, q.text);
+        if (!g.first.empty()) {
+            brls::Logger::info("MediaBrowser: \"{}\" is a genre", q.text);
+            return std::string(kShufflePrefix) + "genremix/" + g.first + "/" + g.second;
+        }
+    }
     return {};
 }
 
@@ -564,7 +1278,7 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativeLoadChildren(JNIEnv* env, jcla
         if (!ensureClientReady()) {
             std::vector<BrowseRow> row(1);
             row[0].id    = "__signed_out__";
-            row[0].title = "Sign in to VitaPlex to browse your library";
+            row[0].title = "Sign in to " APP_DISPLAY_NAME " to browse your library";
             row[0].flags = 0;  // neither browsable nor playable
             deliverRows((int)token, row);
             return;
@@ -583,7 +1297,8 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromMediaId(JNIEnv* env, j
     if (raw) env->ReleaseStringUTFChars(jMediaId, raw);
 
     brls::Logger::info("MediaBrowser: playFromMediaId({})", mediaId);
-    asyncRun([mediaId]() { playMediaId(mediaId); });
+    const uint64_t request = ++g_playRequest;
+    asyncRun([mediaId, request]() { playMediaId(mediaId, request); });
 }
 
 /**
@@ -596,31 +1311,56 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromMediaId(JNIEnv* env, j
  * fail. Resuming what's already queued is the least surprising answer.
  */
 JNIEXPORT void JNICALL
-Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromSearch(JNIEnv* env, jclass,
-                                                                 jstring jQuery) {
-    const char* raw = jQuery ? env->GetStringUTFChars(jQuery, nullptr) : nullptr;
-    std::string query = raw ? raw : "";
-    if (raw) env->ReleaseStringUTFChars(jQuery, raw);
+Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromSearch(
+    JNIEnv* env, jclass, jstring jQuery, jstring jFocus, jstring jTitle, jstring jArtist,
+    jstring jAlbum, jstring jPlaylist, jstring jGenre) {
+    auto str = [env](jstring js) {
+        const char* raw = js ? env->GetStringUTFChars(js, nullptr) : nullptr;
+        std::string out = raw ? raw : "";
+        if (raw) env->ReleaseStringUTFChars(js, raw);
+        return out;
+    };
+    const std::string query = str(jQuery);
+    SpokenFields fields;
+    fields.focus    = str(jFocus);
+    fields.title    = str(jTitle);
+    fields.artist   = str(jArtist);
+    fields.album    = str(jAlbum);
+    fields.playlist = str(jPlaylist);
+    fields.genre    = str(jGenre);
 
     brls::Logger::info("MediaBrowser: playFromSearch({})", query);
+    const uint64_t request = ++g_playRequest;
 
-    asyncRun([query]() {
-        if (!ensureClientReady()) return;
-
-        if (query.empty()) {
-            brls::sync([]() {
-                if (!MusicQueue::getInstance().isEmpty())
-                    MusicController::getInstance().playPause(true);
+    // "Play music", or a plain play with nothing published: resume what is
+    // queued, or with nothing queued, a random mix of the library. The queue
+    // is checked before connecting, so a queue of downloads still resumes
+    // with the server out of reach.
+    if (query.empty() && !fields.any()) {
+        brls::sync([request]() {
+            if (!MusicQueue::getInstance().isEmpty()) {
+                MusicController::getInstance().playPause(true);
+                return;
+            }
+            brls::Logger::info("MediaBrowser: nothing queued, playing a mix of the library");
+            asyncRun([request]() {
+                playMediaId(std::string(kShufflePrefix) + "librarymix", request);
             });
-            return;
-        }
+        });
+        return;
+    }
 
-        const std::string mediaId = resolveSearchQuery(PlexClient::getInstance(), query);
+    asyncRun([query, fields, request]() {
+        if (!ensureClientReady()) return;
+        if (superseded(request, "\"" + query + "\"")) return;
+
+        const std::string mediaId =
+            resolveSearchQuery(PlexClient::getInstance(), query, fields);
         if (mediaId.empty()) {
             brls::Logger::warning("MediaBrowser: no music match for \"{}\"", query);
             return;
         }
-        playMediaId(mediaId);
+        playMediaId(mediaId, request);
     });
 }
 
@@ -656,6 +1396,7 @@ Java_org_VitaPlex_app_SearchSuggestionProvider_nativeSearchSuggestions(JNIEnv* e
     for (const auto& m : results) {
         if (flat.size() >= kMaxRows * 4) break;
         if (m.ratingKey.empty()) continue;
+        if (isHiddenLibrary(m.librarySectionKey)) continue;
         // People and other non-playable hits have nothing to open.
         if (m.type == "person" || m.type == "tag") continue;
 

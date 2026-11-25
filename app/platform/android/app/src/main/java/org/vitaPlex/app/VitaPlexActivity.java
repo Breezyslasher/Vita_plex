@@ -21,9 +21,12 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
 import android.util.Rational;
+import android.util.SparseArray;
+import android.util.SparseLongArray;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.Surface;
@@ -240,6 +243,7 @@ public class VitaPlexActivity extends SDLActivity
         // A deep link that cold-started us. Native isn't up yet, so it is held
         // until the UI asks for it (takePendingDeepLink).
         rememberDeepLink(getIntent());
+        handlePlayFromSearch(getIntent());
 
         // Android 13+ gates notifications behind a runtime grant; ask once so the
         // music media notification can be posted. Denial is non-fatal (the
@@ -329,12 +333,38 @@ public class VitaPlexActivity extends SDLActivity
         super.onNewIntent(intent);
         // singleInstance, so a second link arrives here rather than in onCreate.
         rememberDeepLink(intent);
+        handlePlayFromSearch(intent);
         // Unlike a cold start there is a running UI, so nudge it to collect the
         // link now instead of waiting for the next thing that happens to poll.
         try {
             nativeDeepLink();
         } catch (Throwable t) {
             Log.w(TAG, "nativeDeepLink unavailable", t);
+        }
+    }
+
+    /**
+     * The Assistant's "play <x> on VitaPlex" (MEDIA_PLAY_FROM_SEARCH): played
+     * as the media session's onPlayFromSearch plays it, through the browser
+     * service, which matches the words against the music library. An empty
+     * query asks for "some music": native resumes what is queued.
+     */
+    private void handlePlayFromSearch(Intent intent) {
+        if (intent == null
+                || !android.provider.MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH.equals(intent.getAction()))
+            return;
+        try {
+            String query = intent.getStringExtra(android.app.SearchManager.QUERY);
+            Log.i(TAG, "play from search: \"" + (query != null ? query : "") + "\"");
+            // The browser service may not be bound yet: it is given this
+            // activity's context to load the library and reach the server with.
+            LibraryBrowserService.ensureNativeForSearch(this);
+            MediaNotification.getSession(this);
+            MediaNotification.showStarting();
+            LibraryBrowserService.playFromSearch(query != null ? query.trim() : "",
+                    intent.getExtras());
+        } catch (Throwable t) {
+            Log.w(TAG, "play from search failed", t);
         }
     }
 
@@ -814,6 +844,49 @@ public class VitaPlexActivity extends SDLActivity
         }
     }
 
+    // Arrow presses held at least this long. borealis' natural scrolling (a
+    // season's episode row among others) slides a row for as long as an arrow
+    // is held, 1000 px a second. A TV remote's press lasts a good part of a
+    // second; Home Assistant's remote card sends each press as an instant
+    // down and up, so the row slid one frame (a few pixels) per press and
+    // never reached the next card. Shorter presses have their release held
+    // back to this; a new press of the same arrow releases the last at once.
+    private static final long MIN_ARROW_HOLD_MS = 150;
+    private final Handler mArrowHandler = new Handler();
+    private final SparseLongArray mArrowDownAt = new SparseLongArray();
+    private final SparseArray<Runnable> mArrowPendingUp = new SparseArray<>();
+
+    private void arrowDown(int key) {
+        Runnable pending = mArrowPendingUp.get(key);
+        if (pending != null) {
+            mArrowHandler.removeCallbacks(pending);
+            mArrowPendingUp.remove(key);
+            SDLActivity.onNativeKeyUp(key);
+        }
+        mArrowDownAt.put(key, SystemClock.uptimeMillis());
+        SDLActivity.onNativeKeyDown(key);
+    }
+
+    private void arrowUp(final int key) {
+        long held = SystemClock.uptimeMillis() - mArrowDownAt.get(key, 0L);
+        if (held >= MIN_ARROW_HOLD_MS) {
+            SDLActivity.onNativeKeyUp(key);
+            return;
+        }
+        Runnable up = new Runnable() {
+            @Override
+            public void run() {
+                if (mArrowPendingUp.get(key) != this) return;
+                mArrowPendingUp.remove(key);
+                SDLActivity.onNativeKeyUp(key);
+            }
+        };
+        Runnable old = mArrowPendingUp.get(key);
+        if (old != null) mArrowHandler.removeCallbacks(old);
+        mArrowPendingUp.put(key, up);
+        mArrowHandler.postDelayed(up, MIN_ARROW_HOLD_MS - held);
+    }
+
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (SDLActivity.mBrokenLibraries) {
@@ -829,6 +902,60 @@ public class VitaPlexActivity extends SDLActivity
             keyCode == KeyEvent.KEYCODE_ZOOM_IN ||
             keyCode == KeyEvent.KEYCODE_ZOOM_OUT) {
             return false;
+        }
+
+        // Which device sent which key, into the app's log: remotes that are
+        // not the TV's own (Home Assistant's remote card, a phone remote app,
+        // ADB) come from virtual devices with their own sources.
+        // Not letters or digits: what is typed (a password) stays out of the log.
+        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0
+                && !event.isPrintingKey()) {
+            InputDevice dev = event.getDevice();
+            try {
+                NetworkMonitor.nativeLog("key " + KeyEvent.keyCodeToString(keyCode) + " from '"
+                        + (dev != null ? dev.getName() : "none") + "' sources 0x"
+                        + Integer.toHexString(dev != null ? dev.getSources() : event.getSource())
+                        + (dev != null && dev.isVirtual() ? " (virtual)" : ""));
+            } catch (Throwable ignored) {
+            }
+        }
+
+        // The D-pad and OK of a remote that has no sticks: Home Assistant's
+        // remote card ('virtual-remote', sources 0x701: keyboard, D-pad and
+        // gamepad, no joystick axes), phone remote apps, ADB. A TV log
+        // (build 2204) had 94 of its arrow and OK presses reach the app and
+        // move nothing ("focus changes: 0") while its Back, which already
+        // takes the keyboard path below, worked: SDL's controller path drops
+        // them. They take the keyboard path too, where SDL makes the arrows
+        // arrow keys (borealis' D-pad) and ENTER makes RETURN (A).
+        // DPAD_CENTER becomes ENTER: as itself SDL makes it SELECT, which
+        // borealis maps to nothing. A controller with sticks is left alone.
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN
+                || keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+                || keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            InputDevice dev = event.getDevice();
+            int sources = dev != null ? dev.getSources() : event.getSource();
+            boolean sticks = (sources & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK;
+            if (!sticks) {
+                int sent = (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                        || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) ? KeyEvent.KEYCODE_ENTER : keyCode;
+                if (sent != KeyEvent.KEYCODE_ENTER) {   // an arrow
+                    if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                        if (event.getRepeatCount() == 0) arrowDown(sent);
+                        return true;   // a hold's repeats: the key is still down
+                    } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                        arrowUp(sent);
+                        return true;
+                    }
+                }
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    SDLActivity.onNativeKeyDown(sent);
+                    return true;
+                } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                    SDLActivity.onNativeKeyUp(sent);
+                    return true;
+                }
+            }
         }
 
         // KEYCODE_BACK and DPAD_CENTER must always go through the keyboard

@@ -3,6 +3,7 @@
  */
 
 #include "activity/login_activity.hpp"
+#include "view/list_scroll_frame.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
@@ -1061,7 +1062,7 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
         std::floor(brls::Application::contentHeight * 0.42f / rowStride));
     const float probesH    = std::min(static_cast<float>(totalConnections), maxVisible) * rowStride;
 
-    auto* scroll = new brls::ScrollingFrame();
+    auto* scroll = new ListScrollFrame();   // row by row, as the dialogs' lists
     scroll->setWidth(innerW);
     scroll->setHeight(probesH);
     scroll->setMarginTop(18);
@@ -1331,6 +1332,11 @@ void LoginActivity::onOfflinePressed() {
     }
 
     if (statusLabel) statusLabel->setText("Entering offline mode...");
+
+    // The plex.tv link code is not waited for offline: it was asked for
+    // every 2 s for as long as VitaPlex ran (log 3ffa60d4).
+    m_pinMode = false;
+    m_pinTimer.stop();
 
     // Set offline flag so main activity only shows relevant tabs
     Application::getInstance().setOfflineMode(true);

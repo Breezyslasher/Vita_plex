@@ -15,6 +15,16 @@
  */
 
 #include <borealis.hpp>
+#include <nanovg.h>
+#ifdef __ANDROID__
+#include <SDL2/SDL_hints.h>   // the screen-keyboard hint (not SDL.h: its SDL_main.h renames main)
+#endif
+#ifdef USE_LIBROMFS
+#include <romfs/romfs.hpp>
+#endif
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 #ifdef __SWITCH__
 #include <switch.h>
 #include <cstdio>
@@ -32,6 +42,55 @@
 #include "app/hint_icons.hpp"
 #include "utils/http_client.hpp"
 #include "platform/platform.hpp"
+
+// Chinese / Japanese / Korean characters in the menus (song, album and film
+// titles). borealis draws them on Switch from the console's own fonts; on
+// every other platform its font (DejaVu Sans) has none, and they came out
+// blank. resources/cjk/subfont.ttf (Noto Sans CJK, cut down to the common
+// characters; also mpv's fallback for subtitles) is added as a fallback.
+static void loadCjkFallbackFont() {
+#if !defined(__SWITCH__)
+    const std::string path = BRLS_ASSET("cjk/subfont.ttf");
+    bool ok = false;
+#ifdef USE_LIBROMFS
+    try {
+        auto& font = romfs::get(path.substr(5));   // after "@res/"
+        ok = font.valid() &&
+             brls::Application::loadFontFromMemory("cjk", (void*)font.data(), font.size(), false);
+    } catch (...) {
+    }
+#else
+    ok = brls::Application::loadFontFromFile("cjk", path);
+#endif
+    if (ok) {
+        nvgAddFallbackFontId(brls::Application::getNVGContext(),
+                             brls::Application::getFont(brls::FONT_REGULAR),
+                             brls::Application::getFont("cjk"));
+        brls::Logger::info("CJK fallback font loaded");
+    } else {
+        brls::Logger::warning("CJK fallback font not loaded from {}", path);
+    }
+#endif
+}
+
+// One keyboard at a time on Android. Text fields open borealis' own
+// on-screen keyboard (EditTextDialog) when a remote or controller is in use,
+// and SDL_StartTextInput(), which that dialog also calls, raised Android's
+// keyboard on top of it (a TV screenshot: both at once). SDL shows the
+// system keyboard only while SDL_HINT_ENABLE_SCREEN_KEYBOARD is on (SDL
+// 2.32: on Android that is all StartTextInput does besides enabling text
+// events), so it follows the input in use: touch gets Android's keyboard
+// (borealis hides its own then), a remote or controller gets borealis'.
+// A hardware keyboard still types either way.
+#ifdef __ANDROID__
+static void followInputForScreenKeyboard() {
+    auto apply = [](brls::InputType t) {
+        SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, t == brls::InputType::TOUCH ? "1" : "0");
+    };
+    apply(brls::Application::getInputType());
+    brls::Application::getGlobalInputTypeChangeEvent()->subscribe(apply);
+}
+#endif
 
 static void registerCustomViews() {
     brls::Application::registerXMLView("MediaItemCell", vitaplex::MediaItemCell::create);
@@ -122,7 +181,11 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     style.addMetric("brls/sidebar/padding_right", 20.0f);
 
     // Create window
-    brls::Application::createWindow("VitaPlex");
+    brls::Application::createWindow(APP_DISPLAY_NAME);
+    loadCjkFallbackFont();
+#ifdef __ANDROID__
+    followInputForScreenKeyboard();
+#endif
 
     // Set theme colors (Plex-like)
     brls::Application::getPlatform()->getThemeVariant();
@@ -153,9 +216,11 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     // the Start Menu shortcut that toasts are keyed on. Windows-only in effect.
     vitaplex::shell::setShortcutAllowed(app.getSettings().windowsStartMenuShortcut);
 
-    // The Vita background-audio experiment starts watching here when it is on.
-    // No-op on every other platform.
-    vitaplex::bgaudio::init(app.getSettings().vitaBackgroundAudio);
+    // The Vita's music outside the app starts watching here, and takes the
+    // music back from SceShell. No-op on every other platform.
+    vitaplex::bgaudio::init(app.getSettings().vitaOutsideMusic);
+    vitaplex::bgaudio::setOfflineSkip(app.getSettings().vitaOfflineSkip);
+    vitaplex::bgaudio::setQuickMenuControls(app.getSettings().vitaQuickMenuControls);
 
     // Run application (blocking)
     app.run();
@@ -170,6 +235,12 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     return 0;
 }
 
+// iOS / tvOS start in SDL's own main() (SDL2main), which runs
+// UIApplicationMain and only then calls SDL_main (platform_ios.mm). A main()
+// here would win the link and skip UIKit's start entirely, so the app died
+// as soon as SDL asked for a window.
+#if !(defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV))
 int main(int argc, char* argv[]) {
     return VitaPlexMainEntry(argc, argv);
 }
+#endif

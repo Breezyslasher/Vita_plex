@@ -169,6 +169,33 @@ DownloadsTab::Type itemType(const DownloadItem& it) {
     return DownloadsTab::Type::MOVIES;
 }
 
+// A download as an item for the player's queue, with its kind: a queue of
+// downloaded songs is then a music queue (MusicQueue::isMusicQueue), which
+// the music layout and the Vita's hand-over to SceShell go by.
+// Without it, a queue started here was not handed over (log b8cde643:
+// "queue=true music=false", then "nothing handed over"). A track's artist
+// and album are its own (downloadArtist), not the parent title, which named
+// the album as the artist on the quick menu's row in that log.
+MediaItem queueItem(const DownloadItem& d) {
+    MediaItem mi;
+    mi.ratingKey = d.ratingKey;
+    mi.title = d.title;
+    mi.grandparentTitle = d.parentTitle;
+    mi.parentTitle = d.parentTitle;
+    if (d.mediaType == "track") {
+        mi.grandparentTitle = downloadArtist(d);
+        mi.parentTitle = downloadAlbum(d);
+    }
+    mi.duration = d.duration;
+    mi.thumb = d.thumbUrl;
+    mi.type = d.mediaType;
+    mi.mediaType = d.mediaType == "track"   ? MediaType::MUSIC_TRACK
+                 : d.mediaType == "episode" ? MediaType::EPISODE
+                 : d.mediaType == "movie"   ? MediaType::MOVIE
+                                            : MediaType::UNKNOWN;
+    return mi;
+}
+
 NVGcolor stateStripColor(DownloadState s) {
     switch (s) {
         case DownloadState::DOWNLOADING: return kStDownloading;
@@ -1273,8 +1300,10 @@ brls::Box* DownloadsTab::buildItemRow(const DownloadItem& item) {
 
     auto* titleLabel = new brls::Label();
     std::string displayTitle = item.title;
-    if (!item.parentTitle.empty()) {
-        displayTitle = item.parentTitle + " - " + item.title;
+    // A track's artist (downloadArtist); an episode's show.
+    const std::string byline = item.mediaType == "track" ? downloadArtist(item) : item.parentTitle;
+    if (!byline.empty()) {
+        displayTitle = byline + " - " + item.title;
     }
     if (item.seasonNum > 0 && item.episodeNum > 0) {
         char epStr[32];
@@ -1323,13 +1352,7 @@ brls::Box* DownloadsTab::buildItemRow(const DownloadItem& item) {
         DownloadItem capturedForPlay = item;
         playBtn->registerClickAction([ratingKey, isTrack, capturedForPlay](brls::View*) {
             if (isTrack) {
-                MediaItem mi;
-                mi.ratingKey = capturedForPlay.ratingKey;
-                mi.title = capturedForPlay.title;
-                mi.grandparentTitle = capturedForPlay.parentTitle;
-                mi.parentTitle = capturedForPlay.parentTitle;
-                mi.duration = capturedForPlay.duration;
-                mi.thumb = capturedForPlay.thumbUrl;
+                MediaItem mi = queueItem(capturedForPlay);
 
                 std::vector<MediaItem> single = {mi};
                 brls::Application::pushActivity(
@@ -1552,13 +1575,7 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
     auto completedItems = std::make_shared<std::vector<MediaItem>>();
     for (const auto& item : items) {
         if (item.state == DownloadState::COMPLETED) {
-            MediaItem mi;
-            mi.ratingKey = item.ratingKey;
-            mi.title = item.title;
-            mi.grandparentTitle = item.parentTitle;
-            mi.parentTitle = item.parentTitle;
-            mi.duration = item.duration;
-            mi.thumb = item.thumbUrl;
+            MediaItem mi = queueItem(item);
             completedItems->push_back(mi);
         }
     }
@@ -1747,13 +1764,7 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
             size_t idx = 0;
             for (const auto& it : all) {
                 if (it.state != DownloadState::COMPLETED) continue;
-                MediaItem mi;
-                mi.ratingKey        = it.ratingKey;
-                mi.title            = it.title;
-                mi.grandparentTitle = it.parentTitle;
-                mi.parentTitle      = it.parentTitle;
-                mi.duration         = it.duration;
-                mi.thumb            = it.thumbUrl;
+                MediaItem mi = queueItem(it);
                 if (it.ratingKey == targetKey) idx = q.size();
                 q.push_back(std::move(mi));
             }
@@ -1788,13 +1799,7 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
                 return true;
             }
 
-            MediaItem mi;
-            mi.ratingKey        = capturedItem.ratingKey;
-            mi.title            = capturedItem.title;
-            mi.grandparentTitle = capturedItem.parentTitle;
-            mi.parentTitle      = capturedItem.parentTitle;
-            mi.duration         = capturedItem.duration;
-            mi.thumb            = capturedItem.thumbUrl;
+            MediaItem mi = queueItem(capturedItem);
 
             switch (action) {
                 case TrackDefaultAction::PLAY_NOW_CLEAR:
@@ -2069,13 +2074,7 @@ void DownloadsTab::showGroupContextMenu(DownloadGroupType groupType, const std::
     std::vector<MediaItem> completedTracks;
     for (const auto& item : items) {
         if (item.state == DownloadState::COMPLETED && item.mediaType == "track") {
-            MediaItem mi;
-            mi.ratingKey = item.ratingKey;
-            mi.title = item.title;
-            mi.grandparentTitle = item.parentTitle;
-            mi.parentTitle = item.parentTitle;
-            mi.duration = item.duration;
-            mi.thumb = item.thumbUrl;
+            MediaItem mi = queueItem(item);
             completedTracks.push_back(mi);
         }
     }
@@ -2157,13 +2156,7 @@ void DownloadsTab::showItemContextMenu(const DownloadItem& item) {
     DownloadItem capturedItem = item;
 
     if (item.mediaType == "track") {
-        MediaItem mi;
-        mi.ratingKey = item.ratingKey;
-        mi.title = item.title;
-        mi.grandparentTitle = item.parentTitle;
-        mi.parentTitle = item.parentTitle;
-        mi.duration = item.duration;
-        mi.thumb = item.thumbUrl;
+        MediaItem mi = queueItem(item);
 
         addBtn("Play Now (Clear Queue)", [dialog, mi](brls::View*) {
             dialog->dismiss();

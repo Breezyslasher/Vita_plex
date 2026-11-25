@@ -41,14 +41,16 @@ extern "C" void vitaplex_set_audio_playback_active(bool active)
     s_audioPlaybackActive.store(active);
 }
 
-// How many times the UI loop has run. Read by the background-audio experiment
-// (utils/background_audio_psv.cpp) to tell whether this thread keeps going
-// while the app is not in front: the music queue only advances from here.
-static std::atomic<unsigned> s_mainLoopTicks{0};
+// When true, VitaPlex has been left for the LiveArea or another app, and runs
+// on unseen (utils/background_audio.hpp): mainLoopIteration sleeps a quarter
+// of a second, so the screen nobody sees is drawn four times a second while
+// the loop still advances the queue. Set by background_audio_psv.cpp from the
+// system's deactivate and activate events.
+static std::atomic<bool> s_appAway{false};
 
-extern "C" unsigned vitaplex_main_loop_ticks(void)
+extern "C" void vitaplex_set_app_away(bool away)
 {
-    return s_mainLoopTicks.load(std::memory_order_relaxed);
+    s_appAway.store(away);
 }
 
 // Video render hook - called at the start of mainLoopIteration(), BEFORE
@@ -128,6 +130,14 @@ PsvPlatform::PsvPlatform()
             { SCE_SYSTEM_PARAM_LANG_CHINESE_T, LOCALE_ZH_HANT },
             { SCE_SYSTEM_PARAM_LANG_JAPANESE, LOCALE_JA },
             { SCE_SYSTEM_PARAM_LANG_KOREAN, LOCALE_Ko },
+            { SCE_SYSTEM_PARAM_LANG_GERMAN, LOCALE_DE },
+            { SCE_SYSTEM_PARAM_LANG_FRENCH, LOCALE_FR },
+            { SCE_SYSTEM_PARAM_LANG_SPANISH, LOCALE_ES },
+            { SCE_SYSTEM_PARAM_LANG_PORTUGUESE_PT, LOCALE_PT },
+            { SCE_SYSTEM_PARAM_LANG_PORTUGUESE_BR, LOCALE_PT_BR },
+            { SCE_SYSTEM_PARAM_LANG_RUSSIAN, LOCALE_RU },
+            { SCE_SYSTEM_PARAM_LANG_DUTCH, LOCALE_NL },
+            { SCE_SYSTEM_PARAM_LANG_POLISH, LOCALE_PL },
             { SCE_SYSTEM_PARAM_LANG_ITALIAN, LOCALE_IT }
         };
 
@@ -174,8 +184,6 @@ void PsvPlatform::createWindow(std::string windowTitle, uint32_t windowWidth, ui
 
 bool PsvPlatform::mainLoopIteration()
 {
-    s_mainLoopTicks.fetch_add(1, std::memory_order_relaxed);
-
     // Render pending video frame BEFORE NanoVG touches GXM.
     // This guarantees no active GXM scene when mpv renders.
     if (s_videoFrameReady.load(std::memory_order_acquire) && s_videoRenderFunc) {
@@ -194,7 +202,9 @@ bool PsvPlatform::mainLoopIteration()
     // (only the progress bar updates once per second). Yield CPU time
     // so the ao_vita audio thread can feed the hardware without underruns.
     // ~33ms sleep gives ~30fps which is plenty for a static music player UI.
-    if (s_audioPlaybackActive.load(std::memory_order_relaxed)) {
+    if (s_appAway.load(std::memory_order_relaxed)) {
+        sceKernelDelayThread(250000);  // left, unseen: ~4fps
+    } else if (s_audioPlaybackActive.load(std::memory_order_relaxed)) {
         sceKernelDelayThread(33000);  // 33ms -> ~30fps
     }
     return true;

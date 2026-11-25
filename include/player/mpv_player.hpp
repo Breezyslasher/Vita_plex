@@ -81,6 +81,7 @@ public:
     bool init();
     void shutdown();
     bool isInitialized() const { return m_mpv != nullptr; }
+    bool m_videoDisabled = false;   // setVideoEnabled(false) since the last load
 
     // Playback control
     //
@@ -97,10 +98,12 @@ public:
     // that way; it is restarted on the server at an offset instead, so pass 0
     // there.
     //
-    // The file always starts playing. Whatever pause state the previous file
-    // was left in does not carry over.
+    // The file starts playing, or loaded and paused at startSec when
+    // startPaused says so. Whatever pause state the previous file was left in
+    // does not carry over.
     bool loadUrl(const std::string& url, const std::string& title = "",
-                 int64_t expectedDurationMs = 0, double startSec = 0.0);
+                 int64_t expectedDurationMs = 0, double startSec = 0.0,
+                 bool startPaused = false);
     bool loadFile(const std::string& path);
     void play();
     void pause();
@@ -138,19 +141,31 @@ public:
         std::string codec;       // Codec name (e.g., "h264", "aac")
         bool selected = false;   // Currently selected
         bool isDefault = false;
+        bool albumArt = false;   // a cover picture in the file, not a video
     };
 
     // Tracks
     void setSubtitleTrack(int track);
     void setAudioTrack(int track);
     void setVideoTrack(int track);
+    // The picture off or on while a video plays on (vid=no / vid=auto): off
+    // while nobody sees it (app/video_background.hpp), so that it is not
+    // decoded. On again by itself as the next file is loaded.
+    void setVideoEnabled(bool enabled);
     void cycleSubtitle();
     void cycleAudio();
     void toggleSubtitles();
     void setSubtitleDelay(double seconds);
+    // Where subtitles sit, in percent of the picture's height (100 = the bottom).
+    void setSubtitlePosition(int percent);
+    // Re-reads the Subtitle Size setting. mpv lives for the session once the
+    // first playback starts it, so a change has to reach it here.
+    void applySubtitleSize();
+    // Apply AppSettings::subtitleStyle to the playing subtitles.
+    void applySubtitleStyle();
     void setAudioDelay(double seconds);
     void disableSubtitles();
-    void loadSubtitleUrl(const std::string& url);   // Load external subtitle (e.g. lyrics) by URL
+    void loadSubtitleUrl(const std::string& url, bool select = false);   // Load external subtitle (e.g. lyrics) by URL; select shows it now
     void removeExternalSubtitles();                   // Remove all external subtitle tracks
 
     // Get available tracks by type
@@ -181,6 +196,10 @@ public:
     // until something new is loaded, so this is how a caller that polls tells
     // a new failure from the one it has already handled.
     uint32_t errorSerial() const { return m_errorSerial.load(); }
+    // Whether the server refused to go on with the stream loaded last, as
+    // ffmpeg reconnected to it after a drop (an HTTP 4xx): what mpv buffered
+    // plays out, and the stream ends early. The server is there all the same.
+    bool streamRefused() const { return m_streamRefused.load(); }
 
     // A copy of what the event pump last saw, for code on another thread.
     // Takes the pump lock and never calls into libmpv, so it is safe to call
@@ -193,6 +212,10 @@ public:
         int outSampleRate = 0;
     };
     Snapshot snapshot();
+    // The same without waiting: false, *out untouched, while another thread
+    // holds the pump lock (stuck in libmpv, say). For the Vita's watcher,
+    // which must never wait on the player (background_audio_psv.cpp).
+    bool trySnapshot(Snapshot* out);
 
     // OSD
     void showOSD(const std::string& text, double durationSec = 2.0);
@@ -271,6 +294,7 @@ private:
     std::string m_currentUrl;
     // Server-reported length of the loaded track, milliseconds; 0 when unknown. See loadUrl().
     std::atomic<int64_t> m_expectedDurationMs{0};
+    std::atomic<bool> m_streamRefused{false};    // see streamRefused()
     bool m_subtitlesVisible = true;
     std::atomic<bool> m_stopping{false};        // Shutdown in progress (accessed from mpv thread)
     // These three are set while handling events and read by callers on the UI

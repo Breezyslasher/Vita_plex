@@ -61,12 +61,14 @@
 #include <chrono>
 #include <set>
 #include <thread>
+#include <typeinfo>
 
 #if defined(ANDROID)
 // Queried once per frame to find out whether a GL draw surface is actually
 // bound — see glSurfaceIsLive(). Must stay at global scope: including it inside
 // namespace brls would give the EGL entry points the wrong linkage.
 #include <EGL/egl.h>
+#include <GLES3/gl3.h>
 #endif
 
 #if defined(ANDROID) || defined(IOS)
@@ -89,8 +91,14 @@ extern "C" void nvgMarkFontAtlasDirty(NVGcontext* ctx);
 namespace brls
 {
 
+// VitaPlex patch: the UI thread, set by init (Application::isMainThread).
+static std::thread::id g_mainThread;
+
 bool Application::init()
 {
+    // The UI thread: invalidate() defers layout only here (flushLayout).
+    g_mainThread = std::this_thread::get_id();
+
     Application::inited        = false;
     Application::quitRequested = false;
 
@@ -220,6 +228,50 @@ namespace
         return true;
 #endif
     }
+
+#if defined(ANDROID)
+    // Keep the GL viewport and the UI's size on the surface's real size.
+    //
+    // A foldable switching screens while the app is away (folded onto the
+    // cover screen, then opened) gives the app a new surface of another shape.
+    // The resize SDL reports for it can arrive while there is no surface, or
+    // not at all, and the glViewport it queues may run before the new surface
+    // is bound: the app came back drawing the inner screen's layout into the
+    // cover screen, stretched sideways and cut off. EGL knows the surface's
+    // size for certain, so check it before each frame.
+    void matchSurfaceSize()
+    {
+        EGLDisplay dpy  = eglGetCurrentDisplay();
+        EGLSurface surf = eglGetCurrentSurface(EGL_DRAW);
+        if (dpy == EGL_NO_DISPLAY || surf == EGL_NO_SURFACE)
+            return;
+        EGLint w = 0, h = 0;
+        if (!eglQuerySurface(dpy, surf, EGL_WIDTH, &w) || !eglQuerySurface(dpy, surf, EGL_HEIGHT, &h) ||
+            w <= 0 || h <= 0)
+            return;
+
+        GLint vp[4] = { 0, 0, 0, 0 };
+        glGetIntegerv(GL_VIEWPORT, vp);
+        if (vp[0] != 0 || vp[1] != 0 || vp[2] != w || vp[3] != h)
+            glViewport(0, 0, w, h);
+
+        // The size the UI was last asked to take; the resize itself is applied
+        // after a short delay, which asking again each frame would keep pushing back.
+        static EGLint askedW = 0, askedH = 0;
+        if ((EGLint)Application::windowWidth == w && (EGLint)Application::windowHeight == h)
+        {
+            askedW = askedH = 0;
+            return;
+        }
+        if (askedW == w && askedH == h)
+            return;
+        askedW = w;
+        askedH = h;
+        Logger::info("Surface is {}x{} but the UI is {}x{}: resizing", w, h,
+            Application::windowWidth, Application::windowHeight);
+        Application::onWindowResized(w, h);
+    }
+#endif
 }
 #endif
 
@@ -255,11 +307,35 @@ bool Application::mainLoop()
     return Application::platform->runLoop(internalMainLoop);
 }
 
+// VitaPlex patch: this iteration's timings (frameTimingsCallback), filled
+// by internalMainLoop and frame().
+static Application::FrameTimings g_frameTimings;
+static bool g_timeFrame = false;
+static Time g_timeMark  = 0;
+
+// The time since the last mark, which moves to now; 0 when not timing.
+static Time frameLap()
+{
+    if (!g_timeFrame)
+        return 0;
+    const Time now = getCPUTimeUsec();
+    const Time lap = now - g_timeMark;
+    g_timeMark     = now;
+    return lap;
+}
+
 bool Application::internalMainLoop()
 {
     Application::updateFPS();
     Application::frameStartTime = getCPUTimeUsec();
     Application::setActiveEvent(false);
+
+    g_timeFrame = (bool)frameTimingsCallback;
+    if (g_timeFrame)
+    {
+        g_frameTimings = FrameTimings();
+        g_timeMark     = Application::frameStartTime;
+    }
 
     // Main loop callback
     if (!Application::platform->mainLoopIteration() || Application::quitRequested)
@@ -268,6 +344,7 @@ bool Application::internalMainLoop()
         Application::exit();
         return false;
     }
+    g_frameTimings.poll = frameLap();
 
     // Mouse and touch
     if (Application::blockInputsTokens == 0)
@@ -281,11 +358,18 @@ bool Application::internalMainLoop()
             Application::getAudioPlayer()->play(Sound::SOUND_CLICK_ERROR);
     }
 
+    g_frameTimings.input = frameLap();
+
     // Animations
 #ifndef SIMPLE_HIGHLIGHT
     updateHighlightAnimation();
 #endif
     Ticking::updateTickings();
+    g_frameTimings.anim = frameLap();
+
+    // What the input and animations left to lay out, once, before drawing.
+    flushLayout();
+    g_frameTimings.layout = frameLap();
 
     // Render. On mobile, skip drawing while backgrounded (no GL surface) and for
     // a few warm-up frames after returning, so we never upload textures against a
@@ -317,6 +401,9 @@ bool Application::internalMainLoop()
 
         if (canDraw)
         {
+#if defined(ANDROID)
+            matchSurfaceSize();
+#endif
             if (!g_glWasLive)
             {
                 // First frame back on a live surface. Anything nanovg tried to
@@ -343,11 +430,15 @@ bool Application::internalMainLoop()
     Application::frame();
 #endif
 
+    frameLap();  // frame() timed its own parts
+
     // Run sync functions
     Threading::performSyncTasks();
+    g_frameTimings.sync = frameLap();
 
     // Trigger RunLoop subscribers
     runLoopEvent.fire();
+    g_frameTimings.runLoop = frameLap();
 
     // Free views deletion pool.
     // A view deletion might inserts other views to deletionPool
@@ -356,7 +447,7 @@ bool Application::internalMainLoop()
     {
         if (!view->isPtrLocked())
         {
-            delete view;
+            timedDelete(view);
         }
         else
         {
@@ -365,6 +456,17 @@ bool Application::internalMainLoop()
         }
     }
     Application::deletionPool = undeletedViews;
+
+    if (g_timeFrame)
+    {
+        g_frameTimings.deletion   = frameLap();
+        g_frameTimings.start      = Application::frameStartTime;
+        g_frameTimings.total      = getCPUTimeUsec() - Application::frameStartTime;
+        g_frameTimings.tickings   = Ticking::runningTickings.size();
+        g_frameTimings.activities = Application::activitiesStack.size();
+        if (frameTimingsCallback)
+            frameTimingsCallback(g_frameTimings);
+    }
 
     if (Application::limitedFrameTime > 0)
     {
@@ -718,9 +820,19 @@ void Application::navigate(FocusDirection direction, bool repeating)
 
     View* currentFocus = Application::currentFocus;
 
-    // Do nothing if there is no current focus
+    // VitaPlex patch: no current focus (an activity pushed with nothing to
+    // focus then): the first direction pressed focuses the top activity's
+    // default focus, if it has one now.
     if (!currentFocus)
+    {
+        if (!Application::activitiesStack.empty())
+        {
+            View* first = Application::activitiesStack.back()->getDefaultFocus();
+            if (first)
+                Application::giveFocus(first);
+        }
         return;
+    }
 
     View* nextFocus = nullptr;
 
@@ -819,7 +931,13 @@ bool Application::setInputType(InputType type)
     if (type == InputType::GAMEPAD)
     {
         Application::setDrawCoursor(false);
-        Application::currentFocus->onFocusGained();
+        // VitaPlex patch: there may be no focus. pushActivity clears it when
+        // the new activity has nothing to take it yet (the video player with
+        // its controls hidden), and a button pressed after a touch then came
+        // here with none: a null pointer on Android's Back, after the screen
+        // had been touched, with a video open (builds 2118 to 2121).
+        if (Application::currentFocus)
+            Application::currentFocus->onFocusGained();
     }
 
     return true;
@@ -900,8 +1018,21 @@ bool Application::handleAction(const ActionType type, const int button, const bo
 
     while (hintParent)
     {
-        for (auto& action : hintParent->getActions())
+        // A listener may change the very list it was called from (register
+        // its button again, hide or show what it sits on) or take the view
+        // away under it (pop its activity): walked through a reference to
+        // that list, the next step read an action that was no longer there
+        // (a null pointer, VitaPlex Android build 2118, Back with a video
+        // playing). So a copy of the list, which keeps its actions alive,
+        // and the parent read before any listener runs.
+        const std::vector<std::shared_ptr<Action>> actions = hintParent->getActions();
+        View* const nextParent = hintParent->getParent();
+
+        for (const auto& action : actions)
         {
+            if (!action)
+                continue;
+
             if (action->getType() != type)
                 continue;
 
@@ -926,7 +1057,12 @@ bool Application::handleAction(const ActionType type, const int button, const bo
             }
         }
 
-        hintParent = hintParent->getParent();
+        // The button taken: nothing further up can take it again, and the
+        // views up there may have gone with what the listener did.
+        if (!consumedButtons.empty())
+            return true;
+
+        hintParent = nextParent;
     }
 
     return !consumedButtons.empty();
@@ -944,12 +1080,18 @@ void Application::frame()
     frameContext.fontStash  = &Application::fontStash;
     frameContext.theme      = Application::getTheme();
 
+    frameLap();
+    g_frameTimings.drawn = true;
+
     // Begin frame and clear
     videoContext->beginFrame();
     videoContext->clear(Application::getTheme().getColor("brls/clear"));
+    g_frameTimings.begin = frameLap();
     float scaleFactor = videoContext->getScaleFactor();
 
     nvgBeginFrame(frameContext.vg, Application::windowWidth, Application::windowHeight, scaleFactor);
+    // VitaPlex patch: the UI starts at the safe area's corner.
+    nvgTranslate(frameContext.vg, Application::safeInsetLeft, Application::safeInsetTop);
     nvgScale(frameContext.vg, Application::windowScale, Application::windowScale);
 
     std::vector<View*> viewsToDraw;
@@ -995,11 +1137,15 @@ void Application::frame()
         debugLayer->frame(&frameContext);
     }
 
+    g_frameTimings.views = frameLap();
+
     // End frame
     nvgResetTransform(Application::getNVGContext()); // scale
     nvgEndFrame(Application::getNVGContext());
+    g_frameTimings.nvgEnd = frameLap();
 
     Application::platform->getVideoContext()->endFrame();
+    g_frameTimings.end = frameLap();
 }
 
 void Application::exit()
@@ -1068,6 +1214,80 @@ void Application::notify(const std::string& text)
     Application::notificationManager->notify(text);
 }
 
+static std::vector<View*> g_deferredLayout;
+static bool g_layingOut = false;
+void Application::noteSlowSyncTask(const char* typeName, Time us)
+{
+    if (slowSyncTasks.size() < 64)
+        slowSyncTasks.emplace_back(typeName ? typeName : "?", us);
+}
+
+// The time the views being deleted inside the current delete took, for the
+// one deleting them to take out of its own.
+static Time g_deleteChildUs = 0;
+
+void Application::timedDelete(View* view)
+{
+    const char* type = typeid(*view).name();
+    const Time start = getCPUTimeUsec();
+    const Time outer = g_deleteChildUs;
+    g_deleteChildUs  = 0;
+    delete view;
+    const Time all = getCPUTimeUsec() - start;
+    auto& entry    = deleteSamples[type];
+    entry.first += all - g_deleteChildUs;
+    entry.second += 1;
+    g_deleteChildUs = outer + all;
+}
+
+bool Application::isMainThread()
+{
+    return std::this_thread::get_id() == g_mainThread;
+}
+
+void Application::deferLayout(View* view)
+{
+    if (std::find(g_deferredLayout.begin(), g_deferredLayout.end(), view) == g_deferredLayout.end())
+        g_deferredLayout.push_back(view);
+    layoutPending = true;
+}
+
+void Application::forgetLayout(View* view)
+{
+    g_deferredLayout.erase(std::remove(g_deferredLayout.begin(), g_deferredLayout.end(), view), g_deferredLayout.end());
+    layoutPending = !g_deferredLayout.empty();
+}
+
+void Application::flushLayout(View* reader)
+{
+    if (!layoutPending || g_layingOut || !isMainThread())
+        return;
+    layoutReaders[reader ? typeid(*reader).name() : "(scheduled: before drawing or after a focus change)"]++;
+    g_layingOut = true;
+    // A layout's onLayout handlers may invalidate again: a few rounds.
+    for (int round = 0; round < 8 && !g_deferredLayout.empty(); round++)
+    {
+        std::vector<View*> views;
+        views.swap(g_deferredLayout);
+        layoutPending = false;
+        // Each view's root now: a view noted as a root may have been added
+        // to a parent since.
+        std::vector<View*> roots;
+        for (View* view : views)
+        {
+            View* root = view;
+            while (root->hasParent() && !root->isDetached())
+                root = root->getParent();
+            if (std::find(roots.begin(), roots.end(), root) == roots.end())
+                roots.push_back(root);
+        }
+        for (View* root : roots)
+            YGNodeCalculateLayout(root->getYGNode(), YGUndefined, YGUndefined, YGDirectionLTR);
+    }
+    layoutPending = !g_deferredLayout.empty();
+    g_layingOut   = false;
+}
+
 void Application::giveFocus(View* view)
 {
     View* oldFocus = Application::currentFocus;
@@ -1075,19 +1295,38 @@ void Application::giveFocus(View* view)
 
     if (oldFocus != newFocus && newFocus != nullptr)
     {
+        // VitaPlex patch: each part timed for the frame profiler.
+        Time mark = g_timeFrame ? getCPUTimeUsec() : 0;
+        auto lap  = [&mark](Time& into) {
+            if (!g_timeFrame)
+                return;
+            const Time now = getCPUTimeUsec();
+            into += now - mark;
+            mark = now;
+        };
+        if (g_timeFrame)
+            g_frameTimings.focusChanges++;
+
         if (oldFocus)
             oldFocus->onFocusLost();
+        lap(g_frameTimings.focusLost);
 
         Application::currentFocus = newFocus;
         Application::globalFocusChangeEvent.fire(newFocus);
+        lap(g_frameTimings.focusEvent);
 
         if (newFocus)
         {
             newFocus->onFocusGained();
             Logger::debug("Giving focus to {}", newFocus->describe());
         }
+        // Laid out once for the whole change, however many labels and
+        // visibilities the old and new focus changed (flushLayout).
+        flushLayout();
+        lap(g_frameTimings.focusGained);
 
         Application::globalHintsUpdateEvent.fire();
+        lap(g_frameTimings.focusHints);
     }
 }
 
@@ -1159,6 +1398,23 @@ std::vector<Activity*> Application::getActivitiesStack()
     return activitiesStack;
 }
 
+// VitaPlex patch: a view tree, as far as focus goes: each view's type, id,
+// visibility and focusability, four levels down, at most 60 lines.
+static void logFocusTree(View* view, int depth)
+{
+    static int lines = 0;
+    if (depth == 0)
+        lines = 0;
+    if (!view || depth > 4 || lines >= 60)
+        return;
+    lines++;
+    const char* vis = view->getVisibility() == Visibility::VISIBLE ? "visible" : view->getVisibility() == Visibility::GONE ? "gone" : "invisible";
+    Logger::info("pushActivity:   {}{} {}{}", std::string(depth * 2, ' '), view->describe(), vis, view->isFocusable() ? " focusable" : "");
+    if (Box* box = dynamic_cast<Box*>(view))
+        for (View* child : box->getChildren())
+            logFocusTree(child, depth + 1);
+}
+
 void Application::pushActivity(Activity* activity, TransitionAnimation animation)
 {
     Application::blockInputs();
@@ -1188,7 +1444,28 @@ void Application::pushActivity(Activity* activity, TransitionAnimation animation
 
     // Layout and prepare activity
     activity->willAppear(true);
-    Application::giveFocus(activity->getDefaultFocus());
+    View* newFocus = activity->getDefaultFocus();
+    if (newFocus)
+    {
+        Application::giveFocus(newFocus);
+    }
+    else
+    {
+        // VitaPlex patch: nothing in the new activity can take focus yet (its
+        // focusable views hidden until something shows them). The focus was
+        // left on the activity below, which then took every button press
+        // while the new one showed: the video player's controls never came
+        // up (build 2089). With no focus, presses go to the top activity's
+        // content view and its actions (handleAction), and the first
+        // direction pressed focuses its default focus (navigate). The views
+        // that might have taken focus are logged.
+        Logger::info("pushActivity: no view to focus in the new activity; focus cleared");
+        logFocusTree(activity->getContentView(), 0);
+        if (Application::currentFocus)
+            Application::currentFocus->onFocusLost();
+        Application::currentFocus = nullptr;
+        Application::globalHintsUpdateEvent.fire();
+    }
 
     if (!fadeIn) // No animations
     {
@@ -1359,10 +1636,25 @@ void Application::setWindowSize(int width, int height)
     Application::windowWidth  = width;
     Application::windowHeight = height;
 
+    // VitaPlex patch: lay the UI out inside the safe area (see
+    // safeAreaInsetsProvider). An implausible answer counts as none.
+    float insetL = 0, insetT = 0, insetR = 0, insetB = 0;
+    if (Application::safeAreaInsetsProvider)
+        Application::safeAreaInsetsProvider(width, height, &insetL, &insetT, &insetR, &insetB);
+    if (insetL < 0 || insetT < 0 || insetR < 0 || insetB < 0 || insetL + insetR >= width / 2.0f ||
+        insetT + insetB >= height / 2.0f)
+        insetL = insetT = insetR = insetB = 0;
+    Application::safeInsetLeft   = insetL;
+    Application::safeInsetTop    = insetT;
+    Application::safeInsetRight  = insetR;
+    Application::safeInsetBottom = insetB;
+    const float usableWidth  = (float)width - insetL - insetR;
+    const float usableHeight = (float)height - insetT - insetB;
+
     // Rescale UI
-    Application::windowScale   = (float)width / (float)ORIGINAL_WINDOW_WIDTH;
+    Application::windowScale   = usableWidth / (float)ORIGINAL_WINDOW_WIDTH;
     Application::contentWidth  = (float)ORIGINAL_WINDOW_WIDTH;
-    Application::contentHeight = std::ceil((float)height / Application::windowScale);
+    Application::contentHeight = std::ceil(usableHeight / Application::windowScale);
 
     for (Activity* activity : Application::activitiesStack)
         activity->onWindowSizeChanged();
@@ -1468,12 +1760,9 @@ int Application::getFont(std::string fontName)
 
 int Application::getDefaultFont()
 {
-#ifdef __SWITCH__
-    static int regular = Application::getFont(FONT_CHINESE_SIMPLIFIED);
-#else
-    static int regular = Application::getFont(FONT_REGULAR);
-#endif
-    return regular;
+    // borealis 0c0988d4: on Switch the Standard shared font is now primary
+    // and carries the fallbacks (CJK, icons), as on the other platforms.
+    return Application::getFont(FONT_REGULAR);
 }
 
 bool Application::XMLViewsRegisterContains(std::string name)

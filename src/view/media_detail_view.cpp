@@ -3,6 +3,8 @@
  */
 
 #include "view/media_detail_view.hpp"
+#include "view/rail_scroll_frame.hpp"
+#include "view/list_scroll_frame.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/livetv_actions.hpp"
 #include "view/recycling_grid.hpp"
@@ -10,6 +12,7 @@
 #include "view/progress_dialog.hpp"
 #include "activity/player_activity.hpp"
 #include "app/application.hpp"
+#include "app/video_queue.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/music_queue.hpp"
 #include "app/hint_icons.hpp"
@@ -234,7 +237,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             m_childrenLabel->setMarginBottom(10);
             m_mediaContentBox->addView(m_childrenLabel);
 
-            m_childrenScroll = new brls::HScrollingFrame();
+            m_childrenScroll = new RailScrollFrame();
             // Episodes use landscape cells, seasons use portrait cells — pick
             // the right platform-tuned row height so covers aren't clipped on
             // non-Vita targets where cells are taller.
@@ -266,7 +269,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             m_extrasLabel->setVisibility(brls::Visibility::GONE);
             m_mediaContentBox->addView(m_extrasLabel);
 
-            m_extrasScroll = new brls::HScrollingFrame();
+            m_extrasScroll = new RailScrollFrame();
             m_extrasScroll->setHeight(platform::getImageConstraints().landscapeRowHeight);
             m_extrasScroll->setMarginBottom(20);
             m_extrasScroll->setVisibility(brls::Visibility::GONE);
@@ -463,7 +466,9 @@ void downloadArtistTracks(const MediaItem& artist) {
                                 full.ratingKey, full.title, full.partPath,
                                 full.duration, "track", artist.title, 0, full.index,
                                 full.thumb, DownloadGroupType::ARTIST, artist.ratingKey,
-                                artist.title, artist.thumb, album.title))
+                                artist.title, artist.thumb, album.title,
+                                full.grandparentTitle.empty() ? artist.title
+                                                              : full.grandparentTitle))
                             queued++;
                     }
                 }
@@ -765,7 +770,7 @@ void MediaDetailView::buildMovieLayout() {
         return l;
     };
     auto rowScroll = [](int height) -> brls::HScrollingFrame* {
-        auto* s = new brls::HScrollingFrame();
+        auto* s = new RailScrollFrame();
         s->setHeight(height);
         s->setMarginBottom(16);
         s->setVisibility(brls::Visibility::GONE);
@@ -1134,7 +1139,7 @@ brls::HScrollingFrame* MediaDetailView::createMediaRow(const std::string& title,
     }
     m_musicCategoriesBox->addView(labelRow);
 
-    auto* scrollFrame = new brls::HScrollingFrame();
+    auto* scrollFrame = new RailScrollFrame();
     // Music artist detail page: "Albums", "Related Artists", etc. rows of
     // square covers. Height scales per platform so album art isn't clipped.
     scrollFrame->setHeight(platform::getImageConstraints().squareRowHeight);
@@ -1491,7 +1496,7 @@ void MediaDetailView::buildPeopleAndRecommendedRows(brls::Box* parent) {
     m_peopleLabel->setVisibility(brls::Visibility::GONE);
     parent->addView(m_peopleLabel);
 
-    m_peopleScroll = new brls::HScrollingFrame();
+    m_peopleScroll = new RailScrollFrame();
     m_peopleScroll->setHeight(ic.squareRowHeight);
     m_peopleScroll->setMarginBottom(20);
     m_peopleScroll->setVisibility(brls::Visibility::GONE);
@@ -1510,7 +1515,7 @@ void MediaDetailView::buildPeopleAndRecommendedRows(brls::Box* parent) {
     m_recommendationsLabel->setVisibility(brls::Visibility::GONE);
     parent->addView(m_recommendationsLabel);
 
-    m_recommendationsScroll = new brls::HScrollingFrame();
+    m_recommendationsScroll = new RailScrollFrame();
     m_recommendationsScroll->setHeight(ic.homeRowHeight);
     m_recommendationsScroll->setMarginBottom(20);
     m_recommendationsScroll->setVisibility(brls::Visibility::GONE);
@@ -2036,10 +2041,7 @@ void MediaDetailView::loadMusicCategories() {
         std::vector<MediaItem> allExtras;
         if (client.fetchExtras(m_item.ratingKey, allExtras)) {
             for (const auto& extra : allExtras) {
-                // Music videos are clips with subtype "musicVideo" or just clips from artists
-                std::string subtype = extra.subtype;
-                for (char& c : subtype) c = tolower(c);
-                if (extra.mediaType == MediaType::CLIP || subtype == "musicvideo") {
+                if (extra.isMusicVideoExtra()) {
                     musicVideos.push_back(extra);
                 }
             }
@@ -2064,28 +2066,20 @@ void MediaDetailView::loadMusicCategories() {
         std::vector<MediaItem> children;
         client.fetchChildren(m_item.ratingKey, children);
 
-        // Typed releases, the way the official client splits them. Plex follows
-        // MusicBrainz: Single / EP are primary types (album.format); everything
-        // else is a secondary type (album.subformat). One query per value —
-        // Plex's comma/IN form is unreliable. Empty categories hide themselves.
+        // Typed releases (PlexClient::artistReleaseCategories). Empty
+        // categories hide themselves.
         struct AlbumCat {
             std::string label;
             std::vector<std::string> filters;   // OR'd together (e.g. Single + EP)
             std::vector<MediaItem> items;
         };
-        std::vector<AlbumCat> cats = {
-            {"Singles & EPs", {"album.format=Single", "album.format=EP"}, {}},
-            {"Compilations",  {"album.subformat=Compilation"},            {}},
-            {"Soundtracks",   {"album.subformat=Soundtrack"},             {}},
-            {"Live",          {"album.subformat=Live"},                   {}},
-            {"Remixes",       {"album.subformat=Remix"},                  {}},
-            {"Demos",         {"album.subformat=Demo"},                   {}},
-            {"DJ Mixes",      {"album.subformat=DJ-mix"},                 {}},
-            {"Mixtapes",      {"album.subformat=Mixtape/Street"},         {}},
-            {"Spoken Word",   {"album.subformat=Spokenword"},             {}},
-            {"Interviews",    {"album.subformat=Interview"},              {}},
-            {"Audiobooks",    {"album.subformat=Audiobook"},              {}},
-        };
+        std::vector<AlbumCat> cats;
+        for (const auto& rc : PlexClient::artistReleaseCategories()) {
+            AlbumCat c;
+            c.label = rc.label;
+            for (const char* f : rc.filters) c.filters.push_back(f);
+            cats.push_back(std::move(c));
+        }
         if (!sectionKey.empty()) {
             for (auto& c : cats) {
                 for (const auto& f : c.filters) {
@@ -2183,6 +2177,12 @@ void MediaDetailView::loadMusicCategories() {
                         return true;
                     });
                     cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+                    // Its menu, to queue it (START, as the grids' cells).
+                    cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                        [capturedMv](brls::View*) {
+                            showClipContextMenu(capturedMv);
+                            return true;
+                        });
 
                     mvContent->addView(cell);
                 }
@@ -2210,7 +2210,10 @@ void MediaDetailView::onPlay(bool resume) {
         DownloadItem dlItem;
         bool isLocal = DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, dlItem)
                        && dlItem.state == DownloadState::COMPLETED;
-        Application::getInstance().pushPlayerActivity(m_item.ratingKey, isLocal);
+        if (m_item.mediaType == MediaType::MUSIC_TRACK)
+            Application::getInstance().pushTrackPlayerActivity(m_item.ratingKey, isLocal);
+        else
+            Application::getInstance().pushPlayerActivity(m_item.ratingKey, isLocal);
     }
     // For shows/seasons/albums, play the first child item
     else if (m_item.mediaType == MediaType::SHOW ||
@@ -2319,7 +2322,9 @@ void MediaDetailView::onDownload() {
         parentTitle = m_item.grandparentTitle;  // Artist name
     }
 
-    // Queue the download (pass thumb for cover art on music tracks)
+    // Queue the download (pass thumb for cover art on music tracks); a
+    // track keeps its album and artist too.
+    const bool isTrack = m_item.mediaType == MediaType::MUSIC_TRACK;
     bool queued = DownloadsManager::getInstance().queueDownload(
         m_item.ratingKey,
         m_item.title,
@@ -2329,7 +2334,10 @@ void MediaDetailView::onDownload() {
         parentTitle,
         seasonNum,
         episodeNum,
-        m_item.thumb
+        m_item.thumb,
+        DownloadGroupType::NONE, "", "", "",
+        isTrack ? m_item.parentTitle : "",
+        isTrack ? m_item.grandparentTitle : ""
     );
 
     if (queued) {
@@ -2526,7 +2534,8 @@ void MediaDetailView::downloadAll() {
                     ratingKey,
                     parentTitle,
                     itemThumb,
-                    fullItem.parentTitle  // album title for tracks
+                    fullItem.parentTitle,  // album title for tracks
+                    itemMediaType == "track" ? fullItem.grandparentTitle : ""
                 )) {
                     queued++;
                 }
@@ -2861,7 +2870,8 @@ void MediaDetailView::loadTrackList() {
                                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                     fullItem.duration, "track",
                                     fullItem.grandparentTitle, 0, fullItem.index,
-                                    fullItem.thumb);
+                                    fullItem.thumb, DownloadGroupType::NONE, "", "", "",
+                                    fullItem.parentTitle, fullItem.grandparentTitle);
                                 brls::sync([queued, fullItem]() {
                                     if (queued) {
                                         DownloadsManager::getInstance().startDownloads();
@@ -3175,10 +3185,19 @@ private:
 
 }  // namespace
 
+std::vector<OptionRow> MediaDetailView::s_extraMenuRows;
+
 void MediaDetailView::showOptionsPopover(brls::View* anchor,
                                          const std::string& contextLine,
                                          const std::string& title,
                                          std::vector<OptionRow> rows) {
+    if (!s_extraMenuRows.empty()) {
+        // Above a closing Cancel row, else at the end.
+        auto at = rows.end();
+        if (!rows.empty() && rows.back().danger && rows.back().label == "Cancel") at = rows.end() - 1;
+        rows.insert(at, s_extraMenuRows.begin(), s_extraMenuRows.end());
+        s_extraMenuRows.clear();
+    }
     namespace pc = popcol;
 
     // The episode menu passes an "S{n} · E{n}" context line; every other menu
@@ -3262,7 +3281,7 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
         if (wantRows > availForRows && availForRows > 132.0f) {
             auto* rowsBox = new brls::Box();
             rowsBox->setAxis(brls::Axis::COLUMN);
-            auto* scrollFrame = new brls::ScrollingFrame();
+            auto* scrollFrame = new ListScrollFrame();
             scrollFrame->setContentView(rowsBox);
             scrollFrame->setHeight(availForRows);
             panel->addView(scrollFrame);
@@ -3716,6 +3735,9 @@ void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
         return true;
     }});
 
+    // Queue it to play after what is playing (app/video_queue.hpp).
+    addVideoQueueRows(rows, capturedEpisode);
+
     // Mark as watched/unwatched
     if (episode.watched) {
         rows.push_back({ "hide.png", "Mark as Unwatched", "", false, false,
@@ -3754,6 +3776,56 @@ void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
     }
     showOptionsPopover(anchor, contextLine, episode.title, std::move(rows));
 }
+void MediaDetailView::addVideoQueueRows(std::vector<OptionRow>& rows, const MediaItem& video) {
+    VideoQueueItem item;
+    item.ratingKey = video.ratingKey;
+    item.title = video.title;
+    auto added = [](const std::string& how) {
+        const size_t waiting = VideoQueue::getInstance().size();
+        brls::Application::notify(how + " \xC2\xB7 " + std::to_string(waiting) +
+                                  (waiting == 1 ? " video waiting" : " videos waiting"));
+    };
+    rows.push_back({ "", "Play Next", "", false, false, [item, added](brls::View*) {
+        VideoQueue::getInstance().addNext(item);
+        added("Plays next");
+        return true;
+    }});
+    rows.push_back({ "", "Add to Queue", "", false, false, [item, added](brls::View*) {
+        VideoQueue::getInstance().add(item);
+        added("Added to the queue");
+        return true;
+    }});
+    const size_t waiting = VideoQueue::getInstance().size();
+    if (waiting == 0) return;
+    rows.push_back({ "play.png", "Play Queue", std::to_string(waiting), false, false,
+        [](brls::View*) {
+        VideoQueueItem first;
+        if (VideoQueue::getInstance().popNext(first))
+            Application::getInstance().pushPlayerActivity(first.ratingKey);
+        return true;
+    }});
+    rows.push_back({ "", "Clear Queue", std::to_string(waiting), false, false,
+        [](brls::View*) {
+        VideoQueue::getInstance().clear();
+        brls::Application::notify("Queue cleared");
+        return true;
+    }});
+}
+
+void MediaDetailView::showClipContextMenu(const MediaItem& clip) {
+    brls::View* anchor = brls::Application::getCurrentFocus();
+    const std::string key = clip.ratingKey;
+    std::vector<OptionRow> rows;
+    rows.push_back({ "play.png", "Play", "", true, false, [key](brls::View*) {
+        Application::getInstance().pushPlayerActivity(key);
+        return true;
+    }});
+    addVideoQueueRows(rows, clip);
+    rows.push_back({ "cross.png", "Cancel", "", false, true, [](brls::View*) { return true; }});
+    // The artist, where the clip came with one (the Music Videos tab).
+    showOptionsPopover(anchor, clip.grandparentTitle, clip.title, std::move(rows));
+}
+
 bool MediaDetailView::hasContextMenu(const MediaItem& item) {
     // A Live TV programme's ratingKey is an EPG key, so the library menus
     // below don't apply — but a broadcast still has actions (Watch Now /
@@ -3768,6 +3840,7 @@ bool MediaDetailView::hasContextMenu(const MediaItem& item) {
         case MediaType::MUSIC_ARTIST:
         case MediaType::MUSIC_ALBUM:
         case MediaType::MUSIC_TRACK:
+        case MediaType::CLIP:
             return true;
         default:
             return false;
@@ -3787,6 +3860,7 @@ void MediaDetailView::showContextMenuFor(const MediaItem& item) {
         case MediaType::MUSIC_ARTIST: showArtistContextMenuStatic(item); break;
         case MediaType::MUSIC_ALBUM:  showAlbumContextMenuStatic(item);  break;
         case MediaType::MUSIC_TRACK:  showTrackContextMenuStatic(item);  break;
+        case MediaType::CLIP:         showClipContextMenu(item);         break;
         default: break;
     }
 }
@@ -4468,7 +4542,7 @@ void MediaDetailView::showAlbumContextMenuStatic(const MediaItem& album) {
                             fullItem.thumb,
                             DownloadGroupType::ALBUM, capturedAlbum.ratingKey,
                             capturedAlbum.title, capturedAlbum.thumb,
-                            fullItem.parentTitle)) {
+                            fullItem.parentTitle, fullItem.grandparentTitle)) {
                             queued++;
                         }
                     }
@@ -4621,7 +4695,8 @@ void MediaDetailView::showTrackContextMenuStatic(const MediaItem& track) {
                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
                     fullItem.duration, "track",
                     fullItem.grandparentTitle, 0, 0,
-                    fullItem.thumb);
+                    fullItem.thumb, DownloadGroupType::NONE, "", "", "",
+                    fullItem.parentTitle, fullItem.grandparentTitle);
                 brls::sync([queued, fullItem]() {
                     if (queued) {
                         DownloadsManager::getInstance().startDownloads();
@@ -5708,7 +5783,7 @@ void MediaDetailView::showCenteredChoice(const std::string& title,
     if (scrollable) {
         auto* rowsBox = new brls::Box();
         rowsBox->setAxis(brls::Axis::COLUMN);
-        auto* scrollFrame = new brls::ScrollingFrame();
+        auto* scrollFrame = new ListScrollFrame();
         scrollFrame->setContentView(rowsBox);
         const float screenH = platform::viewportHeight();
         float maxRows = screenH * 0.62f;   // leave room for title + margins
@@ -5884,7 +5959,7 @@ void MediaDetailView::showMultiSelectFilter(
     // Scrollable, height-capped value list.
     auto* listBox = new brls::Box();
     listBox->setAxis(brls::Axis::COLUMN);
-    auto* scroll = new brls::ScrollingFrame();
+    auto* scroll = new ListScrollFrame();
     scroll->setContentView(listBox);
     float maxH = screenH * 0.5f;
     if (maxH < 180.0f) maxH = 180.0f;
@@ -6055,7 +6130,9 @@ void MediaDetailView::showMultiToggleDialog(
     // Scrollable, height-capped list.
     auto* listBox = new brls::Box();
     listBox->setAxis(brls::Axis::COLUMN);
-    auto* scroll = new brls::ScrollingFrame();
+    // Row by row: a press onto a row below the edge shows that row, not
+    // several (natural scrolling slid the list for as long as it was held).
+    auto* scroll = new ListScrollFrame();
     scroll->setContentView(listBox);
     float maxH = screenH * 0.5f;
     if (maxH < 180.0f) maxH = 180.0f;

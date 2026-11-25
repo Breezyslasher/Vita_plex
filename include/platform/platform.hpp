@@ -209,6 +209,29 @@ float uiScale();
  */
 void onOrientationChanged(std::function<void()> cb);
 
+// Fires on any change of the viewport's size, including one that keeps the
+// orientation: a foldable moving between its outer and inner screen, a
+// split-screen or freeform window being resized.
+void onViewportResized(std::function<void()> cb);
+
+// The display mode a video wants: its frame rate and dynamic range. Apple TV
+// switches the TV to match (with "Match Content" on in its settings); every
+// other platform takes the frame rate alone, as setPreferredRefreshRate.
+// fps <= 0 hands the display back.
+enum class VideoDynamicRange { SDR, HDR10, HLG };
+void setPreferredVideoMode(float fps, VideoDynamicRange range);
+
+// Screen brightness, for the video player's swipe gesture. iPhone / iPad
+// only for now (UIScreen); elsewhere canSetScreenBrightness() is false.
+bool canSetScreenBrightness();
+float getScreenBrightness();            // 0..1
+void setScreenBrightness(float value);  // 0..1
+
+// The system's audio-output picker (AirPlay speakers, Bluetooth, the phone),
+// shown from the music player. iPhone / iPad only.
+bool canShowAudioRoutePicker();
+void showAudioRoutePicker();
+
 /**
  * Per-platform Plex transcode / identification constants.
  *

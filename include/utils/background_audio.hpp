@@ -1,91 +1,135 @@
 /**
- * VitaPlex - background audio experiment (Vita)
+ * VitaPlex - music after leaving the app (Vita)
  *
- * Leaving VitaPlex on a Vita, for the LiveArea or another app, stops the
- * music. The "Background Music" setting only covers leaving the player screen
- * inside the app. Two ways past that are being tried, and this is the harness
- * that finds out on real hardware which of them holds:
+ * VitaPlex is packaged as a non-game application, the kind the system lets
+ * run on once it is left with PS: music playing goes on through mpv, on the
+ * system's background-music (BGM) port, as ElevenMPV-A's does. The system
+ * closes such an app to start a game, though, so as it does, the queue goes
+ * to SceShell, which no app or game closes: vita-shell-companion's plugin
+ * (lib/vita-shell-companion) plays it on there through the shell's music
+ * player, which plays on beside games, and fetches the songs that are not on
+ * the memory card as they come up (handover.h). By the setting it
+ * goes there as soon as the app is left. Opened again, VitaPlex takes the
+ * music back where SceShell got to, once its player is ready to play it
+ * (takeBackNow), and plays on from the songs' files SceShell had, where it
+ * can (songFile).
  *
- *   BGM port   Keep playing through mpv, in this process, on the audio port the
- *              system lets an app keep once it is not in front
- *              (sceAppMgrAcquireBgmPortWithPriority, as ElevenMPV-A does for
- *              its own decoders). Streams exactly as now, provided the process
- *              keeps running while deactivated, which is what the watcher
- *              records.
- *   SceShell   Hand the audio to the system's music service, the one the Music
- *              app plays through (lib/libshellaudio). Keeps playing whatever
- *              happens to this process, but only formats and sources the shell
- *              itself accepts. Whether that includes an http(s) URL is exactly
- *              what the stream test is for.
+ * The same plugin puts the song, its cover and working buttons in the quick
+ * menu's Music row while VitaPlex plays.
  *
- * Everything goes to the log under "[bgaudio]", with every system call's return
- * code, so one test run can be read back afterwards. Other platforms get the
- * inline no-ops below and no call site needs an #ifdef.
- *
- * On a Vita only VitaPlex BG has the tests: the same eboot as VitaPlex,
- * packaged as a non-game app (VitaPlexBG.vpk), the kind the system lets run on
- * in the background. VitaPlex itself is a game, held the moment it leaves the
- * foreground, and it is the package that is released, so it gets none of this
- * until background music works there.
+ * Other platforms get the inline no-ops below, so no call site needs an #ifdef.
+ * docs/DESIGN_NOTES.md has how this was found out, test by test.
  */
 
 #pragma once
 
-#include <functional>
 #include <string>
 
 namespace vitaplex {
 namespace bgaudio {
 
-using Report = std::function<void(const std::string&)>;
+// Where a queue taken back from SceShell goes on (takeBackNow): whether it
+// does, its song's place in the queue, where in the song, and whether the
+// quick menu's play/pause had it paused, which it stays.
+struct ShellPlace {
+    bool play = false;
+    int index = -1;
+    long long atMs = 0;
+    bool paused = false;
+};
 
 #if defined(__vita__)
 
-// Whether the tests exist here at all: running as VitaPlex BG.
-bool available();
+// Whether music can go on after leaving the app here.
+inline bool available() { return true; }
 
-// Called once at startup, after settings are loaded, with the saved toggle.
-// Outside VitaPlex BG the toggle is taken as off, whatever was saved.
-void init(bool keepPlaying);
+// What happens to music playing as the user leaves VitaPlex (the setting).
+enum OutsideMusic {
+    kOutsideStops = 0,        // it stops
+    kOutsidePlaysOn = 1,      // VitaPlex plays on; SceShell takes over when the
+                              // system closes it
+    kOutsideHandsOver = 2,    // SceShell takes over at once, on PS
+};
 
-// The settings toggle: hold the BGM port while music plays, and have mpv
-// resample music to 44.1 kHz so its Vita output uses that port.
-void setKeepPlaying(bool on);
+// Called once at startup, after settings are loaded, with the saved setting.
+// Also takes the music back from SceShell, once the first frame is up.
+void init(int outsideMusic);
+
+// The setting. Anything but kOutsideStops holds the BGM port while music
+// plays, and has mpv resample music to 44.1 kHz so its Vita output uses that
+// port (keepPlaying).
+void setOutsideMusic(int mode);
+int outsideMusic();
 bool keepPlaying();
+
+// The setting for SceShell's music with the server out of reach: a song it
+// cannot fetch for want of an answer is passed over for the next song on the
+// memory card, and with none it is held paused, for the quick menu's play or
+// for VitaPlex to take back (handover.h's offlineSkip). Off, such songs are
+// passed over, and three in a row stop the queue. Goes with each hand-over.
+void setOfflineSkip(bool on);
+
+// As VitaPlex quits to be updated, on the UI thread: the shell companion plugin
+// is asked to install the update unpacked to its SC_UPDATE_DIR once
+// VitaPlex has gone, and to launch it again; then music playing goes to
+// SceShell by the setting, as when the system closes VitaPlex, and plays on
+// meanwhile. false when the plugin could not be asked, with nothing changed.
+bool installUpdate();
+// The same with the update's VPK as it was downloaded, which the plugin
+// unpacks itself once VitaPlex has gone (its caps "update.vpk", 0.3.0 on):
+// nothing is unpacked here. false when the plugin could not be asked, or is
+// one that cannot (shellcomp::has), with nothing changed.
+bool installUpdateVpk(const std::string& vpkPath);
+
+// Ends the process.
+[[noreturn]] void exitProcess(int code);
 
 // From MpvPlayer, audio-only mode only.
 void onAudioPlayback(bool playing);
-void onTrackLoad();
 void onPlayerShutdown();
 
-// SceShell tests. The work runs on its own thread and can take most of a
-// minute; done is then called on the UI thread with a report for a person.
-void runShellFileTest(Report done);
-void runShellStreamTest(Report done);
-// Stops whatever the tests left playing. Returns what happened.
-std::string stopShellTest();
+// The quick menu's Music row, through the shell companion plugin
+// (utils/shell_companion_psv.hpp): the song on it and its three buttons working
+// while VitaPlex plays. SceShell takes the row itself as it plays the queue
+// handed over. On or off, as saved.
+void setQuickMenuControls(bool on);
+// From the OS now-playing bridge (now_playing.cpp): what MusicController
+// publishes, and that it was cleared. artUrl is now_playing.hpp's: the
+// cover's thumbnail URL, a download's local copy, or "" for none.
+void quickMenuNowPlaying(const std::string& title, const std::string& artist,
+                         const std::string& album, const std::string& artUrl, bool playing);
+void quickMenuNowPlayingCleared();
 
-// Which shell service the tests use: 0-4 are the music player service's
-// client types (ElevenMPV-A uses 0), 5 the application-BGM service. Which of
-// them the quick menu's Music controls answer to, and whether any takes a
-// URL, is what switching between them finds out. Not saved.
-int shellService();
-void setShellService(int service);
+// A whole file of the song at ratingKey in the folder of songs handed to
+// SceShell (handover.h's HANDOVER_SONGS): fetched there for SceShell, by
+// VitaPlex or by SceShell itself, and kept as the music came back, or the
+// song before. VitaPlex plays it in place of the server's stream. "" for none.
+std::string songFile(const std::string& ratingKey);
+
+// For the player of a queue taken back from SceShell, once it is ready to
+// play, on the UI thread so that the track's load follows at once: SceShell,
+// which has carried the queue on meanwhile, is told to stop, and says where
+// it stopped. Up to a second and a half for its answer.
+ShellPlace takeBackNow();
 
 #else
 
 inline bool available() { return false; }
-inline void init(bool) {}
-inline void setKeepPlaying(bool) {}
+inline void init(int) {}
+inline void setOutsideMusic(int) {}
+inline int outsideMusic() { return 0; }
 inline bool keepPlaying() { return false; }
+inline void setOfflineSkip(bool) {}
+inline bool installUpdate() { return false; }
+inline bool installUpdateVpk(const std::string&) { return false; }
 inline void onAudioPlayback(bool) {}
-inline void onTrackLoad() {}
 inline void onPlayerShutdown() {}
-inline void runShellFileTest(Report) {}
-inline void runShellStreamTest(Report) {}
-inline std::string stopShellTest() { return {}; }
-inline int shellService() { return 0; }
-inline void setShellService(int) {}
+inline void setQuickMenuControls(bool) {}
+inline void quickMenuNowPlaying(const std::string&, const std::string&, const std::string&,
+                                const std::string&, bool) {}
+inline void quickMenuNowPlayingCleared() {}
+inline std::string songFile(const std::string&) { return std::string(); }
+inline ShellPlace takeBackNow() { return ShellPlace(); }
 
 #endif
 

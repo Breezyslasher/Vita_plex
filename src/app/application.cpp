@@ -2,7 +2,9 @@
  * VitaPlex - Application implementation
  */
 
+#include "utils/frame_profiler.hpp"
 #include "app/application.hpp"
+#include "app/video_background.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/plex_palette.hpp"
@@ -21,6 +23,7 @@
 #include <atomic>
 #include "platform/paths.hpp"
 #include "platform/platform.hpp"
+#include "utils/async.hpp"
 #include "utils/image_loader.hpp"
 #include "view/home_user_picker.hpp"
 
@@ -98,9 +101,13 @@ void Application::run() {
         // Use connectToServer to properly initialize (including Live TV check)
         if (PlexClient::getInstance().connectToServer(m_serverUrl)) {
             brls::Logger::info("Restored session and connected to server");
-            // Bidirectional sync: push local offline progress, pull server progress
+            // Bidirectional sync: push local offline progress, pull server
+            // progress. Off the UI thread: one request a download held the
+            // main screen back 20 s for 147 downloads on a Vita (log
+            // 981fe042), and with it everything that waits for the first
+            // frame. The manager locks its list around each change.
             DownloadsManager::getInstance().init();
-            DownloadsManager::getInstance().syncProgressBidirectional();
+            asyncRun([]() { DownloadsManager::getInstance().syncProgressBidirectional(); });
             // Push Main first regardless — if the user backs out of the
             // picker (or never has one, because no Plex Home), they land
             // on the app as the last-used user. Then overlay the picker
@@ -120,6 +127,9 @@ void Application::run() {
         pushLoginActivity();
     }
 
+    // Where the frames go, in the log (utils/frame_profiler.hpp).
+    perf::install();
+
     // Main loop handled by Borealis
     while (brls::Application::mainLoop()) {
         // Application keeps running
@@ -127,6 +137,9 @@ void Application::run() {
 }
 
 void Application::shutdown() {
+    // A video playing on with its player left: stopped, its place saved.
+    VideoBackground::getInstance().stop();
+    DownloadsManager::getInstance().noteAppClosing();
     saveSettings();
     m_initialized = false;
     brls::Logger::info("VitaPlex shutting down");
@@ -236,6 +249,10 @@ void Application::pushMainActivity() {
 
 void Application::pushPlayerActivity(const std::string& mediaKey, bool isLocalFile) {
     brls::Application::pushActivity(new PlayerActivity(mediaKey, isLocalFile));
+}
+
+void Application::pushTrackPlayerActivity(const std::string& mediaKey, bool isLocalFile) {
+    brls::Application::pushActivity(PlayerActivity::createForTrack(mediaKey, isLocalFile));
 }
 
 void Application::pushLiveTVPlayerActivity(const std::string& streamUrl, const std::string& channelTitle,
@@ -397,6 +414,17 @@ std::string Application::getSubtitleSizeString(SubtitleSize size) {
     }
 }
 
+float Application::subtitleScale(SubtitleSize size) {
+    float scale = 1.0f;
+    if (size == SubtitleSize::SMALL)      scale = 0.8f;
+    else if (size == SubtitleSize::LARGE) scale = 1.25f;
+    // Android's caption size, from its accessibility settings. Medium follows
+    // it exactly, as subtitles did before this setting did anything.
+    const auto& cs = platform::getSystemCaptionStyle();
+    if (cs.valid && cs.fontScale > 0.01f) scale *= cs.fontScale;
+    return scale;
+}
+
 bool Application::loadSettings() {
     // Single unified path: std::ifstream works on every target (on Vita it
     // goes through newlib's POSIX shim into sceIoOpen). This replaces the
@@ -503,7 +531,16 @@ bool Application::loadSettings() {
     m_settings.autoPlayNext    = extractBool("autoPlayNext", true);
     m_settings.resumePlayback  = extractBool("resumePlayback", true);
     m_settings.showSubtitles   = extractBool("showSubtitles", true);
-    m_settings.subtitleSize    = static_cast<SubtitleSize>(extractInt("subtitleSize"));
+    // extractInt reads a missing key as 0, which here is Small, not the
+    // default. Absent or out of range keeps the default, Medium.
+    {
+        const int style = extractInt("subtitleStyle");
+        m_settings.subtitleStyle = (style >= 0 && style <= 3) ? style : 0;
+    }
+    if (content.find("\"subtitleSize\":") != std::string::npos) {
+        const int size = extractInt("subtitleSize");
+        if (size >= 0 && size <= 2) m_settings.subtitleSize = static_cast<SubtitleSize>(size);
+    }
     m_settings.seekInterval    = extractInt("seekInterval");
     if (m_settings.seekInterval <= 0) m_settings.seekInterval = 10;
     m_settings.controlsAutoHideSeconds = extractInt("controlsAutoHideSeconds");
@@ -512,8 +549,6 @@ bool Application::loadSettings() {
     m_settings.autoSkipCredits = extractBool("autoSkipCredits", false);
     m_settings.playerLayout    = extractInt("playerLayout");
     if (m_settings.playerLayout < 0 || m_settings.playerLayout > 2) m_settings.playerLayout = 0;
-    m_settings.videoPlayerLayout = extractInt("videoPlayerLayout");
-    if (m_settings.videoPlayerLayout < 0 || m_settings.videoPlayerLayout > 2) m_settings.videoPlayerLayout = 0;
     {
         std::string lang = extractString("defaultSubtitleLanguage");
         if (!lang.empty()) m_settings.defaultSubtitleLanguage = lang;
@@ -597,7 +632,15 @@ bool Application::loadSettings() {
     }
     m_settings.audioPassthrough = extractBool("audioPassthrough", false);
     m_settings.backgroundMusic = extractBool("backgroundMusic", true);
-    m_settings.vitaBackgroundAudio = extractBool("vitaBackgroundAudio", false);
+    m_settings.backgroundVideo = extractBool("backgroundVideo", false);
+    // Absent from a file saved before it existed: the default stands.
+    if (content.find("\"vitaOutsideMusic\":") != std::string::npos) {
+        const int outside = extractInt("vitaOutsideMusic");
+        if (outside >= 0 && outside <= 2) m_settings.vitaOutsideMusic = outside;
+    }
+    m_settings.vitaOfflineSkip = extractBool("vitaOfflineSkip", true);
+    m_settings.vitaDownloadsAfterLeaving = extractBool("vitaDownloadsAfterLeaving", true);
+    m_settings.vitaQuickMenuControls = extractBool("vitaQuickMenuControls", true);
     m_settings.musicShuffleDefault = extractBool("musicShuffleDefault", false);
 
     // Live TV / DVR settings
@@ -723,12 +766,12 @@ bool Application::saveSettings() {
     json += "  \"resumePlayback\": " + b(m_settings.resumePlayback) + ",\n";
     json += "  \"showSubtitles\": " + b(m_settings.showSubtitles) + ",\n";
     json += "  \"subtitleSize\": " + std::to_string(static_cast<int>(m_settings.subtitleSize)) + ",\n";
+    json += "  \"subtitleStyle\": " + std::to_string(m_settings.subtitleStyle) + ",\n";
     json += "  \"seekInterval\": " + std::to_string(m_settings.seekInterval) + ",\n";
     json += "  \"controlsAutoHideSeconds\": " + std::to_string(m_settings.controlsAutoHideSeconds) + ",\n";
     json += "  \"autoSkipIntro\": " + b(m_settings.autoSkipIntro) + ",\n";
     json += "  \"autoSkipCredits\": " + b(m_settings.autoSkipCredits) + ",\n";
     json += "  \"playerLayout\": " + std::to_string(m_settings.playerLayout) + ",\n";
-    json += "  \"videoPlayerLayout\": " + std::to_string(m_settings.videoPlayerLayout) + ",\n";
     json += "  \"defaultSubtitleLanguage\": \"" + esc(m_settings.defaultSubtitleLanguage) + "\",\n";
     json += "  \"syncLoungeServer\": \"" + esc(m_settings.syncLoungeServer) + "\",\n";
     json += "  \"syncLoungeRoom\": \"" + esc(m_settings.syncLoungeRoom) + "\",\n";
@@ -749,7 +792,11 @@ bool Application::saveSettings() {
     json += "  \"lyricsWordByWord\": " + b(m_settings.lyricsWordByWord) + ",\n";
     json += "  \"audioPassthrough\": " + b(m_settings.audioPassthrough) + ",\n";
     json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + ",\n";
-    json += "  \"vitaBackgroundAudio\": " + b(m_settings.vitaBackgroundAudio) + ",\n";
+    json += "  \"backgroundVideo\": " + b(m_settings.backgroundVideo) + ",\n";
+    json += "  \"vitaOutsideMusic\": " + std::to_string(m_settings.vitaOutsideMusic) + ",\n";
+    json += "  \"vitaOfflineSkip\": " + b(m_settings.vitaOfflineSkip) + ",\n";
+    json += "  \"vitaDownloadsAfterLeaving\": " + b(m_settings.vitaDownloadsAfterLeaving) + ",\n";
+    json += "  \"vitaQuickMenuControls\": " + b(m_settings.vitaQuickMenuControls) + ",\n";
     json += "  \"musicShuffleDefault\": " + b(m_settings.musicShuffleDefault) + ",\n";
     json += "  \"defaultDvrShowSectionId\": \"" + esc(m_settings.defaultDvrShowSectionId) + "\",\n";
     json += "  \"defaultDvrShowSectionTitle\": \"" + esc(m_settings.defaultDvrShowSectionTitle) + "\",\n";

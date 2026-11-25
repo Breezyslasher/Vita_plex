@@ -11,6 +11,7 @@
  */
 
 #include "view/settings_tab.hpp"
+#include "utils/log_server.hpp"
 #include "view/livetv_actions.hpp"
 #include "utils/app_update.hpp"
 #include "utils/background_audio.hpp"
@@ -22,6 +23,7 @@
 #include "app/synclounge_session.hpp"
 #include "view/media_detail_view.hpp"
 #include "activity/player_activity.hpp"
+#include "player/mpv_player.hpp"
 #include "utils/http_client.hpp"
 #include "utils/http_cache.hpp"
 #include "app/music_controller.hpp"
@@ -111,7 +113,7 @@ static const SectionMeta kSections[] = {
     /* SEC_ACCOUNT     */ { "Account",         "account.png",
                             "Sign-in, switch user, and auto-login." },
     /* SEC_INTERFACE   */ { "Interface",       "theme-light-dark.png",
-                            "Logging, diagnostics, and hidden libraries." },
+                            "Player layout and hidden libraries." },
     /* SEC_CONTENT     */ { "Content Display", "show.png",
                             "What appears in grids and library hubs." },
     /* SEC_PLAYBACK    */ { "Playback",        "play.png",
@@ -128,6 +130,8 @@ static const SectionMeta kSections[] = {
                             "Background playback and default track action." },
     /* SEC_LIVETV      */ { "Live TV & DVR",   "television-guide.png",
                             "Channel guide window and recording defaults." },
+    /* SEC_LOGS        */ { "Logs",            "history.png",
+                            "Debug logging, view or send the log, diagnostics." },
     /* SEC_ABOUT       */ { "About",           "information.png",
                             "" /* unused — rail uses the version string */ },
 };
@@ -294,6 +298,7 @@ SettingsTab::SettingsTab() {
     m_sectionBoxes[SEC_DOWNLOADS]   = createDownloadsSection();
     m_sectionBoxes[SEC_MUSIC]       = createMusicSection();
     m_sectionBoxes[SEC_LIVETV]      = createLiveTVSection();
+    m_sectionBoxes[SEC_LOGS]        = createLogsSection();
 
     // Stage every section's box but do NOT add any of them to the
     // detail content yet — showSection() adds exactly one at a time.
@@ -678,24 +683,47 @@ brls::Box* SettingsTab::createUISection() {
     playerLayoutInfo->setMarginTop(8);
     box->addView(playerLayoutInfo);
 
-    // The same choice for video, separately: the music layout is a portrait Now
-    // Playing screen and the video one a landscape OSD, so wanting one says
-    // nothing about wanting the other.
-    m_videoPlayerLayoutSelector = makePickerCell("Video Player Layout",
-        {"Auto", "Classic", "Mobile"},
-        settings.videoPlayerLayout,
-        [this](int index) {
-            onVideoPlayerLayoutChanged(index);
-        });
-    box->addView(m_videoPlayerLayoutSelector);
+    // Manage hidden libraries (+ Live TV / Downloads). Hidden items are kept out
+    // of the sidebar and the sidebar reorder editor; this is the one place to
+    // toggle them.
+    m_hiddenLibrariesCell = new brls::DetailCell();
+    m_hiddenLibrariesCell->setText("Manage Hidden Libraries");
+    {
+        // Count hidden entries across both stores: libraries plus the hideable
+        // built-ins (Live TV / Downloads) — mirrors what the dialog shows.
+        auto tokens = [](const std::string& csv) {
+            std::vector<std::string> out;
+            std::string s = csv;
+            size_t p;
+            while ((p = s.find(',')) != std::string::npos) {
+                if (p > 0) out.push_back(s.substr(0, p));
+                s.erase(0, p + 1);
+            }
+            if (!s.empty()) out.push_back(s);
+            return out;
+        };
+        int hiddenCount = (int)tokens(settings.hiddenLibraries).size();
+        for (const auto& t : tokens(settings.hiddenSidebarItems))
+            if (t == "livetv" || t == "downloads" || t == "musicvideos") hiddenCount++;
+        m_hiddenLibrariesCell->setDetailText(
+            hiddenCount > 0 ? std::to_string(hiddenCount) + " hidden" : "None hidden");
+    }
+    m_hiddenLibrariesCell->registerClickAction([this](brls::View* view) {
+        onManageHiddenLibraries();
+        return true;
+    });
+    box->addView(m_hiddenLibrariesCell);
 
-    auto* videoPlayerLayoutInfo = new brls::Label();
-    videoPlayerLayoutInfo->setText(
-        "Auto uses the touch OSD on phones and the current controls everywhere else");
-    videoPlayerLayoutInfo->setFontSize(14);
-    videoPlayerLayoutInfo->setMarginLeft(16);
-    videoPlayerLayoutInfo->setMarginTop(8);
-    box->addView(videoPlayerLayoutInfo);
+    return box;
+}
+
+// Logs and diagnostics, on their own page: the debug log switch, the log
+// itself (read here, shared, or served over Wi-Fi for a TV), the mpv stats
+// overlay and the local playback test.
+brls::Box* SettingsTab::createLogsSection() {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+    brls::Box* box = makeSectionBox();
 
     // Debug logging toggle
     m_debugLogToggle = new brls::BooleanCell();
@@ -719,36 +747,97 @@ brls::Box* SettingsTab::createUISection() {
     });
     box->addView(mpvStatsToggle);
 
-    // Manage hidden libraries (+ Live TV / Downloads). Hidden items are kept out
-    // of the sidebar and the sidebar reorder editor; this is the one place to
-    // toggle them.
-    m_hiddenLibrariesCell = new brls::DetailCell();
-    m_hiddenLibrariesCell->setText("Manage Hidden Libraries");
+    // Local playback smoke test — opens the player on a known-good
+    // file under ux0:data/VitaPlex/. Was previously under the
+    // (now-removed) Debug section.
+    auto* testLocalCell = new brls::DetailCell();
+    testLocalCell->setText("Test Local Playback");
+    // Show the platform's actual data dir so the user knows where to
+    // drop the test file. platformPath("") yields "<root>/" — strip
+    // the trailing slash for a clean display string.
     {
-        // Count hidden entries across both stores: libraries plus the hideable
-        // built-ins (Live TV / Downloads) — mirrors what the dialog shows.
-        auto tokens = [](const std::string& csv) {
-            std::vector<std::string> out;
-            std::string s = csv;
-            size_t p;
-            while ((p = s.find(',')) != std::string::npos) {
-                if (p > 0) out.push_back(s.substr(0, p));
-                s.erase(0, p + 1);
-            }
-            if (!s.empty()) out.push_back(s);
-            return out;
-        };
-        int hiddenCount = (int)tokens(settings.hiddenLibraries).size();
-        for (const auto& t : tokens(settings.hiddenSidebarItems))
-            if (t == "livetv" || t == "downloads") hiddenCount++;
-        m_hiddenLibrariesCell->setDetailText(
-            hiddenCount > 0 ? std::to_string(hiddenCount) + " hidden" : "None hidden");
+        std::string dataDir = platformPath("");
+        if (!dataDir.empty() && dataDir.back() == '/') dataDir.pop_back();
+        testLocalCell->setDetailText("Place test.mp4 or test.mp3 in " + dataDir);
     }
-    m_hiddenLibrariesCell->registerClickAction([this](brls::View* view) {
-        onManageHiddenLibraries();
+    testLocalCell->registerClickAction([this](brls::View*) {
+        onTestLocalPlayback();
         return true;
     });
-    box->addView(m_hiddenLibrariesCell);
+    box->addView(testLocalCell);
+
+    // Reading the log on the device itself. Only offered where a log file
+    // exists: Linux and macOS log to stdout, where a terminal or the journal
+    // already has it, and getLogPath() is empty there.
+    if (!platform::getLogPath().empty()) {
+        auto* logCell = new brls::DetailCell();
+        logCell->setText("View Log");
+        logCell->setDetailText(platform::getLogPath());
+        logCell->registerClickAction([this](brls::View*) {
+            onShowLog();
+            return true;
+        });
+        box->addView(logCell);
+
+        // The run before this one. A bug whose workaround is restarting the
+        // app is reported *after* the restart, by which point the log holding
+        // it is the previous one.
+        auto* prevLogCell = new brls::DetailCell();
+        prevLogCell->setText("View Previous Log");
+        prevLogCell->setDetailText("The run before this one");
+        prevLogCell->registerClickAction([this](brls::View*) {
+            onShowLog(platform::previousLogPath());
+            return true;
+        });
+        box->addView(prevLogCell);
+
+        // Android only: the log is in app-private storage, so reading it here
+        // is the only way to see it and this is the only way to send it.
+        if (platform::canShareLogFile()) {
+            auto* sendCell = new brls::DetailCell();
+            sendCell->setText("Send Log");
+            sendCell->setDetailText("Share this run's log");
+            sendCell->registerClickAction([](brls::View*) {
+                platform::shareLogFile(platform::getLogPath());
+                return true;
+            });
+            box->addView(sendCell);
+
+            auto* sendPrevCell = new brls::DetailCell();
+            sendPrevCell->setText("Send Previous Log");
+            sendPrevCell->setDetailText("Share the run before this one");
+            sendPrevCell->registerClickAction([](brls::View*) {
+                platform::shareLogFile(platform::previousLogPath());
+                return true;
+            });
+            box->addView(sendPrevCell);
+        }
+
+        // For a TV or phone with nothing to share a file to (a Sony Android
+        // 9 TV's share sheet is empty; Apple TV has none): the log is served
+        // on the local network, to open in a browser on another device.
+        if (logserver::available()) {
+            auto* wifiCell = new brls::DetailCell();
+            wifiCell->setText("Send Log over Wi-Fi");
+            wifiCell->setDetailText("Open it in a browser on your phone or computer");
+            wifiCell->registerClickAction([](brls::View*) {
+                const std::string url = logserver::start(15);
+                brls::Dialog* dialog = new brls::Dialog(
+                    url.empty()
+                        ? std::string("Could not start sharing the log: this device has no "
+                                      "network address. Check that it is connected.")
+                        : "On a phone or computer on the same network, open:\n\n" + url +
+                              "\n\nThis run's log and the one before it are there. "
+                              "Sharing stops after 15 minutes.");
+                if (!url.empty())
+                    dialog->addButton("Stop sharing", []() { logserver::stop(); });
+                dialog->addButton("OK", []() {});
+                dialog->open();
+                return true;
+            });
+            box->addView(wifiCell);
+        }
+    }
 
     return box;
 }
@@ -925,98 +1014,8 @@ brls::Box* SettingsTab::createPlaybackSection() {
     skipInfoLabel->setMarginTop(8);
     box->addView(skipInfoLabel);
 
-    // Local playback smoke test — opens the player on a known-good
-    // file under ux0:data/VitaPlex/. Was previously under the
-    // (now-removed) Debug section.
-    auto* testLocalCell = new brls::DetailCell();
-    testLocalCell->setText("Test Local Playback");
-    // Show the platform's actual data dir so the user knows where to
-    // drop the test file. platformPath("") yields "<root>/" — strip
-    // the trailing slash for a clean display string.
-    {
-        std::string dataDir = platformPath("");
-        if (!dataDir.empty() && dataDir.back() == '/') dataDir.pop_back();
-        testLocalCell->setDetailText("Place test.mp4 or test.mp3 in " + dataDir);
-    }
-    testLocalCell->registerClickAction([this](brls::View*) {
-        onTestLocalPlayback();
-        return true;
-    });
-    box->addView(testLocalCell);
-
-    // Reading the log on the device itself. Only offered where a log file
-    // exists: Linux and macOS log to stdout, where a terminal or the journal
-    // already has it, and getLogPath() is empty there.
-    if (!platform::getLogPath().empty()) {
-        auto* logCell = new brls::DetailCell();
-        logCell->setText("View Log");
-        logCell->setDetailText(platform::getLogPath());
-        logCell->registerClickAction([this](brls::View*) {
-            onShowLog();
-            return true;
-        });
-        box->addView(logCell);
-
-        // The run before this one. A bug whose workaround is restarting the
-        // app is reported *after* the restart, by which point the log holding
-        // it is the previous one.
-        auto* prevLogCell = new brls::DetailCell();
-        prevLogCell->setText("View Previous Log");
-        prevLogCell->setDetailText("The run before this one");
-        prevLogCell->registerClickAction([this](brls::View*) {
-            onShowLog(platform::previousLogPath());
-            return true;
-        });
-        box->addView(prevLogCell);
-
-        // Android only: the log is in app-private storage, so reading it here
-        // is the only way to see it and this is the only way to send it.
-        if (platform::canShareLogFile()) {
-            auto* sendCell = new brls::DetailCell();
-            sendCell->setText("Send Log");
-            sendCell->setDetailText("Share this run's log");
-            sendCell->registerClickAction([](brls::View*) {
-                platform::shareLogFile(platform::getLogPath());
-                return true;
-            });
-            box->addView(sendCell);
-
-            auto* sendPrevCell = new brls::DetailCell();
-            sendPrevCell->setText("Send Previous Log");
-            sendPrevCell->setDetailText("Share the run before this one");
-            sendPrevCell->registerClickAction([](brls::View*) {
-                platform::shareLogFile(platform::previousLogPath());
-                return true;
-            });
-            box->addView(sendPrevCell);
-        }
-    }
 
     return box;
-}
-
-// What a background-audio test found, in a dialog. Several lines and some of
-// them long, which a notification would cut off.
-static void showTestReport(const std::string& text) {
-    auto* content = new brls::Box();
-    content->setAxis(brls::Axis::COLUMN);
-    content->setWidth(600.0f);
-
-    auto* scroll = new brls::ScrollingFrame();
-    scroll->setWidth(600.0f);
-    scroll->setHeight(300.0f);
-
-    auto* label = new brls::Label();
-    label->setText(text);
-    label->setFontSize(16.0f);
-    label->setIsWrapping(true);
-    label->setWidth(580.0f);
-    scroll->setContentView(label);
-    content->addView(scroll);
-
-    auto* dialog = new brls::Dialog(content);
-    dialog->addButton("Close", []() {});
-    dialog->open();
 }
 
 brls::Box* SettingsTab::createMusicSection() {
@@ -1103,6 +1102,23 @@ brls::Box* SettingsTab::createMusicSection() {
     });
     box->addView(m_backgroundMusicToggle);
 
+    // A video's sound playing on once its player is left with Back.
+    auto* backgroundVideoToggle = new brls::BooleanCell();
+    backgroundVideoToggle->init("Keep Video Audio Playing", settings.backgroundVideo,
+                                [&settings](bool value) {
+        settings.backgroundVideo = value;
+        Application::getInstance().saveSettings();
+    });
+    box->addView(backgroundVideoToggle);
+    auto* backgroundVideoInfo = new brls::Label();
+    backgroundVideoInfo->setText("Back from a film, an episode or a music video leaves its sound "
+                                 "playing while you browse. Back from a tab opens the player "
+                                 "again where it is.");
+    backgroundVideoInfo->setFontSize(14);
+    backgroundVideoInfo->setMarginLeft(16);
+    backgroundVideoInfo->setMarginBottom(10);
+    box->addView(backgroundVideoInfo);
+
     // Shuffle-by-default toggle. Exists mainly for remote controllers: the
     // framework MediaSession has no onSetShuffleMode callback, so Android Auto
     // head units and watch media browsers can't toggle shuffle themselves.
@@ -1122,66 +1138,78 @@ brls::Box* SettingsTab::createMusicSection() {
     musicInfoLabel->setMarginTop(8);
     box->addView(musicInfoLabel);
 
-    // Vita: leaving the app itself still stops the music, whatever the toggle
-    // above says. These try the two ways past that on the console, and report
-    // what happened; see utils/background_audio.hpp. Only VitaPlex BG, the
-    // non-game package, has them; VitaPlex itself and other platforms do not.
+    // Vita: what music does once VitaPlex itself is left, whatever the toggle
+    // above says. VitaPlex is a non-game app, which the system lets play on,
+    // and SceShell carries the queue on through games, through VitaPlex's quick
+    // menu plugin; see utils/background_audio.hpp. Other platforms have none
+    // of this.
     if (bgaudio::available()) {
-        auto* keepPlaying = new brls::BooleanCell();
-        keepPlaying->init("Keep Playing Outside VitaPlex (test)", settings.vitaBackgroundAudio,
+        box->addView(makePickerCell("Music After Leaving VitaPlex",
+            {"Stops", "Plays on, then in the background", "In the background at once"},
+            settings.vitaOutsideMusic,
+            [](int index) {
+                Application& app = Application::getInstance();
+                app.getSettings().vitaOutsideMusic = index;
+                app.saveSettings();
+                bgaudio::setOutsideMusic(index);
+            }));
+
+        auto* outsideInfo = new brls::Label();
+        outsideInfo->setText("Plays on: music goes on after PS. When a game is started, the queue "
+                             "goes on in the background through the system's music player, which "
+                             "fetches the songs that are not downloaded as they come up, and "
+                             "songs in formats it cannot play, such as FLAC, as MP3s from the "
+                             "server. At once: it goes there as you press PS, and VitaPlex "
+                             "closes. Opening VitaPlex takes the music back. A video pauses "
+                             "whenever VitaPlex is left.");
+        outsideInfo->setFontSize(14);
+        outsideInfo->setMarginLeft(16);
+        outsideInfo->setMarginTop(8);
+        box->addView(outsideInfo);
+
+        auto* offlineSkip = new brls::BooleanCell();
+        offlineSkip->init("Skip to Downloads When Offline", settings.vitaOfflineSkip,
             [](bool value) {
                 Application& app = Application::getInstance();
-                app.getSettings().vitaBackgroundAudio = value;
+                app.getSettings().vitaOfflineSkip = value;
                 app.saveSettings();
-                bgaudio::setKeepPlaying(value);
+                bgaudio::setOfflineSkip(value);
             });
-        box->addView(keepPlaying);
+        box->addView(offlineSkip);
 
-        // Which of the shell's services the two tests below go through. Not
-        // saved: it is for trying each in turn.
-        box->addView(makePickerCell("System Player Service (test)",
-            {"Music player, type 0", "Music player, type 1", "Music player, type 2",
-             "Music player, type 3", "Music player, type 4", "App background music"},
-            bgaudio::shellService(),
-            [](int index) { bgaudio::setShellService(index); }));
+        auto* offlineInfo = new brls::Label();
+        offlineInfo->setText("For the music in the background: when the server can't be reached, "
+                             "it skips ahead to the next song on the memory card, a download or "
+                             "one already fetched. With none left, it pauses on the song it could "
+                             "not fetch: play in the quick menu tries again, and opening VitaPlex "
+                             "picks it up there. Off: such songs are passed over, and three in a "
+                             "row stop the music.");
+        offlineInfo->setFontSize(14);
+        offlineInfo->setMarginLeft(16);
+        offlineInfo->setMarginTop(8);
+        box->addView(offlineInfo);
 
-        auto* fileTest = new brls::DetailCell();
-        fileTest->setText("Test: System Player, Local File");
-        fileTest->setDetailText("An MP3/M4A/WAV download, or test.mp3");
-        fileTest->registerClickAction([](brls::View*) {
-            brls::Application::notify("Trying the system player...");
-            bgaudio::runShellFileTest(showTestReport);
-            return true;
-        });
-        box->addView(fileTest);
+        auto* quickMenu = new brls::BooleanCell();
+        quickMenu->init("Quick Menu Music Controls", settings.vitaQuickMenuControls,
+            [](bool value) {
+                Application& app = Application::getInstance();
+                app.getSettings().vitaQuickMenuControls = value;
+                app.saveSettings();
+                bgaudio::setQuickMenuControls(value);
+            });
+        box->addView(quickMenu);
 
-        auto* streamTest = new brls::DetailCell();
-        streamTest->setText("Test: System Player, Streaming");
-        streamTest->setDetailText("The current track, on all six services");
-        streamTest->registerClickAction([](brls::View*) {
-            brls::Application::notify("Trying links in the system player: about two minutes. "
-                                      "Stay in VitaPlex until the report shows.");
-            bgaudio::runShellStreamTest(showTestReport);
-            return true;
-        });
-        box->addView(streamTest);
-
-        auto* stopTest = new brls::DetailCell();
-        stopTest->setText("Stop System Player Test");
-        stopTest->registerClickAction([](brls::View*) {
-            brls::Application::notify(bgaudio::stopShellTest());
-            return true;
-        });
-        box->addView(stopTest);
-
-        auto* testInfoLabel = new brls::Label();
-        testInfoLabel->setText("Tests for playing on after leaving VitaPlex. Turn the toggle on, "
-                               "play music, press PS, and come back: a message says what "
-                               "happened, and the log has the detail.");
-        testInfoLabel->setFontSize(14);
-        testInfoLabel->setMarginLeft(16);
-        testInfoLabel->setMarginTop(8);
-        box->addView(testInfoLabel);
+        auto* quickMenuInfo = new brls::Label();
+        quickMenuInfo->setText("Shows the song in the Music row of the quick menu (hold PS) and "
+                               "makes its play/pause, next and previous buttons work, here and "
+                               "for the music playing on in the background. Uses the "
+                               "vita-shell-companion plugin (GPL-3.0, based on ElevenMPV-A's by "
+                               "GrapheneCt), which also plays that music and is shared with other "
+                               "apps; it stays loaded until the Vita restarts.");
+        quickMenuInfo->setFontSize(14);
+        quickMenuInfo->setMarginLeft(16);
+        quickMenuInfo->setMarginTop(8);
+        box->addView(quickMenuInfo);
     }
 
     return box;
@@ -1259,7 +1287,9 @@ brls::Box* SettingsTab::createNetworkSection() {
         });
     box->addView(m_connectionTimeoutSelector);
 
-    // In-app updates: manual check now, plus the startup check toggle.
+    // In-app updates: manual check now, plus the startup check toggle. Not in
+    // a store's build, which the store updates (utils/app_update).
+#ifndef VITAPLEX_STORE_BUILD
     auto* checkUpdatesCell = new brls::DetailCell();
     checkUpdatesCell->setText("Check for Updates");
     checkUpdatesCell->setDetailText(VITA_PLEX_DISPLAY_VERSION);
@@ -1277,6 +1307,7 @@ brls::Box* SettingsTab::createNetworkSection() {
             Application::getInstance().saveSettings();
         });
     box->addView(autoUpdateToggle);
+#endif
 
     // Network diagnostic — opens a dialog showing WiFi info, internet
     // reachability, and Plex server latency. Was previously under the
@@ -1517,6 +1548,28 @@ brls::Box* SettingsTab::createDownloadsSection() {
         Application::getInstance().saveSettings();
     });
     box->addView(dlSubtitlesToggle);
+
+    // Vita: downloads going on once VitaPlex has closed, from inside SceShell,
+    // through the same quick menu plugin as the music after leaving
+    // (DownloadsManager::handOverToShell).
+    if (bgaudio::available()) {
+        auto* dlAfterLeaving = new brls::BooleanCell();
+        dlAfterLeaving->init("Downloads After Leaving VitaPlex",
+            settings.vitaDownloadsAfterLeaving, [&settings](bool value) {
+                settings.vitaDownloadsAfterLeaving = value;
+                Application::getInstance().saveSettings();
+            });
+        box->addView(dlAfterLeaving);
+
+        auto* dlAfterInfo = new brls::Label();
+        dlAfterInfo->setText("When VitaPlex closes, as starting a game closes it, downloads under "
+                             "way go on in the background, songs and videos alike, with their "
+                             "progress in the notification. Opening VitaPlex takes them back.");
+        dlAfterInfo->setFontSize(14);
+        dlAfterInfo->setMarginLeft(16);
+        dlAfterInfo->setMarginTop(8);
+        box->addView(dlAfterInfo);
+    }
 
     // Clear all downloads
     m_clearDownloadsCell = new brls::DetailCell();
@@ -1795,6 +1848,7 @@ void SettingsTab::onSubtitleSizeChanged(int index) {
 
     settings.subtitleSize = static_cast<SubtitleSize>(index);
     app.saveSettings();
+    MpvPlayer::getInstance().applySubtitleSize();
 }
 
 void SettingsTab::onConnectionTimeoutChanged(int index) {
@@ -1838,16 +1892,6 @@ void SettingsTab::onPlayerLayoutChanged(int index) {
     brls::Application::notify(index == 0 ? "Player layout: Auto"
                             : index == 1 ? "Player layout: Classic"
                                          : "Player layout: Mobile");
-}
-
-void SettingsTab::onVideoPlayerLayoutChanged(int index) {
-    if (index < 0 || index > 2) return;
-    Application& app = Application::getInstance();
-    app.getSettings().videoPlayerLayout = index;
-    app.saveSettings();
-    brls::Application::notify(index == 0 ? "Video player layout: Auto"
-                            : index == 1 ? "Video player layout: Classic"
-                                         : "Video player layout: Mobile");
 }
 
 void SettingsTab::onControlsAutoHideChanged(int index) {
@@ -1913,6 +1957,12 @@ void SettingsTab::onManageHiddenLibraries() {
         it.selected = (hiddenLibs.find(section.key) != hiddenLibs.end());
         items.push_back(it);
     }
+    for (const auto& section : sections) {
+        if (section.type != "artist") continue;
+        items.push_back({ "musicvideos", "Music Videos",
+                          hiddenItems.find("musicvideos") != hiddenItems.end() });
+        break;
+    }
     if (PlexClient::getInstance().hasLiveTV()) {
         items.push_back({ "livetv", "Live TV",
                           hiddenItems.find("livetv") != hiddenItems.end() });
@@ -1935,7 +1985,7 @@ void SettingsTab::onManageHiddenLibraries() {
             // hiddenSidebarItems from scratch also drops any stale "search".)
             std::string newLibs, newItems;
             for (const auto& k : hiddenSelected) {
-                bool builtin = (k == "livetv" || k == "downloads");
+                bool builtin = (k == "livetv" || k == "downloads" || k == "musicvideos");
                 std::string& dst = builtin ? newItems : newLibs;
                 if (!dst.empty()) dst += ",";
                 dst += k;

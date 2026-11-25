@@ -5,6 +5,10 @@
  * rail is sourced from the Live TV path and tunes on click.
  */
 
+#include "utils/frame_profiler.hpp"
+#include <algorithm>
+#include <map>
+#include <memory>
 #include "view/home_tab.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
@@ -154,6 +158,7 @@ private:
 
 void HomeTab::draw(NVGcontext* vg, float x, float y, float width, float height,
                    brls::Style style, brls::FrameContext* ctx) {
+    perf::Scope timed(perf::Probe::HomeDraw);
     // Vertical culling: mark rails/headers outside the page viewport
     // INVISIBLE so their whole subtree skips draw (an off-screen rail's
     // cards each cost a cover pattern + badge paths per frame otherwise).
@@ -224,51 +229,22 @@ HorizontalScrollRow* HomeTab::createMediaRow() {
     return row;
 }
 
+// The cards on screen are made at once, the rest a few a frame: a row of
+// dozens of cards, several rows at a time, made in one go held the UI thread
+// 0.5-1.4 s in the frame log (HomeTab::loadContent, loadRecentChannels).
+static const size_t kRowFirstCards = 8;
+static const size_t kRowCardsPerFrame = 4;
+
 void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items,
                           bool directPlay, bool preferPoster) {
     if (!row) return;
 
     row->clearViews();
+    // A newer populate of this row stops an older one's remaining cards.
+    const uint64_t generation = ++m_rowGeneration[row];
 
-    for (const auto& item : items) {
-        auto* cell = new MediaItemCell();
-        cell->setPreferPoster(preferPoster);   // before setItem: it picks the shape
-        cell->setItem(item);
-        cell->setMarginRight(10);
-
-        MediaItem capturedItem = item;
-        cell->registerClickAction([this, capturedItem, directPlay](brls::View* view) {
-            if (directPlay) {
-                // Play directly for continue watching items (movies, episodes, tracks)
-                Application::getInstance().pushPlayerActivity(capturedItem.ratingKey);
-            } else {
-                onItemSelected(capturedItem);
-            }
-            return true;
-        });
-        cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
-
-        // START and long press open the same menu, so both go through one
-        // dispatcher — they used to carry separate copies of the per-type
-        // chain, which is how live programmes ended up excluded from only
-        // one of them. hasContextMenu() also keeps the "Options" hint off
-        // items that have no menu; live programmes now have one (their
-        // Watch Now / Record card), so they show the hint too.
-        if (MediaDetailView::hasContextMenu(capturedItem)) {
-            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                [capturedItem](brls::View*) {
-                    MediaDetailView::showContextMenuFor(capturedItem);
-                    return true;
-                });
-            cell->addGestureRecognizer(new LongPressGestureRecognizer(
-                cell, [capturedItem](LongPressGestureStatus status) {
-                    if (status.state == brls::GestureState::START)
-                        MediaDetailView::showContextMenuFor(capturedItem);
-                }));
-        }
-
-        row->addView(cell);
-    }
+    auto shared = std::make_shared<const std::vector<MediaItem>>(items);
+    appendRowCards(row, shared, 0, directPlay, preferPoster, generation);
 
     // Add placeholder if empty
     if (items.empty()) {
@@ -278,6 +254,82 @@ void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>
         placeholder->setMarginLeft(10);
         row->addView(placeholder);
     }
+}
+
+void HomeTab::appendRowCards(HorizontalScrollRow* row,
+                             std::shared_ptr<const std::vector<MediaItem>> items, size_t from,
+                             bool directPlay, bool preferPoster, uint64_t generation) {
+    const size_t end =
+        std::min(items->size(), from + (from == 0 ? kRowFirstCards : kRowCardsPerFrame));
+    for (size_t i = from; i < end; i++) addRowCard(row, (*items)[i], directPlay, preferPoster);
+    if (end >= items->size()) return;
+
+    brls::sync([this, aliveWeak = std::weak_ptr<bool>(m_alive), row, items, end, directPlay,
+                preferPoster, generation]() {
+        auto alive = aliveWeak.lock();
+        if (!alive || !*alive) return;
+        auto it = m_rowGeneration.find(row);
+        if (it == m_rowGeneration.end() || it->second != generation) return;
+        appendRowCards(row, items, end, directPlay, preferPoster, generation);
+    });
+}
+
+void HomeTab::addRowCard(HorizontalScrollRow* row, const MediaItem& item, bool directPlay,
+                         bool preferPoster) {
+    auto* cell = new MediaItemCell();
+    cell->setPreferPoster(preferPoster);   // before setItem: it picks the shape
+    cell->setItem(item);
+    cell->setMarginRight(10);
+
+    MediaItem capturedItem = item;
+    cell->registerClickAction([this, capturedItem, directPlay](brls::View* view) {
+        if (directPlay) {
+            // Play directly for continue watching items (movies, episodes, tracks)
+            if (capturedItem.mediaType == MediaType::MUSIC_TRACK)
+                Application::getInstance().pushTrackPlayerActivity(capturedItem.ratingKey);
+            else
+                Application::getInstance().pushPlayerActivity(capturedItem.ratingKey);
+        } else {
+            onItemSelected(capturedItem);
+        }
+        return true;
+    });
+    cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+
+    // START and long press open the same menu, so both go through one
+    // dispatcher — they used to carry separate copies of the per-type
+    // chain, which is how live programmes ended up excluded from only
+    // one of them. hasContextMenu() also keeps the "Options" hint off
+    // items that have no menu; live programmes now have one (their
+    // Watch Now / Record card), so they show the hint too.
+    if (MediaDetailView::hasContextMenu(capturedItem)) {
+        // Continue Watching (the one rail that plays directly) adds
+        // "Remove from Continue Watching" to the item's menu.
+        auto openMenu = [this, capturedItem, directPlay,
+                         aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+            if (directPlay && !capturedItem.isLiveTV && !capturedItem.ratingKey.empty()) {
+                MediaDetailView::s_extraMenuRows.push_back({
+                    "delete-outline.png", "Remove from Continue Watching", "", false, false,
+                    [this, capturedItem, aliveWeak](brls::View*) {
+                        removeFromContinueWatching(capturedItem, aliveWeak);
+                        return true;
+                    }});
+            }
+            MediaDetailView::showContextMenuFor(capturedItem);
+            MediaDetailView::s_extraMenuRows.clear();   // if no menu took them
+        };
+        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+            [openMenu](brls::View*) {
+                openMenu();
+                return true;
+            });
+        cell->addGestureRecognizer(new LongPressGestureRecognizer(
+            cell, [openMenu](LongPressGestureStatus status) {
+                if (status.state == brls::GestureState::START) openMenu();
+            }));
+    }
+
+    row->addView(cell);
 }
 
 void HomeTab::populateChannelRow() {
@@ -525,6 +577,43 @@ void HomeTab::onFocusGained() {
     if (!m_loaded) {
         loadContent();
     }
+}
+
+// Off the server's Continue Watching, then off the rail.
+void HomeTab::removeFromContinueWatching(const MediaItem& item, std::weak_ptr<bool> aliveWeak) {
+    const std::string key = item.ratingKey;
+    asyncRun([this, key, aliveWeak]() {
+        const bool ok = PlexClient::getInstance().removeFromContinueWatching(key);
+        brls::sync([this, key, ok, aliveWeak]() {
+            if (!ok) {
+                brls::Application::notify("Couldn't remove it from Continue Watching");
+                return;
+            }
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            ForeignFocusGuard focusGuard(this);
+            m_continueWatching.erase(
+                std::remove_if(m_continueWatching.begin(), m_continueWatching.end(),
+                               [&](const MediaItem& m) { return m.ratingKey == key; }),
+                m_continueWatching.end());
+            if (m_continueWatching.empty() || !m_continueWatchingRow) {
+                populateRow(m_continueWatchingRow, m_continueWatching, true);
+                return;
+            }
+            // Just its card; focus moves to the card beside it first.
+            auto& cards = m_continueWatchingRow->getChildren();
+            for (size_t i = 0; i < cards.size(); i++) {
+                auto* cell = dynamic_cast<MediaItemCell*>(cards[i]);
+                if (!cell || cell->getItem().ratingKey != key) continue;
+                if (homeIsDescendantOf(brls::Application::getCurrentFocus(), cell)) {
+                    brls::View* next = i + 1 < cards.size() ? cards[i + 1] : (i > 0 ? cards[i - 1] : nullptr);
+                    if (next) brls::Application::giveFocus(next);
+                }
+                m_continueWatchingRow->removeView(cell, true);
+                break;
+            }
+        });
+    });
 }
 
 void HomeTab::loadContent() {
@@ -797,7 +886,7 @@ void HomeTab::onItemSelected(const MediaItem& item) {
 
     // For tracks, play directly instead of showing detail view
     if (item.mediaType == MediaType::MUSIC_TRACK) {
-        Application::getInstance().pushPlayerActivity(item.ratingKey);
+        Application::getInstance().pushTrackPlayerActivity(item.ratingKey);
         return;
     }
 

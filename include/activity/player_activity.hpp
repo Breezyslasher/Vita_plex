@@ -30,6 +30,16 @@ public:
     // Play local downloaded file
     PlayerActivity(const std::string& mediaKey, bool isLocalFile);
 
+    // One music track on its own (not a queue): it keeps the music screens'
+    // layout rather than the video OSD, which is otherwise what a player
+    // without a music queue gets.
+    static PlayerActivity* createForTrack(const std::string& mediaKey, bool isLocalFile);
+
+    // The next player opened for mediaKey starts at timeMs, whatever the
+    // resume setting: VideoBackground opening the player again where the
+    // sound is.
+    static void resumeNextAt(const std::string& mediaKey, int timeMs);
+
     // Play direct file path (for debug/testing)
     static PlayerActivity* createForDirectFile(const std::string& filePath);
 
@@ -44,6 +54,15 @@ public:
 
     // Resume existing queue (return to player without resetting queue)
     static PlayerActivity* createResumeQueue();
+
+    // A queue VitaPlex takes back from SceShell (utils/background_audio.hpp),
+    // set as it is: in the order it played, with no server play queue or shuffle, its
+    // first track loaded from startOffsetMs. fromShell: SceShell plays the queue on
+    // meanwhile, and is asked for it as the first track is loaded, which then goes on
+    // from wherever SceShell stopped (bgaudio::takeBackNow).
+    static PlayerActivity* createWithRestoredQueue(const std::vector<MediaItem>& tracks,
+                                                   int startIndex, long long startOffsetMs,
+                                                   bool fromShell = false);
 
     // True while a player is on screen; the SyncLounge prompt skips prompting when we are already watching.
     static bool isActive();
@@ -101,6 +120,12 @@ private:
     // and when a track that could not load at first (lost connection) plays.
     void reloadAlbumArt();
     void playNextEpisode();         // Auto-play next episode in season/show
+    bool playQueuedVideo();         // The video queue's next, if it has one
+    // Whether Back leaves this video playing (VideoBackground): a film, an
+    // episode or a clip of the library or the downloads, playing or paused,
+    // with the setting on.
+    bool canKeepVideoPlaying() const;
+    bool m_keepVideoPlaying = false;   // Back was pressed so: willDisappear hands mpv over
 
     // Queue list overlay (Direction-A side sheet)
     void showQueueOverlay();
@@ -198,7 +223,8 @@ private:
     bool m_videoOsd     = false;
     // Both read m_isQueueMode, so they can only be asked once the activity exists.
     bool useMobileLayout() const;   // reads the Player layout setting
-    bool useVideoOsd() const;       // reads the Video player layout setting
+    bool useVideoOsd() const;       // video always; a single track only on phones
+    bool m_singleTrack  = false;    // createForTrack
     bool controlsCanHide() const;   // false for photos and for music
     // The collapsed queue sheet; its views exist only in player_mobile.xml and are found by id, so no stubs are needed.
     void updateMobileSheet();        // refresh "up next" from the queue
@@ -215,6 +241,47 @@ private:
     void cycleSpeed();               // 1.0 -> 1.25 -> 1.5 -> 2.0 -> 0.75 -> ...
     // Set together on the top bar: the show over the episode, not the single line the other layouts print.
     void setVideoOsdTitle(const std::string& title, const std::string& subtitle);
+
+    // The subtitle panel over the video OSD (player_subtitle_panel.cpp): four
+    // drop-downs along the bottom, Subtitles on/off, Language, Size and Style,
+    // each opening its list above it, applied as soon as one is picked.
+    void showSubtitlePanel();
+    void hideSubtitlePanel(bool restoreControls = true);
+    void refreshSubtitlePanel();
+    void openSubtitlePopup(int which);
+    void closeSubtitlePopup();
+    void toggleSubtitlesFromPanel();
+    bool subtitlePanelHit(float x, float y) const;   // a tap inside it
+    brls::View* subtitlePanelHome();                  // where focus rests in it
+    brls::Box*   m_subPanel = nullptr;
+    brls::Box*   m_subPopup = nullptr;
+    brls::Box*   m_subPills[6] = {};
+    brls::Label* m_subPillValues[6] = {};
+    brls::Image* m_subPillChevrons[6] = {};
+    // Online search, as on the media page: by language, off the UI thread.
+    void startSubtitleSearch();
+    void installSearchedSubtitle(const std::string& key, const std::string& name);
+    void promptSubtitleSearchLanguage();
+    std::string m_subSearchLang;
+    int m_subSearchState = 0;           // 0 not yet, 1 searching, 2 done
+    unsigned m_subSearchGen = 0;
+    std::vector<PlexClient::SubtitleResult> m_subSearchResults;
+    brls::Label* m_subLangCaption = nullptr;
+    int  m_subPopupWhich = -1;
+    bool m_subPanelVisible = false;
+    int  m_lastSubtitleStreamId = -1;   // what "On" turns back on
+    // Size / Style as they were when their list opened, put back if it closes unpicked.
+    bool m_subPreviewKept = false;
+    int  m_subPreviewSize = 1, m_subPreviewStyle = 0;
+    // Timing from the panel: seconds the subtitle is moved by (+ later,
+    // - earlier), on top of the shift a transcode needs. A file found online
+    // is often cut for another release of the film and runs early or late.
+    double m_subUserDelay = 0.0;
+    double m_subPreviewDelay = 0.0;
+    void applySubtitleDelay();
+    bool m_serverBurnsSub = false;   // the current transcode has the subtitle in its picture
+    void showAudioTrackPopup();
+    void showVideoTrackPopup();
     // Scale factor for code-built rows shared with the mobile XML; the two mobile designs use different frames (see DESIGN_NOTES).
     float ui(float v) const {
         if (m_mobileLayout) return v * kMobileUiScale;
@@ -381,6 +448,14 @@ private:
     double m_endHandledAtSec = 0.0; // Position m_endHandled was set at; the latch is spent once playback comes back before it
     bool m_isPlaying = false;
     bool m_isPhoto = false;
+
+    // Video touch gestures: the last single tap (for a double tap on the left
+    // or right third to skip) and the vertical swipe in progress (left half
+    // brightness, right half volume).
+    int64_t m_lastTapMs = 0;
+    int m_lastTapZone = 0;        // -1 left third, 0 middle, 1 right third
+    bool m_swipeBrightness = false;
+    float m_swipeStart = 0.0f;    // brightness or volume (0..1) at the swipe's start
     bool m_isLocalFile = false;    // Playing from local download
     bool m_isDirectFile = false;   // Playing direct file path (debug)
     // True when the server chose direct play: mpv owns the timeline, so baseOffset is 0 and seeks are local.
@@ -399,10 +474,23 @@ private:
     void setupVideoMediaSession();
     void publishVideoNowPlaying();
     double m_pendingSeek = 0.0;    // Pending seek position (set when resuming)
+    // Where the queue's first track starts, for a queue taken back part-way through one; spent by the first load.
+    long long m_queueStartOffsetMs = 0;
+    // A queue SceShell still plays: the first load sets mpv up, then takes the music back
+    // from SceShell (bgaudio::takeBackNow) and loads where it stopped.
+    bool m_takeBackFromShell = false;
+    // mpv to be set up on the next tick, with nothing loaded, before SceShell is asked.
+    bool m_pendingMpvInit = false;
+    // The next load starts paused: SceShell's music, taken back, had been paused from the
+    // quick menu. Spent by that load, as is m_pendingStartPaused by a deferred one.
+    bool m_startPaused = false;
+    bool m_pendingStartPaused = false;
     int m_transcodeBaseOffsetMs = 0;  // Base offset (ms) used to start current transcode
     int m_mediaDurationMs = 0;        // Full media length (ms) from Plex metadata; 0 = unknown
     // Track length handed to loadUrl so an early end-of-stream is told from a real one; 0 means unknown.
     int64_t m_pendingDurationMs = 0;
+    // Where in a seekable file the deferred load starts, so the track's first moment is never heard.
+    double m_pendingStartSec = 0.0;
     bool m_updatingSlider = false;  // Guard to prevent slider update from triggering seek
     brls::RepeatingTimer m_updateTimer;
     // Seek debounce: each input rewinds it, and one seek commits ~350ms after the last. Target < 0 means none pending.
@@ -451,6 +539,18 @@ private:
     std::vector<PlexStream> m_plexStreams;  // Cached streams from Plex
     int m_partId = 0;                       // Plex part ID for stream selection
     bool m_streamsLoaded = false;
+    std::string m_sideloadedSubUrl;   // a sidecar subtitle mpv shows by sub-add, kept across reloads
+    int64_t m_sideloadTriedMs = 0;     // when it was last added
+    bool m_sidecarCheck = false;
+    void loadServerStream(const std::string& url, int offsetMs);
+    std::vector<std::string> sidecarSubtitleUrls(const PlexStream& ps) const;   // its addresses, token and all
+    void setSideloadedSubtitle(const PlexStream& ps);
+    std::vector<std::string> m_sideloadUrls;   // the addresses to try
+    double m_appliedSubDelay = 0.0;            // mpv sub-delay set for it
+    bool m_subDelaySet = false;
+    void updateSubtitlePosition();     // raised above the OSD while it is up
+    int  m_subtitlePos = -1;           // -1: not set yet (mpv keeps the last player's)
+    int m_sideloadNext = 0, m_sideloadGood = -1, m_sideloadLast = -1, m_sideloadTries = 0;   // its file, token and all   // a transcode or the file, from getTranscodeUrl   // direct play: add the server's selected sidecar subtitle once playing
     int m_selectedTrackIndex = 0;  // Index of selected item in track list for focus
 
     void showTrackOverlay(TrackSelectMode mode);

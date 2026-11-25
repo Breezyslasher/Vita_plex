@@ -75,6 +75,18 @@ endif()
 # ---------------------------------------------------------------------------
 # Project (after toolchain so cross-compilers are in effect)
 # ---------------------------------------------------------------------------
+# Optimised unless a build type is asked for. With none, CMake passes no -O
+# flag at all, and every CI build (Vita, Switch, PS4, desktop) configured
+# without one: the app, borealis, Yoga and nanovg were built at -O0. The
+# frame log had a Vita frame at 30 ms of drawing with the GPU idle, ~0.1 ms
+# a plain Box. RelWithDebInfo is -O2 with debug info, so crash dumps still
+# resolve to source lines. Android's Gradle build and multi-config
+# generators choose their own.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
+        "Build type (Debug, Release, RelWithDebInfo, MinSizeRel)" FORCE)
+endif()
+
 project(VitaPlex VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -108,10 +120,6 @@ endif()
 if(PLATFORM_PSV)
     set(VITA_APP_NAME "VitaPlex")
     set(VITA_TITLEID  "VPLEX0001")
-    # VitaPlex BG: the same eboot packaged as a non-game app (VitaPlexBG.vpk).
-    # The eboot reads which of the two it runs as, and only this one offers
-    # the background-audio tests (utils/background_audio.hpp).
-    set(VITA_BG_TITLEID "VPLEX0002")
     set(VITA_VERSION  "01.00")
     set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
 endif()
@@ -187,6 +195,151 @@ else()
     message(FATAL_ERROR "Patch file not found: ${BRLS_APP_CPP_PATCH}")
 endif()
 
+# Borealis View patch (all platforms): View::frame times each view's own
+# drawing, by type, on the frames the app's frame profiler samples
+# (utils/frame_profiler.cpp). Unsampled frames only test a flag.
+set(BRLS_VIEW_CPP_PATCH  ${CMAKE_CURRENT_SOURCE_DIR}/patches/brls_view.cpp)
+set(BRLS_VIEW_CPP_TARGET ${BOREALIS_LIBRARY}/lib/core/view.cpp)
+if(EXISTS ${BRLS_VIEW_CPP_PATCH})
+    message(STATUS "Applying patch: borealis view.cpp")
+    configure_file(${BRLS_VIEW_CPP_PATCH} ${BRLS_VIEW_CPP_TARGET} COPYONLY)
+else()
+    message(FATAL_ERROR "Patch file not found: ${BRLS_VIEW_CPP_PATCH}")
+endif()
+
+# Borealis Box patch (all platforms): Box::draw takes its culling bounds once
+# per draw instead of once per child.
+set(BRLS_BOX_CPP_PATCH  ${CMAKE_CURRENT_SOURCE_DIR}/patches/brls_box.cpp)
+set(BRLS_BOX_CPP_TARGET ${BOREALIS_LIBRARY}/lib/core/box.cpp)
+if(EXISTS ${BRLS_BOX_CPP_PATCH})
+    message(STATUS "Applying patch: borealis box.cpp")
+    configure_file(${BRLS_BOX_CPP_PATCH} ${BRLS_BOX_CPP_TARGET} COPYONLY)
+else()
+    message(FATAL_ERROR "Patch file not found: ${BRLS_BOX_CPP_PATCH}")
+endif()
+
+# Borealis thread and hint patches (all platforms): slow brls::sync tasks
+# noted for the frame log; the hints bar left as it is when a focus change
+# would give it the same hints.
+foreach(_brls_patch thread:core/thread.cpp hint:views/hint.cpp)
+    string(REPLACE ":" ";" _brls_parts "${_brls_patch}")
+    list(GET _brls_parts 0 _brls_name)
+    list(GET _brls_parts 1 _brls_target)
+    set(_brls_src ${CMAKE_CURRENT_SOURCE_DIR}/patches/brls_${_brls_name}.cpp)
+    if(EXISTS ${_brls_src})
+        message(STATUS "Applying patch: borealis ${_brls_target}")
+        configure_file(${_brls_src} ${BOREALIS_LIBRARY}/lib/${_brls_target} COPYONLY)
+    else()
+        message(FATAL_ERROR "Patch file not found: ${_brls_src}")
+    endif()
+endforeach()
+
+# tvOS: the Siri Remote's Menu button is Back on Apple TV, but borealis maps
+# SDL's MENU key to X, the Android TV remote's menu key (which opens options).
+if(PLATFORM_TVOS)
+    set(_sdl_input "${BOREALIS_LIBRARY}/lib/platforms/sdl/sdl_input.cpp")
+    file(READ "${_sdl_input}" _in_src)
+    set(_menu_old "state->buttons[BUTTON_X] |= getKeyboardKeys(SDL_SCANCODE_MENU);")
+    set(_menu_new "state->buttons[BUTTON_B] |= getKeyboardKeys(SDL_SCANCODE_MENU); // tvOS: Menu is Back")
+    string(FIND "${_in_src}" "${_menu_new}" _menu_done)
+    if(_menu_done EQUAL -1)
+        string(FIND "${_in_src}" "${_menu_old}" _menu_at)
+        if(_menu_at EQUAL -1)
+            message(FATAL_ERROR "sdl_input.cpp patch: MENU key mapping not found")
+        endif()
+        string(REPLACE "${_menu_old}" "${_menu_new}" _in_src "${_in_src}")
+        file(WRITE "${_sdl_input}" "${_in_src}")
+        message(STATUS "Applying patch: borealis sdl_input.cpp (tvOS Menu is Back)")
+    endif()
+
+    # The Siri Remote's touch surface reaches SDL as screen touches (and, by
+    # default, a mouse pointer). borealis took those as pointer input: it left
+    # focus mode, so the highlight never moved, whatever the swipes sent. On
+    # tvOS only the remote's keys (one arrow per swipe, Enter, Escape) drive
+    # the UI; touches and the pointer are ignored.
+    file(READ "${_sdl_input}" _in_src)
+    foreach(_fn updateTouchStates updateMouseStates)
+        if(_fn STREQUAL "updateTouchStates")
+            set(_sig "void SDLInputManager::updateTouchStates(std::vector<RawTouchState>* states)\n{\n")
+        else()
+            set(_sig "void SDLInputManager::updateMouseStates(RawMouseState* state)\n{\n")
+        endif()
+        if(_fn STREQUAL "updateMouseStates")
+            # Hand back a cleared state rather than whatever was in it.
+            set(_guard "${_sig}#ifdef TVOS\n    *state = RawMouseState(); // tvOS: the remote's touch surface is not a pointer\n    return;\n#endif\n")
+        else()
+            set(_guard "${_sig}#ifdef TVOS\n    return; // tvOS: the remote's touch surface is not a pointer\n#endif\n")
+        endif()
+        string(FIND "${_in_src}" "${_guard}" _g_done)
+        if(_g_done EQUAL -1)
+            string(FIND "${_in_src}" "${_sig}" _g_at)
+            if(_g_at EQUAL -1)
+                message(FATAL_ERROR "sdl_input.cpp patch: ${_fn} not found")
+            endif()
+            string(REPLACE "${_sig}" "${_guard}" _in_src "${_in_src}")
+            message(STATUS "Applying patch: borealis sdl_input.cpp (tvOS ignores ${_fn})")
+        endif()
+    endforeach()
+    file(WRITE "${_sdl_input}" "${_in_src}")
+endif()
+
+# iOS: SDL reports leaving the foreground on applicationWillResignActive (a
+# system alert such as the local-network prompt, Control Centre, a call),
+# but coming back from those only as SDL_APP_DIDENTERFOREGROUND; borealis
+# listened for SDL_APP_WILLENTERFOREGROUND alone, which iOS sends only after
+# a real trip to the background. So after the first alert the app stayed
+# "backgrounded": no drawing, image uploads held back, until the user left
+# the app and came back. Treat either event as back in front.
+if(PLATFORM_IOS)
+    set(_sdl_platform "${BOREALIS_LIBRARY}/lib/platforms/sdl/sdl_platform.cpp")
+    file(READ "${_sdl_platform}" _sdl_src)
+    set(_sdl_old "event->type == SDL_APP_WILLENTERFOREGROUND)")
+    set(_sdl_new "event->type == SDL_APP_WILLENTERFOREGROUND || event->type == SDL_APP_DIDENTERFOREGROUND)")
+    string(FIND "${_sdl_src}" "${_sdl_new}" _sdl_done)
+    if(_sdl_done EQUAL -1)
+        string(FIND "${_sdl_src}" "${_sdl_old}" _sdl_at)
+        if(_sdl_at EQUAL -1)
+            message(FATAL_ERROR "sdl_platform.cpp patch: foreground check not found")
+        endif()
+        string(REPLACE "${_sdl_old}" "${_sdl_new}" _sdl_src "${_sdl_src}")
+        file(WRITE "${_sdl_platform}" "${_sdl_src}")
+        message(STATUS "Applying patch: borealis sdl_platform.cpp (iOS foreground)")
+    endif()
+
+    # borealis locks iPhones to landscape (only iPads may rotate). VitaPlex has
+    # a phone layout for portrait, so let the iPhone turn as well.
+    file(READ "${_sdl_platform}" _sdl_src)
+    set(_orient_old "SDL_SetHint(SDL_HINT_ORIENTATIONS, \"LandscapeLeft LandscapeRight\");\n    }\n    SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK")
+    set(_orient_new "SDL_SetHint(SDL_HINT_ORIENTATIONS, \"LandscapeLeft LandscapeRight Portrait\");\n    }\n    SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK")
+    string(FIND "${_sdl_src}" "${_orient_new}" _orient_done)
+    if(_orient_done EQUAL -1)
+        string(FIND "${_sdl_src}" "${_orient_old}" _orient_at)
+        if(_orient_at EQUAL -1)
+            message(FATAL_ERROR "sdl_platform.cpp patch: iPhone orientation hint not found")
+        endif()
+        string(REPLACE "${_orient_old}" "${_orient_new}" _sdl_src "${_sdl_src}")
+        file(WRITE "${_sdl_platform}" "${_sdl_src}")
+        message(STATUS "Applying patch: borealis sdl_platform.cpp (iPhone portrait)")
+    endif()
+
+    # Touches were mapped across the whole window; with the UI laid out in the
+    # safe area (Application::safeInsetLeft/Top) they are mapped back into it.
+    set(_sdl_input "${BOREALIS_LIBRARY}/lib/platforms/sdl/sdl_input.cpp")
+    file(READ "${_sdl_input}" _in_src)
+    set(_touch_old "state.position.x = Application::contentWidth * finger->x;\n            state.position.y = Application::contentHeight * finger->y;")
+    set(_touch_new "state.position.x = (finger->x * Application::windowWidth - Application::safeInsetLeft) / Application::windowScale;\n            state.position.y = (finger->y * Application::windowHeight - Application::safeInsetTop) / Application::windowScale;")
+    string(FIND "${_in_src}" "${_touch_new}" _touch_done)
+    if(_touch_done EQUAL -1)
+        string(FIND "${_in_src}" "${_touch_old}" _touch_at)
+        if(_touch_at EQUAL -1)
+            message(FATAL_ERROR "sdl_input.cpp patch: touch mapping not found")
+        endif()
+        string(REPLACE "${_touch_old}" "${_touch_new}" _in_src "${_in_src}")
+        file(WRITE "${_sdl_input}" "${_in_src}")
+        message(STATUS "Applying patch: borealis sdl_input.cpp (iOS safe area touch)")
+    endif()
+endif()
+
 # ---------------------------------------------------------------------------
 # GLFW keyboard mapping patch (desktop only): adds keyboard shortcuts
 # for Start / Back / X / Y / LB / RB on the desktop GLFW backend so
@@ -213,6 +366,43 @@ if(NOT PLATFORM_SWITCH AND NOT PLATFORM_PSV AND NOT PLATFORM_PS4 AND NOT PLATFOR
     endif()
 endif()
 
+# ---------------------------------------------------------------------------
+# Compiler cache (CI)
+#
+# Only when asked for, with -DVITAPLEX_USE_CCACHE=ON or the VITAPLEX_USE_CCACHE
+# environment variable (the CI jobs set it), and only when ccache is
+# installed: a local build, or a CI job whose ccache install failed, builds
+# exactly as before. Set here, before borealis and the app add their targets,
+# so every library and the app go through it.
+# ---------------------------------------------------------------------------
+option(VITAPLEX_USE_CCACHE "Compile through ccache when it is installed" OFF)
+if(VITAPLEX_USE_CCACHE OR DEFINED ENV{VITAPLEX_USE_CCACHE})
+    find_program(VITAPLEX_CCACHE_PROGRAM ccache)
+    if(NOT VITAPLEX_CCACHE_PROGRAM)
+        message(STATUS "ccache: not installed, building without it")
+    elseif(CMAKE_GENERATOR STREQUAL "Xcode")
+        # Xcode takes no compiler launcher; point its CC / CXX at wrappers
+        # instead. Link invocations go through them too, and ccache passes
+        # those straight on to clang.
+        set(_ccache_dir "${CMAKE_BINARY_DIR}/ccache-wrappers")
+        file(MAKE_DIRECTORY "${_ccache_dir}")
+        foreach(_tool clang clang++)
+            file(WRITE "${_ccache_dir}/ccache-${_tool}"
+                "#!/bin/sh\nexec \"${VITAPLEX_CCACHE_PROGRAM}\" \"$(xcrun -f ${_tool})\" \"$@\"\n")
+            file(CHMOD "${_ccache_dir}/ccache-${_tool}"
+                PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                            GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+        endforeach()
+        set(CMAKE_XCODE_ATTRIBUTE_CC  "${_ccache_dir}/ccache-clang")
+        set(CMAKE_XCODE_ATTRIBUTE_CXX "${_ccache_dir}/ccache-clang++")
+        message(STATUS "ccache: Xcode wrappers in ${_ccache_dir}")
+    else()
+        set(CMAKE_C_COMPILER_LAUNCHER   "${VITAPLEX_CCACHE_PROGRAM}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${VITAPLEX_CCACHE_PROGRAM}")
+        message(STATUS "ccache: ${VITAPLEX_CCACHE_PROGRAM}")
+    endif()
+endif()
+
 # iOS / tvOS embed app resources through libromfs (borealis toolchain.cmake
 # forces USE_LIBROMFS=ON for these platforms). libromfs's own CMakeLists
 # fatals unless we tell it WHAT to embed and under what project name — set
@@ -236,6 +426,12 @@ if(PLATFORM_IOS OR PLATFORM_TVOS)
     file(COPY "${BOREALIS_DIR}/resources/img"  DESTINATION "${IOS_ROMFS_STAGE}")
     set(LIBROMFS_PROJECT_NAME "VitaPlex" CACHE STRING "" FORCE)
     set(LIBROMFS_RESOURCE_LOCATION "${IOS_ROMFS_STAGE}" CACHE PATH "" FORCE)
+    # What makes borealis read from the embedded tree at all: without it
+    # BRLS_ASSET() expands to a plain relative path, every font, translation
+    # and XML layout was looked up on disk and missing, and the first screen
+    # died with 'Unable to load XML file "xml/activity/login.xml"'.
+    # borealis's add_libromfs() would set it; this file sets the rest by hand.
+    add_definitions(-DUSE_LIBROMFS)
 endif()
 
 add_subdirectory(${BOREALIS_LIBRARY})
@@ -250,8 +446,11 @@ set(APP_SOURCES
     # Application
     src/app/application.cpp
     src/app/plex_client.cpp
+    src/app/client_id.cpp
     src/app/downloads_manager.cpp
     src/app/music_queue.cpp
+    src/app/video_queue.cpp
+    src/app/video_background.cpp
     src/app/music_controller.cpp
     src/app/hint_icons.cpp
     src/app/synclounge_client.cpp
@@ -261,6 +460,7 @@ set(APP_SOURCES
     src/activity/main_activity.cpp
     src/activity/login_activity.cpp
     src/activity/player_activity.cpp
+    src/activity/player_subtitle_panel.cpp
 
     # Views
     src/view/home_tab.cpp
@@ -269,6 +469,7 @@ set(APP_SOURCES
     src/view/search_tab.cpp
     src/view/settings_tab.cpp
     src/view/livetv_tab.cpp
+    src/view/music_videos_tab.cpp
     src/view/livetv_actions.cpp
     src/utils/app_update.cpp
     src/view/media_detail_view.cpp
@@ -291,6 +492,9 @@ set(APP_SOURCES
     src/utils/http_cache.cpp
     src/utils/https_proxy.cpp
     src/utils/image_loader.cpp
+    src/utils/frame_profiler.cpp
+    src/utils/log_file_writer.cpp
+    src/utils/log_server.cpp
     src/utils/jwt_auth.cpp
     src/utils/update_verify.cpp
     src/utils/now_playing.cpp
@@ -325,6 +529,17 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
     # TARGET_OS_TV from <TargetConditionals.h>, and the constraints
     # tables differ between the two (phone-sized vs. living-room).
     list(APPEND APP_SOURCES src/platform/platform_ios.mm)
+    # Lock screen / Control Centre controls and the audio session that keeps
+    # music playing in the background (src/utils/now_playing.cpp picks it up).
+    list(APPEND APP_SOURCES src/utils/now_playing_ios.mm)
+    # Picture in Picture over an AVSampleBufferDisplayLayer (iPhone / iPad).
+    if(PLATFORM_IOS)
+        list(APPEND APP_SOURCES src/utils/pip_ios.mm)
+        # Downloads iOS carries on in the background (downloads_ios.mm).
+        list(APPEND APP_SOURCES src/app/downloads_ios.mm)
+        add_compile_definitions(VITAPLEX_IOS_DOWNLOADS=1)
+    endif()
+    add_compile_definitions(VITAPLEX_APPLE_NOWPLAYING=1)
 else()
     list(APPEND APP_SOURCES src/platform/platform_desktop.cpp)
 endif()
@@ -473,7 +688,20 @@ if(NOT DEFINED APP_DISPLAY_VERSION OR APP_DISPLAY_VERSION STREQUAL "")
 endif()
 message(STATUS "App version (numeric): ${APP_VERSION}")
 message(STATUS "App version (display): ${APP_DISPLAY_VERSION}")
-target_compile_definitions(${PROJECT_NAME} PRIVATE
+# Only on the files that use the version. As a define on the whole target,
+# the build number (new on every CI run) changed every file's compile line,
+# so a compiler cache could never reuse anything of the app. A new file that
+# prints VITA_PLEX_VERSION / VITA_PLEX_DISPLAY_VERSION / PLEX_CLIENT_VERSION
+# must be added here, or it gets the fallback in include/app/application.hpp.
+set(VITAPLEX_VERSIONED_SOURCES
+    src/app/application.cpp
+    src/app/downloads_manager.cpp
+    src/app/plex_client.cpp
+    src/player/mpv_player.cpp
+    src/utils/app_update.cpp
+    src/utils/http_client.cpp
+    src/view/settings_tab.cpp)
+set_property(SOURCE ${VITAPLEX_VERSIONED_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS
     VITA_PLEX_VERSION=\"${APP_VERSION}\"
     VITA_PLEX_DISPLAY_VERSION=\"${APP_DISPLAY_VERSION}\")
 
@@ -781,8 +1009,9 @@ if(PLATFORM_PSV)
         SceCodecEngine_stub
         SceAudio_stub
         SceVshBridge_stub
-        # sceSysmoduleLoadModule in platform_psv.cpp (NET/SSL/HTTP/IME/PGF)
-        # and the in-app self-update promoter (utils/vita_install).
+        # sceSysmoduleLoadModule in platform_psv.cpp (NET/SSL/HTTP/IME/PGF),
+        # and the promoter that removes the updater app builds up to 2055
+        # installed (utils/vita_install).
         ScePromoterUtil_stub
         SceSysmodule_stub
     )
@@ -822,18 +1051,36 @@ int main() {
         message(STATUS "SceNotificationUtil unavailable — no Vita download notifications")
     endif()
 
-    # The background-audio experiment (utils/background_audio.hpp): the BGM
-    # port calls come from SceAppMgr_stub, linked above; SceShell's music
-    # service is driven through the vendored libShellAudio, plus the one
-    # import stub vitasdk has no library for (lib/libshellaudio/README.md).
+    # Music after leaving the app (utils/background_audio.hpp): the BGM port
+    # calls come from SceAppMgr_stub, linked above. The quick menu's Music
+    # row, the queue handed to SceShell as VitaPlex goes, the downloads
+    # carried on and the updates installed all go through vita-shell-
+    # companion's SceShell plugin (lib/vita-shell-companion, a submodule
+    # pinned to a release; utils/shell_companion_psv.hpp): its client
+    # library (Apache-2.0) is built in here, with the pipe and taiHEN calls
+    # the SDK leaves out in sc_link_stub.S, and the song's cover through
+    # sc_cover.c, which decodes with the stb_image borealis's nanovg builds.
+    # The music SceShell plays on is stopped as the app takes it back
+    # through the vendored libShellAudio, plus the one import stub vitasdk
+    # has no library for (lib/libshellaudio/README.md).
+    set(SC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/vita-shell-companion)
     enable_language(ASM)
     target_sources(${PROJECT_NAME} PRIVATE
         src/utils/background_audio_psv.cpp
+        src/utils/shell_companion_psv.cpp
+        ${SC_DIR}/client/shell_companion.c
+        ${SC_DIR}/client/sc_files.c
+        ${SC_DIR}/client/sc_cover.c
+        ${SC_DIR}/client/sc_link_stub.S
         lib/libshellaudio/ShellAudio.c
         lib/libshellaudio/shellsvc_stub.S)
     target_include_directories(${PROJECT_NAME} PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_BG_TITLEID=\"${VITA_BG_TITLEID}\")
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/handover_psv
+        ${SC_DIR}/include
+        ${SC_DIR}/client)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        VITAPLEX_TITLEID=\"${VITA_TITLEID}\")
 elseif(PLATFORM_SWITCH)
     # Required for __wrap_pthread_create in src/utils/switch_stubs.c — floors
     # libmpv/ffmpeg thread stacks above libnx's 128 KB default so they stop
@@ -905,6 +1152,8 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
         "-framework CoreVideo"
         "-framework CoreImage"
         "-framework AVFoundation"
+        "-framework MediaPlayer"           # now_playing_ios.mm: lock screen card + remote commands
+        "-framework AVKit"                 # platform_ios.mm: AirPlay picker (AVRoutePickerView)
         "-framework AudioToolbox"
         "-framework CoreAudio"             # MPVKit Package.swift linkedFramework
         "-framework VideoToolbox"          # mpv hwdec=auto-safe -> VideoToolbox
@@ -1301,53 +1550,12 @@ endif()
 # Platform packaging / post-build
 # ---------------------------------------------------------------------------
 if(PLATFORM_PSV)
-    # ── Updater stub (self-update helper) ───────────────────────────────
-    # A second, tiny Vita app with its own title id (VPLXUPD01). VitaPlex
-    # cannot promote over itself — the installer returns 0x80101114 "in
-    # use" for the running title — so at update time VitaPlex installs and
-    # launches this stub; with VitaPlex now closed, the stub promotes the
-    # downloaded VPK and relaunches VitaPlex. This is the AutoPlugin2
-    # technique. It shares the extract/promote code (utils/vita_install),
-    # which is deliberately free of borealis/fmt so the stub links without
-    # the UI stack. The stub's own .vpk is bundled inside VitaPlex.vpk
-    # (as updater.vpk) so VitaPlex can install it on demand.
-    add_executable(vitaplex_updater
-        src/updater_stub/main.cpp
-        src/utils/vita_install.cpp
-        lib/miniz/miniz.c)
-    target_include_directories(vitaplex_updater PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/lib/miniz)
-    target_compile_definitions(vitaplex_updater PRIVATE __PSV__ MINIZ_NO_STDIO MINIZ_NO_TIME)
-    target_link_libraries(vitaplex_updater
-        mbedcrypto            # mbedtls_sha1 for the fpkg hmac
-        # vita2d + its stack, for the tiny progress screen (system PGF font).
-        vita2d
-        freetype
-        png
-        z
-        SceGxm_stub
-        SceDisplay_stub
-        SceCommonDialog_stub
-        ScePgf_stub
-        SceCtrl_stub
-        # self-update + relaunch
-        ScePromoterUtil_stub
-        SceSysmodule_stub
-        SceAppMgr_stub
-        SceIofilemgr_stub
-        SceLibKernel_stub)
-    # Same room for the SCE data as the main app; see __sce_headroom above.
-    target_link_options(vitaplex_updater PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
-    vita_create_self(vitaplex_updater.self vitaplex_updater UNSAFE NOASLR)
-    # No FILE args: vita_create_vpk accumulates them in a variable it does
-    # not clear between calls, so any file listed here leaks into the main
-    # VitaPlex.vpk below and gets packed twice. The stub is headless (no
-    # LiveArea icon needed), so it ships with just its eboot + param.sfo.
-    vita_create_vpk(vitaplex_updater.vpk VPLXUPD01 vitaplex_updater.self
-        VERSION 01.00
-        NAME "VitaPlex Updater")
-
+    # Updates: VitaPlex cannot be installed over while it runs (the system's
+    # installer refuses the running title), so it unpacks the update and the
+    # shell companion plugin, in SceShell, installs it once VitaPlex has quit
+    # and launches it again (utils/vita_install.hpp, SC_CMD_UPDATE_INSTALL).
+    # Up to build 2055 a second app did that, the
+    # updater stub (VPLXUPD01), carried inside VitaPlex.vpk as updater.vpk.
     vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE NOASLR)
 
     # App icons, XML layouts and the PSV hint-button art are globbed at
@@ -1367,8 +1575,8 @@ if(PLATFORM_PSV)
         list(APPEND VITA_RES_FILE_ARGS FILE ${res} ${res})
     endforeach()
 
-    # What goes into VitaPlex.vpk besides the eboot; VitaPlexBG.vpk below
-    # packs the same.
+    # What goes into VitaPlex.vpk besides the eboot, and its quick menu
+    # plugin (below).
     set(VITA_MAIN_VPK_FILES
         FILE app/platform/psv/sce_sys/icon0.png                      sce_sys/icon0.png
         FILE app/platform/psv/sce_sys/pic0.png                       sce_sys/pic0.png
@@ -1399,6 +1607,9 @@ if(PLATFORM_PSV)
         FILE resources/font/switch_font.ttf               resources/font/switch_font.ttf
         FILE resources/font/switch_icons.ttf              resources/font/switch_icons.ttf
         FILE resources/material/MaterialIcons-Regular.ttf resources/material/MaterialIcons-Regular.ttf
+        # Chinese / Japanese / Korean characters, for the menus and subtitles.
+        FILE resources/cjk/subfont.ttf                    resources/cjk/subfont.ttf
+        FILE resources/cjk/LICENSE-NotoSansCJK.txt        resources/cjk/LICENSE-NotoSansCJK.txt
 
         # TLS root CA bundle (Mozilla's), so libcurl's mbedtls backend has a
         # trust anchor for peer verification — CAINFO points here (see
@@ -1407,174 +1618,41 @@ if(PLATFORM_PSV)
         # the Vita vpk uses an explicit allow-list, so it must be named here
         # or every HTTPS handshake on Vita fails.
         FILE resources/cacert.pem                         resources/cacert.pem
-
-        # The bundled updater stub, installed + launched at self-update
-        # time. Listing it as a FILE makes the main vpk's build command
-        # depend on this path, which is the output of the stub's
-        # vita_create_vpk above, so CMake builds the stub vpk first.
-        FILE ${CMAKE_BINARY_DIR}/vitaplex_updater.vpk     updater.vpk
     )
 
+    # ── vita-shell-companion's SceShell plugin ───────────────────────────
+    # The plugin itself (shell_companion.suprx) comes from the
+    # vita-shell-companion release matching the submodule, passed in with
+    # -DSC_PLUGIN_SUPRX=<path>; the CI downloads it. Every app that uses it
+    # ships the same file of a version, as the first one loaded in a boot is
+    # the one all of them talk to. Without it the VPK still builds, with no
+    # Music row and no music, downloads or updates carried on once VitaPlex
+    # has gone, unless another app has loaded the plugin this boot.
+    set(SC_PLUGIN_SUPRX "" CACHE FILEPATH "shell_companion.suprx to ship in the VPK")
+    set(VITAPLEX_SC_PLUGIN "")
+    if(SC_PLUGIN_SUPRX AND EXISTS "${SC_PLUGIN_SUPRX}")
+        set(VITAPLEX_SC_PLUGIN
+            FILE ${SC_PLUGIN_SUPRX}       module/shell_companion.suprx
+            FILE ${SC_DIR}/LICENSE        module/shell_companion-LICENSE.txt
+            FILE ${SC_DIR}/NOTICE.txt     module/shell_companion-NOTICE.txt)
+        message(STATUS "Shipping shell_companion.suprx from ${SC_PLUGIN_SUPRX}")
+    else()
+        message(WARNING "SC_PLUGIN_SUPRX not set: the VPK won't carry shell_companion.suprx")
+    endif()
+
+    # VitaPlex itself, as a non-game application (gdc) with ElevenMPV-A's
+    # attributes and the extended memory above (ATTRIBUTE2=12): the kind the
+    # system lets play on once it is left with PS, network and audio
+    # included, where a game is frozen. Packaged so as VitaPlex BG (VPLEX0002,
+    # builds 2003 to 2046), it could also allocate 342 MB of main memory
+    # against the game's 172 MB heap (BG Test 4, docs/DESIGN_NOTES.md;
+    # utils/background_audio.hpp).
+    set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
     vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
         VERSION ${VITA_VERSION}
         NAME    ${VITA_APP_NAME}
-        ${VITA_MAIN_VPK_FILES})
-
-    # ── VitaPlex as a non-game app (test) ───────────────────────────────
-    # The same eboot and files, packaged as the background test's VPLXBGT04
-    # is: a non-game application (gdc) with ElevenMPV-A's attributes and
-    # VitaPlex's extended memory. On a console that package kept running,
-    # network and audio included, after PS, where VitaPlex as a game is
-    # frozen, and it could allocate 342 MB of main memory against VitaPlex's
-    # 172 MB heap. It has a title id of its own so it installs beside
-    # VitaPlex; the two share ux0:data/VitaPlex, so only one should be open
-    # at a time. The same save-and-restore as the background test below,
-    # for the same reason (vita_create_vpk appends to these in this scope).
-    set(_bg_saved_sfo "${VITA_MKSFOEX_FLAGS}")
-    set(_bg_saved_pack "${VITA_PACK_VPK_FLAGS}")
-    set(_bg_saved_resources "${resources}")
-    set(VITA_MKSFOEX_FLAGS "-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
-    set(VITA_PACK_VPK_FLAGS "")
-    set(resources "")
-    vita_create_vpk(VitaPlexBG.vpk ${VITA_BG_TITLEID} ${PROJECT_NAME}.self
-        VERSION ${VITA_VERSION}
-        NAME    "VitaPlex BG"
-        ${VITA_MAIN_VPK_FILES})
-    set(VITA_MKSFOEX_FLAGS "${_bg_saved_sfo}")
-    set(VITA_PACK_VPK_FLAGS "${_bg_saved_pack}")
-    set(resources "${_bg_saved_resources}")
-
-    # ── Background test (src/bgtest_psv) ────────────────────────────────
-    # One small binary packaged several times, identical but for param.sfo, to
-    # find out on hardware which kind of app the system keeps running once it
-    # leaves the foreground, and with what memory and network; VitaPlex itself
-    # is frozen. A system-mode build of it is packaged twice more, to find out
-    # whether that kind plays on while a game runs, and a third time with a
-    # player through SceShell's music service. See the source's header for
-    # all ten. vita_create_vpk is a macro that appends to these flag
-    # variables in this scope (the updater comment above has the same trap
-    # for FILE), so each package gets them fresh and they are put back
-    # afterwards. Built after the main vpk, so nothing leaks into it.
-    add_executable(vitaplex_bgtest src/bgtest_psv/main.c)
-    target_link_libraries(vitaplex_bgtest
-        vita2d freetype png z m
-        SceGxm_stub
-        SceDisplay_stub
-        SceCommonDialog_stub
-        ScePgf_stub
-        SceCtrl_stub
-        SceAudio_stub
-        SceAppMgr_stub
-        ScePower_stub
-        SceSysmodule_stub
-        SceIofilemgr_stub
-        SceNet_stub
-        SceNetCtl_stub
-        SceLibKernel_stub)
-    target_link_options(vitaplex_bgtest PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
-    vita_create_self(vitaplex_bgtest.self vitaplex_bgtest UNSAFE)
-
-    # The same source as a system-mode app, which is what ElevenMPV-A is:
-    # its eboot carries a boot param (SELF control info 6) of attribute 2 and
-    # a 16 MB budget, where these eboots carry none and get the game budget.
-    # MEMSIZE and ATTRIBUTE write that param. Built without vita2d, whose GPU
-    # buffers come to about 10 MB of the 16, so it has no screen.
-    # vita_create_self appends to VITA_MAKE_FSELF_FLAGS in this scope (the
-    # eboot above gets "-c -na -c -na -c"), so this one starts from nothing.
-    add_executable(vitaplex_bgtest_sys src/bgtest_psv/main.c)
-    target_compile_definitions(vitaplex_bgtest_sys PRIVATE BGTEST_SYSTEM_MODE)
-    target_link_libraries(vitaplex_bgtest_sys
-        m
-        SceAudio_stub
-        SceAppMgr_stub
-        ScePower_stub
-        SceSysmodule_stub
-        SceIofilemgr_stub
-        SceNet_stub
-        SceNetCtl_stub
-        SceLibKernel_stub)
-    target_link_options(vitaplex_bgtest_sys PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
-    set(_bgt_saved_fself "${VITA_MAKE_FSELF_FLAGS}")
-    set(VITA_MAKE_FSELF_FLAGS "")
-    vita_create_self(vitaplex_bgtest_sys.self vitaplex_bgtest_sys UNSAFE MEMSIZE 0x4000 ATTRIBUTE 2)
-    set(VITA_MAKE_FSELF_FLAGS "${_bgt_saved_fself}")
-
-    # The system-mode build again with what a player through SceShell's music
-    # service needs (src/bgtest_psv/player_test.c): curl, mbedtls and zlib as
-    # VitaPlex fetches with them, and libShellAudio with its one import stub.
-    # Mozilla's CA bundle goes in its package below.
-    add_executable(vitaplex_bgtest_player
-        src/bgtest_psv/main.c
-        src/bgtest_psv/player_test.c
-        lib/libshellaudio/ShellAudio.c
-        lib/libshellaudio/shellsvc_stub.S)
-    target_compile_definitions(vitaplex_bgtest_player PRIVATE BGTEST_SYSTEM_MODE BGTEST_PLAYER)
-    target_include_directories(vitaplex_bgtest_player PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
-    target_link_libraries(vitaplex_bgtest_player
-        curl mbedtls mbedx509 mbedcrypto z m
-        SceAudio_stub
-        SceAppMgr_stub
-        ScePower_stub
-        SceSysmodule_stub
-        SceIofilemgr_stub
-        SceNet_stub
-        SceNetCtl_stub
-        SceRtc_stub
-        SceLibKernel_stub
-        # curl resolves names on a thread; whole, as borealis links it for VitaPlex
-        -Wl,--whole-archive pthread -Wl,--no-whole-archive)
-    target_link_options(vitaplex_bgtest_player PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
-    set(VITA_MAKE_FSELF_FLAGS "")
-    vita_create_self(vitaplex_bgtest_player.self vitaplex_bgtest_player UNSAFE MEMSIZE 0x4000 ATTRIBUTE 2)
-    set(VITA_MAKE_FSELF_FLAGS "${_bgt_saved_fself}")
-
-    set(_bgt_saved_sfo "${VITA_MKSFOEX_FLAGS}")
-    set(_bgt_saved_pack "${VITA_PACK_VPK_FLAGS}")
-    set(_bgt_saved_resources "${resources}")
-    foreach(_bgt
-            # title id | name | eboot | sfo flags. The first two are games
-            # like VitaPlex (extended memory as it has); the second adds
-            # ATTRIBUTE_BG_APP to VitaPlex's default ATTRIBUTE (0x8000).
-            # The third copies ElevenMPV-A's param.sfo: a non-game app. The
-            # fourth is the third with VitaPlex's extended memory. The fifth
-            # and sixth are the third with ElevenMPV-A's boot param too, the
-            # sixth growing its memory as ElevenMPV-A does (main.c). The last
-            # three make no sound: games with and without VitaPlex's extended
-            # memory, to open while the fifth beeps, and the first of them
-            # again giving up the BGM output the system adopts for it.
-            "VPLXBGT01|BG Test 1 game|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12"
-            "VPLXBGT02|BG Test 2 BG flag|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -d ATTRIBUTE=0x04008000"
-            "VPLXBGT03|BG Test 3 non-game|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
-            "VPLXBGT04|BG Test 4 non-game mem|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
-            "VPLXBGT05|BG Test 5 system 16MB|vitaplex_bgtest_sys.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
-            "VPLXBGT06|BG Test 6 system grown|vitaplex_bgtest_sys.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
-            "VPLXBGT07|BG Test 7 silent mem|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12"
-            "VPLXBGT08|BG Test 8 silent|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0"
-            "VPLXBGT09|BG Test 9 silent mem release|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
-        string(REPLACE "|" ";" _bgt "${_bgt}")
-        list(GET _bgt 0 _bgt_id)
-        list(GET _bgt 1 _bgt_name)
-        list(GET _bgt 2 _bgt_self)
-        list(GET _bgt 3 _bgt_flags)
-        set(VITA_MKSFOEX_FLAGS "${_bgt_flags}")
-        set(VITA_PACK_VPK_FLAGS "")
-        set(resources "")
-        vita_create_vpk(VitaPlexBgTest-${_bgt_id}.vpk ${_bgt_id} ${_bgt_self}
-            VERSION 01.00
-            NAME "${_bgt_name}")
-    endforeach()
-    # The player test, set up as the fifth is, with the CA bundle at app0:.
-    set(VITA_MKSFOEX_FLAGS "-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
-    set(VITA_PACK_VPK_FLAGS "")
-    set(resources "")
-    vita_create_vpk(VitaPlexBgTest-VPLXBGT10.vpk VPLXBGT10 vitaplex_bgtest_player.self
-        VERSION 01.00
-        NAME "BG Test 10 player"
-        FILE resources/cacert.pem cacert.pem)
-    set(VITA_MKSFOEX_FLAGS "${_bgt_saved_sfo}")
-    set(VITA_PACK_VPK_FLAGS "${_bgt_saved_pack}")
-    set(resources "${_bgt_saved_resources}")
+        ${VITA_MAIN_VPK_FILES}
+        ${VITAPLEX_SC_PLUGIN})
 
 elseif(PLATFORM_PS4)
     if(PS4)
@@ -1610,6 +1688,8 @@ elseif(PLATFORM_PS4)
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/font     ${CMAKE_BINARY_DIR}/ps4/resources/font
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/cjk      ${CMAKE_BINARY_DIR}/ps4/resources/cjk
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/material ${CMAKE_BINARY_DIR}/ps4/resources/material
         COMMAND "${CMAKE_COMMAND}" -E copy
             ${CMAKE_CURRENT_SOURCE_DIR}/resources/cacert.pem ${CMAKE_BINARY_DIR}/ps4/resources/cacert.pem
@@ -1639,8 +1719,8 @@ elseif(PLATFORM_PS4)
     # process. So at update time VitaPlex launches this helper and quits;
     # with VitaPlex closed the helper uninstalls VPLX00002 and hands the
     # downloaded pkg to the system installer (BGFT), which finishes in the
-    # background. Shipped as its own pkg, installed once (like the Vita
-    # updater stub VPLXUPD01). It has no UI, so it needs only the borealis
+    # background. Shipped as its own pkg, installed once (as the Vita's
+    # updater stub VPLXUPD01 was, up to build 2055). It has no UI, so it needs only the borealis
     # PS4 base (sce_module + sce_sys) — no app resources.
     if(PS4)
         add_executable(vitaplex_updater_ps4 src/updater_ps4/main.cpp)
@@ -1760,7 +1840,11 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
     if(PLATFORM_IOS)
         set_target_properties(${PROJECT_NAME} PROPERTIES
             XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
-            XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "14.0")
+            XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "14.0"
+            # Without this actool compiles the catalog but never names an app
+            # icon, so Info.plist gets no CFBundleIcons and the home screen
+            # shows a blank icon.
+            XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon")
     elseif(PLATFORM_TVOS)
         set_target_properties(${PROJECT_NAME} PROPERTIES
             XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "3"
@@ -1783,11 +1867,18 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
             ${CMAKE_SOURCE_DIR}/app/platform/ios/tvos/Splash.storyboard
             PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     endif()
-    if(EXISTS "${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets")
-        target_sources(${PROJECT_NAME} PRIVATE
-            ${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets)
-        set_source_files_properties(
-            ${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets
+    # The asset catalog with the app icon: iOS has flat PNGs, tvOS layered
+    # parallax icons and Top Shelf images in a brand-assets set.
+    if(PLATFORM_TVOS)
+        set(_apple_xcassets "${CMAKE_SOURCE_DIR}/app/platform/ios/tvos/Images.xcassets")
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "App Icon & Top Shelf Image")
+    else()
+        set(_apple_xcassets "${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets")
+    endif()
+    if(EXISTS "${_apple_xcassets}")
+        target_sources(${PROJECT_NAME} PRIVATE ${_apple_xcassets})
+        set_source_files_properties(${_apple_xcassets}
             PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     endif()
 

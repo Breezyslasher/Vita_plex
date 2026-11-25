@@ -128,6 +128,8 @@ void fonsMarkAllDirty(FONScontext* stash);
 int fonsAddFont(FONScontext* s, const char* name, const char* path, int fontIndex);
 int fonsAddFontMem(FONScontext* s, const char* name, unsigned char* data, int ndata, int freeData, int fontIndex);
 int fonsGetFontByName(FONScontext* s, const char* name);
+// raw font data at 'idx', returns NULL on failure
+const unsigned char* fonsGetFontData(FONScontext* s, int idx, int* dataSize);
 
 // State handling
 void fonsPushState(FONScontext* s);
@@ -1260,6 +1262,24 @@ int fonsGetFontByName(FONScontext* s, const char* name)
 			return i;
 	}
 	return FONS_INVALID;
+}
+
+const unsigned char* fonsGetFontData(FONScontext* s, int idx, int* dataSize)
+{
+	FONSfont* font;
+
+	if (s == NULL || dataSize == NULL) return NULL;
+	if (idx < 0 || idx >= s->nfonts) return NULL;
+	font = s->fonts[idx];
+	if (font->data == NULL) return NULL;
+
+#ifdef FONTSTASH_STREAM_IMPLEMENTATION
+	/* streams do not expose their backing bytes */
+	return NULL;
+#else
+	*dataSize = font->dataSize;
+	return font->data;
+#endif
 }
 
 

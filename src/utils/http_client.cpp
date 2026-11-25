@@ -3,6 +3,7 @@
  */
 
 #include "utils/http_client.hpp"
+#include "utils/frame_profiler.hpp"
 #include "app/application.hpp"
 #include "platform/platform.hpp"
 
@@ -162,7 +163,12 @@ static void applyCurlSecurityDefaults(CURL* curl) {
     // silently skipping verification.
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+#if !defined(USE_LIBROMFS)
     curl_easy_setopt(curl, CURLOPT_CAINFO, RESOURCE_PREFIX "cacert.pem");
+#endif
+    // iOS/tvOS (the libromfs targets) leave CAINFO unset: Secure Transport
+    // trusts the system keychain, and "romfs:/cacert.pem" is no file curl
+    // could open, so naming it risked failing every HTTPS request there.
 
     // Never deliver SIGALRM-based timeouts. curl's default timeout path
     // uses signals which are unsafe in a multi-threaded process (the app
@@ -331,6 +337,11 @@ HttpResponse HttpClient::del(const std::string& url) {
 }
 
 HttpResponse HttpClient::request(const HttpRequest& req) {
+    // Counted for the frame profiler's log (utils/frame_profiler.hpp).
+    perf::httpBegun();
+    struct Ended {
+        ~Ended() { perf::httpEnded(); }
+    } ended;
     HttpResponse response;
 
     if (!m_curl) {
@@ -349,6 +360,8 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
     // Set timeout - use up to 60 second connect timeout for slow connections
     int timeout = req.timeout > 0 ? req.timeout : m_timeout;
     int connectTimeout = timeout > 60 ? 60 : (timeout > 30 ? 30 : 15);
+    if (req.connectTimeout > 0 && req.connectTimeout < connectTimeout)
+        connectTimeout = req.connectTimeout;
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, connectTimeout);
 

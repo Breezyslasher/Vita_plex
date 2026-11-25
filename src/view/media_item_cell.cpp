@@ -2,6 +2,7 @@
  * VitaPlex - Media Item Cell implementation
  */
 
+#include "utils/frame_profiler.hpp"
 #include "view/media_item_cell.hpp"
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
@@ -26,6 +27,123 @@ static int         s_startHintNvg  = 0;
 static int         s_startHintW    = 0;
 static int         s_startHintH    = 0;
 static std::string s_startHintPath;
+
+// The rating badge's icons, popcorn and star, drawn once into a texture each
+// and painted as one image rect: as paths they were up to four tessellated
+// fills per card per frame. The shapes and colours are the paths' own, laid
+// out in a 12x12 box (the badge's iconR 6 about the icon's centre), and
+// rasterised here at 4x4 samples a pixel.
+namespace {
+const int kIconPx = 32;        // texture size, for the 12-unit box
+const float kIconUnits = 12.0f;
+
+struct IconShape {
+    // A sample point (in units, 0..12 from the box's top-left) inside it?
+    virtual bool inside(float x, float y) const = 0;
+    NVGcolor color;
+    virtual ~IconShape() = default;
+};
+
+bool insidePolygon(const float* xs, const float* ys, int n, float x, float y) {
+    bool in = false;
+    for (int i = 0, j = n - 1; i < n; j = i++) {
+        if (((ys[i] > y) != (ys[j] > y)) &&
+            (x < (xs[j] - xs[i]) * (y - ys[i]) / (ys[j] - ys[i]) + xs[i]))
+            in = !in;
+    }
+    return in;
+}
+
+// Straight-alpha RGBA of `shapes` painted in order, each over the last.
+std::vector<unsigned char> rasterIcon(const std::vector<const IconShape*>& shapes) {
+    std::vector<unsigned char> px((size_t)kIconPx * kIconPx * 4, 0);
+    const int ss = 4;
+    for (int py = 0; py < kIconPx; py++) {
+        for (int pxi = 0; pxi < kIconPx; pxi++) {
+            float r = 0, g = 0, b = 0, a = 0;  // premultiplied sum
+            for (int sy = 0; sy < ss; sy++) {
+                for (int sx = 0; sx < ss; sx++) {
+                    const float ux = (pxi + (sx + 0.5f) / ss) * kIconUnits / kIconPx;
+                    const float uy = (py + (sy + 0.5f) / ss) * kIconUnits / kIconPx;
+                    const IconShape* top = nullptr;
+                    for (const IconShape* shape : shapes)
+                        if (shape->inside(ux, uy)) top = shape;
+                    if (!top) continue;
+                    r += top->color.r;
+                    g += top->color.g;
+                    b += top->color.b;
+                    a += 1.0f;
+                }
+            }
+            unsigned char* out = &px[((size_t)py * kIconPx + pxi) * 4];
+            if (a > 0) {
+                out[0] = (unsigned char)(r / a * 255.0f + 0.5f);
+                out[1] = (unsigned char)(g / a * 255.0f + 0.5f);
+                out[2] = (unsigned char)(b / a * 255.0f + 0.5f);
+                out[3] = (unsigned char)(a / (ss * ss) * 255.0f + 0.5f);
+            }
+        }
+    }
+    return px;
+}
+
+struct PolygonShape : IconShape {
+    std::vector<float> xs, ys;
+    bool inside(float x, float y) const override {
+        return insidePolygon(xs.data(), ys.data(), (int)xs.size(), x, y);
+    }
+};
+
+struct CircleShape : IconShape {
+    float cx = 0, cy = 0, r = 0;
+    bool inside(float x, float y) const override {
+        return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r;
+    }
+};
+
+// The popcorn of draw(): a red bucket and three buttery kernels, in units
+// about the icon's centre (6, 6).
+std::vector<unsigned char> popcornPixels() {
+    const float icx = 6.0f, icy = 6.0f, s = 12.0f;
+    const float bkW = s * 0.80f, bkH = s * 0.62f;
+    const float bkx = icx - bkW * 0.5f, bky = icy + s * 0.5f - bkH;
+    PolygonShape bucket;
+    bucket.xs = {bkx + bkW * 0.14f, bkx + bkW * 0.86f, bkx + bkW, bkx};
+    bucket.ys = {bky, bky, bky + bkH, bky + bkH};
+    bucket.color = nvgRGB(225, 60, 45);
+    CircleShape k1, k2, k3;
+    k1.cx = icx - s * 0.22f; k1.cy = bky - s * 0.02f; k1.r = s * 0.16f;
+    k2.cx = icx + s * 0.02f; k2.cy = bky - s * 0.12f; k2.r = s * 0.18f;
+    k3.cx = icx + s * 0.24f; k3.cy = bky - s * 0.02f; k3.r = s * 0.15f;
+    k1.color = k2.color = k3.color = nvgRGB(245, 214, 130);
+    return rasterIcon({&bucket, &k1, &k2, &k3});
+}
+
+// The gold star of draw(): ten points, radius 6 and 6 * 0.42, from -90°.
+std::vector<unsigned char> starPixels() {
+    PolygonShape star;
+    for (int i = 0; i < 10; i++) {
+        const float ang = -1.5707963f + (float)i * 0.6283185f;
+        const float rad = (i % 2 == 0) ? 6.0f : 6.0f * 0.42f;
+        star.xs.push_back(6.0f + cosf(ang) * rad);
+        star.ys.push_back(6.0f + sinf(ang) * rad);
+    }
+    star.color = nvgRGB(229, 160, 13);
+    return rasterIcon({&star});
+}
+
+// The icon's texture, made on first use; 0 while textures can't be made (no
+// drawing surface), when draw() falls back to the paths.
+int ratingIcon(NVGcontext* vg, bool popcorn) {
+    static int s_popcorn = 0, s_star = 0;
+    int& img = popcorn ? s_popcorn : s_star;
+    if (img == 0 && brls::Application::canUploadTextures()) {
+        const std::vector<unsigned char> px = popcorn ? popcornPixels() : starPixels();
+        img = nvgCreateImageRGBA(vg, kIconPx, kIconPx, 0, px.data());
+    }
+    return img;
+}
+}  // namespace
 
 MediaItemCell::MediaItemCell()
     : m_alive(std::make_shared<std::atomic<bool>>(true)) {
@@ -236,6 +354,10 @@ void MediaItemCell::setItem(const MediaItem& item) {
                      item.parentIndex, item.index);
             m_subtitleLabel->setText(subtitle);
             m_subtitleLabel->setVisibility(brls::Visibility::VISIBLE);
+        } else if (item.mediaType == MediaType::CLIP && !item.grandparentTitle.empty()) {
+            // A music video listed away from its artist's page: the artist.
+            m_subtitleLabel->setText(item.grandparentTitle);
+            m_subtitleLabel->setVisibility(brls::Visibility::VISIBLE);
         } else if (item.mediaType == MediaType::MUSIC_TRACK) {
             // Show track number for music
             if (item.index > 0) {
@@ -361,6 +483,7 @@ brls::View* MediaItemCell::create() {
 
 void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float height,
                           brls::Style style, brls::FrameContext* ctx) {
+    perf::Scope timed(perf::Probe::CellDraw);
     // Cell background, labels, progress bar, etc. paint first.
     brls::Box::draw(vg, x, y, width, height, style, ctx);
 
@@ -464,7 +587,15 @@ void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float he
                     nvgFill(vg);
 
                     float icx = bx + padH + iconR, icy = by + bh * 0.5f;
-                    if (showPct) {
+                    if (const int icon = ratingIcon(vg, showPct)) {
+                        // The icon, painted as one image rect (ratingIcon).
+                        NVGpaint ip = nvgImagePattern(vg, icx - iconR, icy - iconR, iconR * 2.0f,
+                                                      iconR * 2.0f, 0, icon, 1.0f);
+                        nvgBeginPath(vg);
+                        nvgRect(vg, icx - iconR, icy - iconR, iconR * 2.0f, iconR * 2.0f);
+                        nvgFillPaint(vg, ip);
+                        nvgFill(vg);
+                    } else if (showPct) {
                         // Popcorn: a red bucket with buttery kernels (all paths,
                         // so it never depends on an emoji / font glyph).
                         float s = iconR * 2.0f;
@@ -552,8 +683,16 @@ void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float he
         std::string path = HintIcons::getResPath(brls::BUTTON_START);
         if (!path.empty() && path != s_startHintPath) {
             if (s_startHintNvg != 0) nvgDeleteImage(vg, s_startHintNvg);
+#ifdef USE_LIBROMFS
+            // iOS/tvOS: the resources are embedded, not files.
+            auto& res = romfs::get(path);
+            s_startHintNvg = res.valid()
+                ? nvgCreateImageMem(vg, 0, (unsigned char*)res.data(), (int)res.size())
+                : 0;
+#else
             std::string full = std::string(RESOURCE_PREFIX) + path;
             s_startHintNvg = nvgCreateImage(vg, full.c_str(), 0);
+#endif
             if (s_startHintNvg != 0) {
                 nvgImageSize(vg, s_startHintNvg,
                              &s_startHintW, &s_startHintH);
@@ -623,6 +762,19 @@ void MediaItemCell::onFocusLost() {
     updateFocusInfo(false);
 }
 
+namespace {
+// Each Label::setText and each change to or from GONE re-runs the layout of
+// the whole page (borealis's invalidate()), and a focus move on the home tab
+// did several of them: the frame log had it at 40-110 ms. Only what changes
+// is set.
+void setTextIfChanged(brls::Label* label, const std::string& text) {
+    if (label->getFullText() != text) label->setText(text);
+}
+void setVisibilityIfChanged(brls::View* view, brls::Visibility visibility) {
+    if (view->getVisibility() != visibility) view->setVisibility(visibility);
+}
+}  // namespace
+
 void MediaItemCell::updateFocusInfo(bool focused) {
     if (!m_titleLabel || !m_descriptionLabel) return;
 
@@ -633,8 +785,8 @@ void MediaItemCell::updateFocusInfo(bool focused) {
     // when it ends beats its year and runtime, so keep the window and drop
     // the description; the detail view still carries the rest.
     if (m_item.airStartAt > 0 && m_item.airEndAt > m_item.airStartAt) {
-        m_titleLabel->setText(focused ? m_item.title : m_originalTitle);
-        m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+        setTextIfChanged(m_titleLabel, focused ? m_item.title : m_originalTitle);
+        setVisibilityIfChanged(m_descriptionLabel, brls::Visibility::GONE);
         return;
     }
 
@@ -691,16 +843,16 @@ void MediaItemCell::updateFocusInfo(bool focused) {
     }
 
     // Focus expands the title to its untruncated form either way.
-    m_titleLabel->setText(focused ? m_item.title : m_originalTitle);
+    setTextIfChanged(m_titleLabel, focused ? m_item.title : m_originalTitle);
 
     if (focused && !info.empty()) {
-        if (m_subtitleLabel) m_subtitleLabel->setVisibility(brls::Visibility::GONE);
-        m_descriptionLabel->setText(info);
-        m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
+        if (m_subtitleLabel) setVisibilityIfChanged(m_subtitleLabel, brls::Visibility::GONE);
+        setTextIfChanged(m_descriptionLabel, info);
+        setVisibilityIfChanged(m_descriptionLabel, brls::Visibility::VISIBLE);
     } else {
-        m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+        setVisibilityIfChanged(m_descriptionLabel, brls::Visibility::GONE);
         if (m_subtitleLabel)
-            m_subtitleLabel->setVisibility(m_hasSubtitle ? brls::Visibility::VISIBLE
+            setVisibilityIfChanged(m_subtitleLabel, m_hasSubtitle ? brls::Visibility::VISIBLE
                                                          : brls::Visibility::GONE);
     }
 }

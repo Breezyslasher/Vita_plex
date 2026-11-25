@@ -8,6 +8,7 @@
  */
 
 #include "platform/platform.hpp"
+#include "utils/log_file_writer.hpp"
 
 #include <borealis.hpp>
 #include "utils/http_client.hpp"
@@ -154,10 +155,10 @@ void openLogFile() {
     rotateLogForNewRun();
     g_logFile = std::fopen(getLogPath().c_str(), "w");
     if (!g_logFile) return;
-    // Line-buffered so a crash flushes the last log line to disk before
-    // the kernel kills us — full buffering would lose the last ~4 KB of
-    // diagnostic output, which is exactly the part that matters.
-    setvbuf(g_logFile, NULL, _IOLBF, 0);
+    // Written by a thread of its own (utils/log_file_writer.hpp): a line
+    // written by the thread logging it cost that thread a write to storage.
+    // Error lines are still written and flushed before the logger returns.
+    ::vitaplex::logfile::start(g_logFile);
 
     brls::Logger::getLogEvent()->subscribe(
         [](brls::Logger::TimePoint time, brls::LogLevel level, std::string log) {
@@ -182,15 +183,18 @@ void openLogFile() {
             // Redacted at the sink, as on desktop and Android: one call site
             // that forgets to redact would otherwise put an X-Plex-Token in
             // a log that gets pasted into a bug report.
-            fprintf(g_logFile, "%02d:%02d:%02d.%03d [%s] %s\n",
+            ::vitaplex::logfile::write(
+                fmt::format("{:02d}:{:02d}:{:02d}.{:03d} [{}] {}\n",
                     time_tm.tm_hour, time_tm.tm_min, time_tm.tm_sec,
-                    (int)ms, levelStr, ::vitaplex::redactTokensInUrl(log).c_str());
+                    (int)ms, levelStr, ::vitaplex::redactTokensInUrl(log)),
+                level == brls::LogLevel::LOG_ERROR);
         });
     brls::Logger::info("Log file initialized: {}", getLogPath());
 }
 
 void closeLogFile() {
     if (g_logFile) {
+        ::vitaplex::logfile::stop();
         std::fclose(g_logFile);
         g_logFile = nullptr;
     }

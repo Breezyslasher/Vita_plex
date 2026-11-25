@@ -1,43 +1,46 @@
 /**
- * VitaPlex - background audio experiment, Vita backend
+ * VitaPlex - music after leaving the app, Vita backend
  *
- * See utils/background_audio.hpp for what is being tried and why. This file is
- * instrumentation as much as it is a feature: every call into the system is
- * logged under "[bgaudio]" with its return code, and a watcher thread records
- * whether this process keeps running once the user leaves it, so one test run
- * on a console answers the question from the log.
+ * See utils/background_audio.hpp for what it does. A watcher thread reads the
+ * system's events for the app: leaving it with PS, by the setting, and the
+ * system asking it to quit, as it does to start a game, hand the queue to
+ * SceShell; it also keeps the quick menu's Music row up to date. What it does
+ * goes to the log under "[bgaudio]", with the system's return codes.
  */
 
 #include "utils/background_audio.hpp"
 
+#include "activity/player_activity.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/music_controller.hpp"
 #include "app/music_queue.hpp"
 #include "app/plex_client.hpp"
-#include "platform/paths.hpp"
 #include "platform/platform.hpp"
 #include "player/mpv_player.hpp"
+#include "app/application.hpp"
 #include "utils/http_client.hpp"
+#include "utils/now_playing.hpp"
+#include "utils/shell_companion_psv.hpp"
 
 #include <borealis.hpp>
 
+#include <psp2/io/dirent.h>
+#include <psp2/io/stat.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
-#include <psp2/net/netctl.h>
 #include <psp2/power.h>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "handover.h"
+#include "mp3_frames.h"
+#include "sc_cover.h"
+#include "shell_companion.h"
 
 #include "ShellAudio.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cctype>
-#include <cerrno>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -56,9 +59,8 @@ int sceAppMgrReceiveEventNum(int* eventNum);
 int sceAppMgrReceiveEvent(void* event);
 int sceAppMgrAcquireBgmPortWithPriority(int priority);
 int sceAppMgrReleaseBgmPort(void);
-int sceAppMgrAppParamGetString(int pid, int param, char* string, SceSize length);
-// patches/psv_platform.cpp: how many times the UI loop has run.
-unsigned vitaplex_main_loop_ticks(void);
+// patches/psv_platform.cpp's: the main loop's pace while VitaPlex is left.
+void vitaplex_set_app_away(bool away);
 }
 
 namespace vitaplex {
@@ -76,17 +78,12 @@ static_assert(sizeof(AppEvent) == 0x40, "SceAppMgrEvent is 0x40 bytes");
 
 constexpr int kEventActivate    = 0x10000001;
 constexpr int kEventDeactivate  = 0x10000002;
-constexpr int kEventResume      = 0x10000003;
 constexpr int kEventRequestQuit = 0x20000001;
 
-// The priorities ElevenMPV-A asks for: 0x81 while it decodes in its own
-// process, 0x80 while SceShell does the decoding.
-constexpr int kPortForApp   = 0x81;
-constexpr int kPortForShell = 0x80;
+// The priority ElevenMPV-A asks for while it decodes in its own process.
+constexpr int kPortForApp = 0x81;
 
-constexpr SceUInt kTickUs      = 250 * 1000;
-constexpr int     kBeatTicks   = 16;           // a heartbeat line every 4 s away
-constexpr SceInt64 kGapUs      = 3 * 1000000;  // a tick this late was not scheduled
+constexpr SceUInt kTickUs = 250 * 1000;
 // How long the normal way out gets after the system asks the app to quit,
 // before the watcher ends the process itself. Short while the UI thread has
 // not even taken the request, since then it is stuck. Longer once it has, so
@@ -95,9 +92,6 @@ constexpr SceInt64 kGapUs      = 3 * 1000000;  // a tick this late was not sched
 // device log (280b1532) had the whole of it take 1.2 s, the write at 1.14 s.
 constexpr SceInt64 kQuitGraceUs    = 2 * 1000000;
 constexpr SceInt64 kQuitShutdownUs = 10 * 1000000;
-
-// Formats SceShell decodes, as ElevenMPV-A hands them to it.
-const char* const kShellExts[] = {"mp3", "m4a", "aac", "wav", "at9"};
 
 std::string hex(int v) {
     char b[16];
@@ -123,18 +117,26 @@ const char* stateName(MpvPlayerState s) {
     }
 }
 
+std::string describeMpv(const MpvPlayer::Snapshot& s) {
+    if (!s.initialized) return "mpv not running";
+    char b[96];
+    std::snprintf(b, sizeof(b), "mpv %s at %.1fs%s", stateName(s.state), s.position,
+                  s.audioOnly ? "" : " (video mode)");
+    return b;
+}
+
+bool mpvPlays(const MpvPlayer::Snapshot& s) {
+    return s.initialized && (s.state == MpvPlayerState::PLAYING ||
+                             s.state == MpvPlayerState::BUFFERING ||
+                             s.state == MpvPlayerState::LOADING);
+}
+
 std::string lowerExt(const std::string& path) {
     const std::size_t dot = path.rfind('.');
     if (dot == std::string::npos || path.find('/', dot) != std::string::npos) return {};
     std::string e = path.substr(dot + 1);
     for (auto& c : e) c = (char)std::tolower((unsigned char)c);
     return e;
-}
-
-bool shellDecodes(const std::string& ext) {
-    for (const char* e : kShellExts)
-        if (ext == e) return true;
-    return false;
 }
 
 bool fileExists(const std::string& path) {
@@ -144,191 +146,244 @@ bool fileExists(const std::string& path) {
     return true;
 }
 
-std::string baseName(const std::string& path) {
-    const std::size_t slash = path.find_last_of("/:");
-    return slash == std::string::npos ? path : path.substr(slash + 1);
-}
-
-// "a", "a and b", "a, b and c".
-std::string joinNames(const std::vector<std::string>& names) {
-    std::string s;
-    for (std::size_t i = 0; i < names.size(); i++) {
-        if (i > 0) s += i + 1 == names.size() ? " and " : ", ";
-        s += names[i];
-    }
-    return s;
-}
-
-// The title id this process runs under, from its param.sfo: VitaPlex and
-// VitaPlex BG are one eboot in two packages.
-std::string runningTitleId() {
-    char id[16] = {};   // param 12, the title id, needs at least 10 bytes
-    const int rc = sceAppMgrAppParamGetString(0, 12, id, sizeof(id));
-    if (rc < 0) {
-        brls::Logger::error("[bgaudio] could not read the title id: {}", hex(rc));
-        return {};
-    }
-    return id;
-}
-
 std::atomic<bool> g_keepPlaying{false};
-// Whether anything has asked for the watcher's reports: background playback,
-// or a system player test. The watcher also runs without, but then only to
-// answer the system's request to quit (see watcherMain).
-std::atomic<bool> g_watcherReports{false};
+std::atomic<int> g_outsideMusic{kOutsideStops};   // the setting (OutsideMusic)
+std::atomic<bool> g_offlineSkip{true};            // the setting (setOfflineSkip)
+
+// ── Handing the music over (see "Handing the music to SceShell" below) ───
+// When the queue was handed over, on the way out; 0 before. Past
+// kQuitShutdownUs after it the watcher ends the process itself.
+std::atomic<SceInt64> g_handedOverAt{0};
+// The last press of PS (the power callback): a deactivation within 2 s of
+// one is the user leaving, as BG Tests 20 and 21 took it.
+std::atomic<SceInt64> g_psPressUs{0};
+// The queue SceShell carries on, as takeBack read it for the player it set
+// up, which takes the music back once ready (takeBackNow): the queue's
+// "written", its songs' ratingKeys, and whether it repeats all.
+struct ShellQueue {
+    double written = -1;
+    std::vector<std::string> keys;
+    bool repeatAll = false;
+};
+std::mutex g_shellQueueMutex;
+ShellQueue g_shellQueue;
+bool handOver(const char* why);
+void dropReadySong();
+
+// ── The quick menu's Music row (shell_companion.h) ───────────────────────
+// What MusicController publishes, which now_playing.cpp hands here on the
+// Vita, for the watcher to put on the row through vita-shell-companion's
+// plugin. The row is this process's while it has music to show; it goes to
+// SceShell with the queue, and back to the system as the app goes.
+std::atomic<bool> g_qmEnabled{false};   // the setting
+std::atomic<bool> g_qmActive{false};    // the plugin has the row for this process
+std::atomic<bool> g_qmGone{false};      // handed over or quitting: not taken again
+// Left for the LiveArea or another app, and not in front again since.
+std::atomic<bool> g_away{false};
+// Held for each quickMenuTick, and as the queue goes to SceShell, so that no
+// heartbeat (SC_CMD_ROW_ACTIVATE) of this process's follows SC_CMD_MUSIC_PLAY:
+// the plugin leaves its music to any process that takes the row.
+std::mutex g_qmTickMutex;
+std::mutex g_qmMutex;
+struct QmSong {
+    std::string title, artist, album;
+    std::string artUrl;    // its cover (now_playing.hpp), "" for none
+    bool playing = false;
+    bool wanted = false;   // published and not cleared since
+    unsigned serial = 0;   // one more each time there is new text to send
+};
+QmSong g_qmSong;   // under g_qmMutex
+
+// ── The song's cover on the row (SC_CMD_ROW_ART) ─────────────────────────
+// Made by a thread of its own, as the watcher asks for it: Plex's thumbnail
+// through its transcoder at twice the size the row shows, or a download's
+// local copy, made into the PNG the plugin loads (sc_cover.h). The watcher
+// sends its serial once written.
+std::mutex g_qmArtMutex;
+std::string g_qmArtWanted;     // the cover asked for, "" for none
+std::string g_qmArtDone;       // the last one made, or that failed ...
+uint32_t g_qmArtSerial = 0;    // ... and its serial, 0 if it failed
+SceUID g_qmArtSema = -1;       // signalled as g_qmArtWanted changes
+
+// Plex's transcoder asked for another size: its width and height.
+std::string withThumbSize(std::string url, int size) {
+    for (const char* key : {"width=", "height="}) {
+        size_t at = url.find(std::string("&") + key);
+        if (at == std::string::npos) at = url.find(std::string("?") + key);
+        if (at == std::string::npos) continue;
+        at += 1 + std::strlen(key);
+        const size_t end = url.find('&', at);
+        url.replace(at, end == std::string::npos ? std::string::npos : end - at,
+                    std::to_string(size));
+    }
+    return url;
+}
+
+// The cover at source written for serial; "" when done, else what failed.
+std::string makeQmArt(const std::string& source, uint32_t serial) {
+    std::string bytes;
+    if (source.rfind("http://", 0) == 0 || source.rfind("https://", 0) == 0) {
+        HttpRequest req;
+        req.url = withThumbSize(source, SC_ART_SIZE * 2);
+        req.timeout = 15;
+        HttpClient client;
+        HttpResponse r = client.request(req);
+        if (!r.success) return "not fetched: HTTP " + std::to_string(r.statusCode) + " " + r.error;
+        bytes.swap(r.body);
+    } else {
+        FILE* f = std::fopen(source.c_str(), "rb");
+        if (!f) return "its file would not open";
+        char buf[16384];
+        for (size_t n; (n = std::fread(buf, 1, sizeof(buf), f)) > 0;) bytes.append(buf, n);
+        std::fclose(f);
+    }
+    char why[160];
+    return scCoverWrite(bytes.data(), bytes.size(), serial, why, sizeof(why)) == 0 ? "" : why;
+}
+
+int qmArtMain(SceSize, void*) {
+    uint32_t last = 0;   // the serial of the last cover made
+    for (;;) {
+        sceKernelWaitSema(g_qmArtSema, 1, nullptr);
+        std::string source;
+        {
+            std::lock_guard<std::mutex> lock(g_qmArtMutex);
+            source = g_qmArtWanted;
+            if (source == g_qmArtDone) continue;
+        }
+        uint32_t serial = 0;
+        if (!source.empty()) {
+            const SceUInt64 start = sceKernelGetSystemTimeWide();
+            serial = scCoverNextSerial(last, start);
+            const std::string failed = makeQmArt(source, serial);
+            if (failed.empty()) {
+                last = serial;
+            } else {
+                brls::Logger::info("[bgaudio] quick menu: cover {}", failed);
+                serial = 0;
+            }
+        }
+        std::lock_guard<std::mutex> lock(g_qmArtMutex);
+        g_qmArtDone = source;
+        g_qmArtSerial = serial;
+    }
+    return 0;
+}
+
+// From the watcher: the cover for source, made by now or asked for. true
+// with its serial (0 for none) once made, false while it is being made.
+bool qmArtFor(const std::string& source, uint32_t* serial) {
+    if (source.empty()) {
+        *serial = 0;
+        return true;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_qmArtMutex);
+        if (g_qmArtDone == source) {
+            *serial = g_qmArtSerial;
+            return true;
+        }
+        if (g_qmArtWanted == source) return false;
+        g_qmArtWanted = source;
+    }
+    static bool started = false;
+    if (!started) {
+        started = true;
+        g_qmArtSema = sceKernelCreateSema("VitaPlexQmArt", 0, 0, 1, nullptr);
+        const SceUID thid =
+            g_qmArtSema >= 0 ? sceKernelCreateThread("VitaPlexQmArt", qmArtMain, 0x10000100,
+                                                     0x10000, 0, 0, nullptr)
+                             : g_qmArtSema;
+        const int rc = thid >= 0 ? sceKernelStartThread(thid, 0, nullptr) : thid;
+        if (rc < 0) brls::Logger::error("[bgaudio] quick menu: no cover thread: {}", hex(rc));
+    }
+    sceKernelSignalSema(g_qmArtSema, 1);
+    return false;
+}
+
+// Gives the row back to the system for good, from any thread: the music
+// handed to SceShell, whose plugin takes the row itself as it plays it, or
+// the app going. The plugin, left on, would keep putting presses into a
+// pipe no process reads, and SceShell waits once that pipe is full.
+void quickMenuRelease(const char* why) {
+    g_qmGone = true;
+    if (!g_qmActive.exchange(false)) return;
+    brls::Logger::info("[bgaudio] quick menu: row given back ({}): {}", why, hex(scRowRelease()));
+}
 
 // ── The BGM port ─────────────────────────────────────────────────────────
-// Held at one priority at a time: the app's while mpv plays, the shell's
-// while a system player test runs. 0 = not held.
+// Held at kPortForApp while mpv plays music that is to go on after the app
+// is left, as ElevenMPV-A holds it for its own decoders.
 std::mutex g_portMutex;
-int g_portPriority = 0;
+bool g_portHeld = false;   // under g_portMutex
 
-void holdPort(int priority, const char* why) {
+void holdPort(const char* why) {
     std::lock_guard<std::mutex> lock(g_portMutex);
-    if (g_portPriority == priority) return;
-    if (g_portPriority != 0) {
-        const int rc = sceAppMgrReleaseBgmPort();
-        brls::Logger::info("[bgaudio] BGM port: release {:#x} to change priority: {}",
-                           g_portPriority, hex(rc));
-    }
-    const int rc = sceAppMgrAcquireBgmPortWithPriority(priority);
-    brls::Logger::info("[bgaudio] BGM port: acquire at {:#x} for {}: {}", priority, why, hex(rc));
-    g_portPriority = rc >= 0 ? priority : 0;
+    if (g_portHeld) return;
+    const int rc = sceAppMgrAcquireBgmPortWithPriority(kPortForApp);
+    brls::Logger::info("[bgaudio] BGM port: acquire for {}: {}", why, hex(rc));
+    g_portHeld = rc >= 0;
 }
 
-// Releases only if held at `priority`, or at any priority when it is 0.
-void releasePort(int priority, const char* why) {
+void releasePort(const char* why) {
     std::lock_guard<std::mutex> lock(g_portMutex);
-    if (g_portPriority == 0 || (priority != 0 && g_portPriority != priority)) return;
+    if (!g_portHeld) return;
     const int rc = sceAppMgrReleaseBgmPort();
-    brls::Logger::info("[bgaudio] BGM port: release {:#x} ({}): {}", g_portPriority, why, hex(rc));
-    g_portPriority = 0;
+    brls::Logger::info("[bgaudio] BGM port: release ({}): {}", why, hex(rc));
+    g_portHeld = false;
 }
-
-int portPriority() {
-    std::lock_guard<std::mutex> lock(g_portMutex);
-    return g_portPriority;
-}
-
-// ── SceShell ─────────────────────────────────────────────────────────────
-// One conversation with the shell at a time. g_shellBusy covers a whole test
-// run so a second tap is turned away rather than queued behind the first.
-std::mutex g_shellMutex;
-std::atomic<bool> g_shellBusy{false};
-bool g_shellInit = false;     // guarded by g_shellMutex
-bool g_shellPlaying = false;  // guarded by g_shellMutex; a test left it playing
-int g_shellService = -1;      // guarded by g_shellMutex; the one g_shellInit refers to
-
-// Which service the next test uses: 0-4 the music player's client types,
-// kServiceAppBgm the application-BGM service. See the SceShell tests below.
-constexpr int kServiceAppBgm = 5;
-std::atomic<int> g_service{0};
-// Guarded by g_shellMutex: the last source seen playing, one for the music
-// player (all five client types share its one loaded file) and one for the
-// application-BGM service, which remembers its own.
-std::string g_shellLastSrc[2];
-int lastSrcSlot(int service) { return service == kServiceAppBgm ? 1 : 0; }
 
 // ── The watcher ──────────────────────────────────────────────────────────
-std::atomic<bool> g_watcherStarted{false};
-std::atomic<int> g_loads{0};
 
-// Only the watcher thread touches these.
-bool     g_away = false;
-SceInt64 g_awayAt = 0;
-int      g_awayTicks = 0;
-SceInt64 g_awayLongestGapUs = 0;
-unsigned g_awayUiTicks = 0;
-bool     g_awayPlaying = false;
-double   g_awayPos = 0.0;
-int      g_awayLoads = 0;
-
-std::string describeMpv(const MpvPlayer::Snapshot& s) {
-    if (!s.initialized) return "mpv not running";
-    char b[96];
-    std::snprintf(b, sizeof(b), "mpv %s at %.1fs, output %d Hz%s", stateName(s.state), s.position,
-                  s.outSampleRate, s.audioOnly ? "" : " (video mode)");
-    return b;
-}
-
-// ", system player …" for the watcher's lines, or empty. Defined with the
-// SceShell tests below; never waits for the shell lock.
-std::string shellStatusLine();
-
-// gapUs is how late the tick that read the event was. If the system froze the
-// process the moment the user left, the event is only read on the way back,
-// with the whole absence in that gap, so the departure is dated back to it.
-void onDeactivate(SceInt64 now, SceInt64 gapUs) {
-    const bool heldFirst = gapUs > kGapUs;
-    const MpvPlayer::Snapshot s = MpvPlayer::getInstance().snapshot();
+// Left for the LiveArea or another app. A video pauses: it plays to nobody
+// once the app is not in front. Music stops too, by the setting; or, by the
+// other, goes to SceShell as VitaPlex closes, if it was PS that left it. On
+// the UI thread, which owns the player and the queue, and runs on in a
+// non-game app sent away (log a93baa71).
+void onDeactivate(SceInt64 now) {
+    // Its screen unseen meanwhile, the main loop goes a few times a second
+    // (patches/psv_platform.cpp), the queue going on all the same: it went
+    // round 96 times in 4 s away (log 4e8bcb05).
+    vitaplex_set_app_away(true);
     g_away = true;
-    g_awayAt = heldFirst ? now - gapUs : now;
-    g_awayTicks = 0;
-    g_awayLongestGapUs = heldFirst ? gapUs : 0;
-    g_awayUiTicks = vitaplex_main_loop_ticks();
-    g_awayPlaying = s.initialized && (s.state == MpvPlayerState::PLAYING ||
-                                      s.state == MpvPlayerState::BUFFERING);
-    g_awayPos = s.position;
-    g_awayLoads = g_loads.load();
-    brls::Logger::info("[bgaudio] deactivated (left for the LiveArea or another app){}: {}, "
-                       "BGM port {:#x}, keep playing {}{}",
-                       heldFirst ? ", read only after the process was held" : "",
-                       describeMpv(s), portPriority(), g_keepPlaying.load(), shellStatusLine());
-}
-
-void onActivate(SceInt64 now) {
-    if (!g_away) {
-        brls::Logger::info("[bgaudio] activated");
+    // Never waiting on the player: the watcher is what answers the system's
+    // request to quit, and a UI thread stuck in libmpv holding the pump lock
+    // kept it from that, so that no app would open (build 2100, log
+    // e2a33297: the music froze as PS was pressed).
+    MpvPlayer::Snapshot s;
+    if (!MpvPlayer::getInstance().trySnapshot(&s)) {
+        brls::Logger::warning("[bgaudio] deactivated (left for the LiveArea or another app): "
+                              "the player is busy (its pump held), so left as it is");
         return;
     }
-    g_away = false;
-    const MpvPlayer::Snapshot s = MpvPlayer::getInstance().snapshot();
-    const double awaySec = (double)(now - g_awayAt) / 1e6;
-    const double ranSec = g_awayTicks * (kTickUs / 1e6);
-    const int ranPct = awaySec > 0.5 ? (int)std::min(100.0, 100.0 * ranSec / awaySec) : 100;
-    const unsigned uiTicks = vitaplex_main_loop_ticks() - g_awayUiTicks;
-    const int loads = g_loads.load() - g_awayLoads;
-    const double moved = s.position - g_awayPos;
-
-    brls::Logger::info("[bgaudio] activated after {:.1f}s away: watcher ran {:.1f}s of it ({}%), "
-                       "longest stall {:.1f}s, UI loop ran {} times, {} new file(s) loaded, "
-                       "{}, moved {:+.1f}s{}",
-                       awaySec, ranSec, ranPct, g_awayLongestGapUs / 1e6, uiTicks, loads,
-                       describeMpv(s), moved, shellStatusLine());
-
-    // The same verdict on screen, so a test does not need the log to be read.
-    char music[80];
-    if (!g_awayPlaying)
-        std::snprintf(music, sizeof(music), "no music was playing when you left");
-    else if (loads > 0)
-        std::snprintf(music, sizeof(music), "the queue moved on %d track(s)", loads);
-    else
-        std::snprintf(music, sizeof(music), "the track moved %.0fs", moved);
-    // By rate, not by any tick at all: a UI that stalls just after leaving
-    // still gets a few frames in first. Running, it does 30 to 60 a second.
-    const bool uiRan = uiTicks >= 2.0 * awaySec;
-    char b[200];
-    if (ranPct >= 90) {
-        std::snprintf(b, sizeof(b), "Away %d:%02d. VitaPlex kept running (UI %s); %s",
-                      (int)awaySec / 60, (int)awaySec % 60, uiRan ? "too" : "stopped",
-                      music);
-    } else {
-        std::snprintf(b, sizeof(b), "Away %d:%02d. VitaPlex was stopped for %d%% of it; %s",
-                      (int)awaySec / 60, (int)awaySec % 60, 100 - ranPct, music);
+    brls::Logger::info("[bgaudio] deactivated (left for the LiveArea or another app): {}",
+                       describeMpv(s));
+    if (!mpvPlays(s)) return;
+    if (!s.audioOnly) {
+        brls::sync([]() {
+            brls::Logger::info("[bgaudio] the video paused, with VitaPlex left");
+            MpvPlayer::getInstance().pause();
+        });
+    } else if (g_outsideMusic == kOutsideStops) {
+        brls::sync([]() {
+            brls::Logger::info("[bgaudio] the music paused, with VitaPlex left");
+            MusicController::getInstance().playPause(false);
+        });
+    } else if (g_outsideMusic == kOutsideHandsOver && now - g_psPressUs.load() < 2000000) {
+        // SceShell takes the queue over and VitaPlex goes, so that a game
+        // started next finds nothing to close.
+        brls::sync([]() {
+            if (handOver("left with PS")) brls::Application::quit();
+        });
     }
-    const std::string msg = b;
-    brls::sync([msg]() { brls::Application::notify(msg); });
 }
 
-void heartbeat(SceInt64 now) {
-    const MpvPlayer::Snapshot s = MpvPlayer::getInstance().snapshot();
-    brls::Logger::info("[bgaudio] away {:.0f}s: {}, UI loop +{}, {} new file(s){}",
-                       (now - g_awayAt) / 1e6, describeMpv(s),
-                       vitaplex_main_loop_ticks() - g_awayUiTicks, g_loads.load() - g_awayLoads,
-                       shellStatusLine());
+// In front again: the main loop at its own pace.
+void onActivate() {
+    vitaplex_set_app_away(false);
+    g_away = false;
+    brls::Logger::info("[bgaudio] activated (in front again)");
 }
-
-void stopShellLocked(const char* why);
 
 // When the system asked the app to quit; 0 until it has. Watcher thread only.
 SceInt64 g_quitAskedAt = 0;
@@ -338,14 +393,8 @@ std::atomic<bool> g_quitUnderway{false};
 
 void onRequestQuit(SceInt64 now) {
     brls::Logger::info("[bgaudio] the system asked the app to quit; quitting");
-    // A file the system player was given would otherwise play on after the app
-    // is gone, with nothing left to stop it. Not waited for if a test is mid-run
-    // (see shellStatusLine); the process is going either way.
-    {
-        std::unique_lock<std::mutex> lock(g_shellMutex, std::try_to_lock);
-        if (lock.owns_lock()) stopShellLocked("app quitting");
-    }
-    releasePort(0, "app quitting");
+    quickMenuRelease("the app is going");
+    releasePort("app quitting");
 
     // And then actually quit. The system waits for this process to end before
     // it starts the app the user opened, and this used to stop at the line
@@ -358,95 +407,47 @@ void onRequestQuit(SceInt64 now) {
     // The normal way out first, which saves the settings. watcherMain ends the
     // process itself if that has not happened in time (kQuitGraceUs), since
     // the UI thread may be stuck in a request to a server it cannot reach.
+    // Music playing goes to SceShell on the way, by the setting: this is what
+    // a game started over VitaPlex brings.
     if (g_quitAskedAt == 0) {
         g_quitAskedAt = now;
         brls::sync([]() {
             g_quitUnderway = true;
+            if (!handOver("the system asked VitaPlex to quit")) dropReadySong();
             brls::Application::quit();
         });
     }
 }
 
-// True if a deactivate or activate event was among them. With quitOnly, the
-// quit request is the only event acted on; the rest are read and dropped.
-bool drainAppEvents(SceInt64 now, SceInt64 gapUs, bool quitOnly) {
+void drainAppEvents(SceInt64 now) {
     int n = 0;
     const int rc = sceAppMgrReceiveEventNum(&n);
-    if (rc < 0 || n <= 0) return false;
-    bool focus = false;
+    if (rc < 0 || n <= 0) return;
     for (int i = 0; i < n; i++) {
         AppEvent ev;
         std::memset(&ev, 0, sizeof(ev));
         if (sceAppMgrReceiveEvent(&ev) < 0) break;
-        if (quitOnly && ev.event != kEventRequestQuit) continue;
-        switch (ev.event) {
-            case kEventDeactivate:  onDeactivate(now, gapUs); focus = true; break;
-            case kEventActivate:    onActivate(now); focus = true; break;
-            case kEventResume:      brls::Logger::info("[bgaudio] app event: resume"); break;
-            case kEventRequestQuit: onRequestQuit(now); break;
-            default:
-                brls::Logger::info("[bgaudio] app event {}", hex(ev.event));
-                break;
-        }
+        if (ev.event == kEventDeactivate) onDeactivate(now);
+        else if (ev.event == kEventActivate) onActivate();
+        else if (ev.event == kEventRequestQuit) onRequestQuit(now);
     }
-    return focus;
-}
-
-// Where VitaPlex's own player was when PS was pressed, just before the
-// system held the process. Only the watcher thread, which runs the power
-// callback, touches these.
-MpvPlayer::Snapshot g_atPs;
-bool g_haveAtPs = false;
-
-// Whether VitaPlex has the system player going: a test running, or a file a
-// test left playing. Never waits for the shell lock.
-bool shellInUse() {
-    if (g_shellBusy) return true;
-    std::unique_lock<std::mutex> lock(g_shellMutex, std::try_to_lock);
-    return !lock.owns_lock() || g_shellPlaying;
-}
-
-// Back from being held with no deactivate event, as a game such as VitaPlex
-// is: says so on screen, with where its own player was when PS was pressed
-// and where it is now, so whether VitaPlex's music went on needs no log. The
-// system player plays on by itself, so what it had is named too: music heard
-// meanwhile may have been that.
-void reportHold(SceInt64 gapUs) {
-    const MpvPlayer::Snapshot now = MpvPlayer::getInstance().snapshot();
-    const bool wasPlaying = g_haveAtPs && g_atPs.initialized &&
-                            (g_atPs.state == MpvPlayerState::PLAYING ||
-                             g_atPs.state == MpvPlayerState::BUFFERING);
-    const bool shell = shellInUse();
-    const unsigned beforeMs = (unsigned)(std::max(0.0, g_atPs.position) * 1000);
-    const unsigned nowMs = (unsigned)(std::max(0.0, now.position) * 1000);
-    brls::Logger::info("[bgaudio] held {:.1f}s with no deactivate event: {} when PS was pressed, {} "
-                       "now; system player in use by VitaPlex: {}",
-                       gapUs / 1e6, g_haveAtPs ? describeMpv(g_atPs) : std::string("no PS press seen"),
-                       describeMpv(now), shell);
-
-    const int secs = (int)(gapUs / 1000000);
-    std::string msg = "VitaPlex was frozen for " + std::to_string(secs) + "s while you were away";
-    if (!wasPlaying)
-        msg += ".";
-    else if (nowMs < beforeMs + 1000)
-        msg += ", so its own music stopped at " + mmss(beforeMs) + ".";
-    else
-        msg += ", yet its music moved from " + mmss(beforeMs) + " to " + mmss(nowMs) + ".";
-    if (shell) msg += " The system player was playing for a test; it plays on by itself.";
-    g_haveAtPs = false;
-    brls::sync([msg]() { brls::Application::notify(msg); });
 }
 
 int powerCallback(int, int, int powerInfo, void*) {
-    if (!g_watcherReports) return 0;   // running only to answer a quit
+    // Each logged: build 2047 dropped it, and log 7c38c1fa could not say
+    // whether the power button or PS was pressed as its log stopped.
     std::string what;
-    const struct { unsigned bit; const char* name; } kBits[] = {
+    const struct {
+        unsigned bit;
+        const char* name;
+    } kBits[] = {
         {SCE_POWER_CB_APP_SUSPEND, "app suspend"},
         {SCE_POWER_CB_APP_RESUME, "app resume"},
         {SCE_POWER_CB_APP_RESUMING, "app resuming"},
         {SCE_POWER_CB_SYSTEM_SUSPEND, "system suspend"},
         {SCE_POWER_CB_SYSTEM_RESUME, "system resume"},
         {SCE_POWER_CB_BUTTON_PS_PRESS, "PS button"},
+        {SCE_POWER_CB_BUTTON_PS_HOLD, "PS held (quick menu)"},
         {SCE_POWER_CB_BUTTON_POWER_PRESS, "power button"},
     };
     for (const auto& k : kBits) {
@@ -457,39 +458,118 @@ int powerCallback(int, int, int powerInfo, void*) {
     }
     brls::Logger::info("[bgaudio] power callback {}{}{}", hex(powerInfo), what.empty() ? "" : ": ",
                        what);
-    if ((unsigned)powerInfo & SCE_POWER_CB_BUTTON_PS_PRESS) {
-        g_atPs = MpvPlayer::getInstance().snapshot();
-        g_haveAtPs = true;
-    }
+    if ((unsigned)powerInfo & SCE_POWER_CB_BUTTON_PS_PRESS)
+        g_psPressUs = sceKernelGetSystemTimeWide();
+    // Back from standby: the main loop at its own pace, should the system
+    // send no activate event for it (no log has VitaPlex in front through a
+    // standby). One that is still away then draws at its pace until left
+    // again: wasted, never slow.
+    if ((unsigned)powerInfo & (SCE_POWER_CB_APP_RESUME | SCE_POWER_CB_APP_RESUMING))
+        vitaplex_set_app_away(false);
     return 0;
+}
+
+// The quick menu's row, from the watcher alone (but for quickMenuRelease):
+// the plugin loaded and its pipes opened the first time there is music to
+// show, tried again at most every 30 s while that fails; the row taken while
+// MusicController has music published and given back once it clears it; the
+// song sent as it changes; and the row's presses passed to MusicController
+// the way the OS media controls' are (now_playing.hpp).
+void quickMenuTick(SceInt64 now) {
+    static SceInt64 lastTry = 0, lastBeat = 0;
+    static unsigned sentSerial = 0;
+    static int sentPlaying = -1;
+    static int64_t sentArt = -1;   // the cover's serial sent, -1 for none yet
+    std::lock_guard<std::mutex> tickLock(g_qmTickMutex);
+    if (!g_qmEnabled || g_qmGone) return;
+    QmSong song;
+    {
+        std::lock_guard<std::mutex> lock(g_qmMutex);
+        song = g_qmSong;
+    }
+    const bool wanted = song.wanted && g_handedOverAt == 0;
+    if (!scIsOpen()) {
+        if (!wanted || (lastTry != 0 && now - lastTry < 30 * 1000000LL)) return;
+        lastTry = now;
+        if (!shellcomp::open("[bgaudio] quick menu")) return;
+    }
+    if (wanted && !g_qmActive) {
+        // A press left from whoever had the row before is not one for this.
+        while (scPoll() != SC_NONE) {
+        }
+        const int rc = scRowActivate();
+        if (rc < 0) {
+            brls::Logger::info("[bgaudio] quick menu: row not taken: {}", hex(rc));
+            return;
+        }
+        g_qmActive = true;
+        sentSerial = song.serial - 1;   // so the song goes again
+        sentPlaying = -1;
+        sentArt = -1;
+        lastBeat = now;
+    } else if (!wanted && g_qmActive) {
+        g_qmActive = false;
+        scRowRelease();
+        return;
+    }
+    if (!g_qmActive) return;
+    // The plugin gives the row back by itself once these stop.
+    if (now - lastBeat >= 1000000) {
+        lastBeat = now;
+        scRowActivate();
+    }
+    if (song.serial != sentSerial && scRowSong(song.title.c_str(), song.artist.c_str(),
+                                               song.album.c_str()) >= 0)
+        sentSerial = song.serial;
+    const int playing = song.playing ? 1 : 0;
+    if (playing != sentPlaying && scRowPlaying(playing) >= 0) sentPlaying = playing;
+    // The cover: the last one stays on the row while the next is made.
+    uint32_t art = 0;
+    if (qmArtFor(song.artUrl, &art) && (int64_t)art != sentArt && scRowArt(art) >= 0)
+        sentArt = art;
+    for (int press; (press = scPoll()) != SC_NONE;) {
+        const nowplaying::Transport t = press == SC_NEXT       ? nowplaying::Transport::Next
+                                        : press == SC_PREVIOUS ? nowplaying::Transport::Previous
+                                                               : nowplaying::Transport::Toggle;
+        brls::sync([t]() { nowplaying::dispatchTransport(t); });
+    }
+}
+
+// The player's pump held for long, as the watcher sees it each tick: logged
+// once as it passes kPlayerStuckUs and again as it ends, with whether VitaPlex
+// was away. A UI thread stuck in libmpv shows here, the music frozen.
+constexpr SceInt64 kPlayerStuckUs = 3 * 1000000;
+
+void watchPlayer(SceInt64 now) {
+    static SceInt64 lastFree = 0;
+    static bool reported = false;
+    MpvPlayer::Snapshot s;
+    if (MpvPlayer::getInstance().trySnapshot(&s)) {
+        if (reported)
+            brls::Logger::info("[bgaudio] the player answers again after {:.1f}s: {}",
+                               (now - lastFree) / 1e6, describeMpv(s));
+        lastFree = now;
+        reported = false;
+        return;
+    }
+    if (lastFree == 0) lastFree = now;
+    if (!reported && now - lastFree > kPlayerStuckUs) {
+        reported = true;
+        brls::Logger::warning("[bgaudio] the player's pump held for {:.1f}s{}: the UI thread "
+                              "is stuck in it",
+                              (now - lastFree) / 1e6, g_away ? ", VitaPlex away" : "");
+    }
 }
 
 int watcherMain(SceSize, void*) {
     const SceUID cb = sceKernelCreateCallback("VitaPlexBgAudioPower", 0, powerCallback, nullptr);
     const int rcCb = cb >= 0 ? scePowerRegisterCallback(cb) : cb;
-    brls::Logger::info("[bgaudio] watcher running; power callback {}", hex(rcCb));
-
-    SceInt64 last = sceKernelGetSystemTimeWide();
+    if (rcCb < 0) brls::Logger::error("[bgaudio] no power callback: {}", hex(rcCb));
     for (;;) {
         // The CB variant is what runs the power callback on this thread.
         sceKernelDelayThreadCB(kTickUs);
         const SceInt64 now = sceKernelGetSystemTimeWide();
-        const SceInt64 gap = now - last;
-        last = now;
-        // With nothing asking for reports, this thread still runs, but only to
-        // answer the system's request to quit: the non-game package hangs the
-        // console if that goes unanswered (see onRequestQuit), whatever the
-        // background playback setting.
-        const bool watching = g_watcherReports;
-        const bool held = gap > kGapUs;
-        if (held && watching) {
-            // Nothing in this loop waits for long, so a tick this late means the
-            // thread was not scheduled at all: the process was held, or the
-            // console slept.
-            brls::Logger::info("[bgaudio] watcher did not run for {:.1f}s", gap / 1e6);
-            if (g_away && gap > g_awayLongestGapUs) g_awayLongestGapUs = gap;
-        }
-        const bool focusEvent = drainAppEvents(now, gap, !watching);
+        drainAppEvents(now);
         const bool underway = g_quitUnderway;
         if (g_quitAskedAt != 0 &&
             now - g_quitAskedAt > (underway ? kQuitShutdownUs : kQuitGraceUs)) {
@@ -498,447 +578,62 @@ int watcherMain(SceSize, void*) {
                                   (now - g_quitAskedAt) / 1e6,
                                   underway ? "the shutdown did not finish"
                                            : "the UI never took the request");
-            sceKernelExitProcess(0);
+            exitProcess(0);
         }
-        if (!watching) continue;
-        // A game is sent neither event, so without this nothing would say,
-        // on the way back, that it was held.
-        if (held && !g_away && !focusEvent) reportHold(gap);
-        if (g_away) {
-            g_awayTicks++;
-            if (g_awayTicks % kBeatTicks == 0) heartbeat(now);
+        // Handed over and quitting by itself: SceShell has the music.
+        const SceInt64 handedAt = g_handedOverAt;
+        if (handedAt != 0 && now - handedAt > kQuitShutdownUs) {
+            brls::Logger::warning("[bgaudio] still running {:.1f}s after handing the music to "
+                                  "SceShell; ending the process",
+                                  (now - handedAt) / 1e6);
+            exitProcess(0);
         }
+        watchPlayer(now);
+        quickMenuTick(now);
     }
     return 0;
 }
 
-// reports=false starts it only to answer a quit; see g_watcherReports.
-void startWatcher(bool reports = true) {
-    if (reports) g_watcherReports = true;
-    if (g_watcherStarted.exchange(true)) return;
+// The watcher, whatever the settings: it is also what answers the system's
+// request to quit, which the non-game package hangs the console without
+// (onRequestQuit).
+void startWatcher() {
+    static bool started = false;
+    if (started) return;
+    started = true;
     const SceUID thid = sceKernelCreateThread("VitaPlexBgAudio", watcherMain, 0x10000100, 0x10000,
                                               0, 0, nullptr);
     const int rc = thid >= 0 ? sceKernelStartThread(thid, 0, nullptr) : thid;
-    if (rc < 0) {
-        brls::Logger::error("[bgaudio] could not start the watcher: {}", hex(rc));
-        g_watcherStarted = false;
-    }
+    if (rc < 0) brls::Logger::error("[bgaudio] could not start the watcher: {}", hex(rc));
 }
 
-// ── SceShell tests ───────────────────────────────────────────────────────
+// ── Handing the music to SceShell ────────────────────────────────────────
 //
-// The shell has two services that play a file handed to it. The music
-// player service takes a client type when it starts (libShellAudio maps 0-4
-// to 0x8-0x80; ElevenMPV-A always uses 0), and which type the system's own
-// quick menu controls answer to is unknown. The application-BGM service
-// (sceMusicInternalApp*) is a different interface, whose open call is named
-// SetUri. Which of these, if any, lights up the quick menu's Music controls,
-// and which takes a URL, is what the picker in settings is for.
+// The system closes VitaPlex to start a game, and SceShell, which no app or
+// game closes, carries the queue on: vita-shell-companion's plugin plays it
+// there through the shell's music player, which plays on beside games
+// (docs/DESIGN_NOTES.md, BG Tests 10 to 21 and builds 2032 to 2047), and
+// fetches the songs not on the card as they come up. The two talk through the
+// files of the plugin's protocol in ux0:data/VitaPlex (handover.h) and its
+// pipes (shell_companion.h). The app hands the queue over as it goes and
+// takes the music back as it opens again.
 
-struct ShellTry {
-    bool played = false;  // the new source was seen playing
-    bool moved = false;   // the clock moved, whatever it was playing
-    bool maybe = false;   // accepted, but this service reports no clock
-    bool unsure = false;  // something played, but not known to be the new source
-    bool interrupted = false;  // VitaPlex was held part way, so it shows nothing
-    std::string line;
-};
+double systemSecs() { return sceKernelGetSystemTimeWide() / 1e6; }
 
-// How long shellTry watches, and how far it lets a source play.
-struct TryTiming {
-    int maxMs = 12000;      // no clock by then: no sound
-    int minMs = 0;          // watch at least this long, even once it plays
-    unsigned playToMs = 0;  // once playing, let the clock reach this
-};
-
-std::string serviceName(int s) {
-    return s == kServiceAppBgm ? std::string("app background music")
-                               : "music player, type " + std::to_string(s);
+// A file in place of `to`, written beside it: rename does not replace a file
+// on every target (platform_common.cpp).
+bool moveIn(const std::string& from, const std::string& to) {
+    std::remove(to.c_str());
+    return std::rename(from.c_str(), to.c_str()) == 0;
 }
 
-std::string shortName(int s) {
-    return s == kServiceAppBgm ? std::string("app BGM") : "type " + std::to_string(s);
-}
-
-// The BGM port as the system reports it (libShellAudio's
-// shellAudioGetCurrentBGMState: owner, priority, state and two fields nobody
-// has named). Only logged, next to each attempt: it does not depend on the
-// service's own status, which the application-BGM service does not fill in.
-// On a console the call was refused (0x8080201F), so once refused it is
-// logged no more.
-bool g_bgmStateRefused = false;
-
-std::string bgmState() {
-    // 20 bytes by libShellAudio's reading; zeroed room for more in case the
-    // system writes more, and anything it did write there is shown.
-    int st[16];
-    std::memset(st, 0, sizeof(st));
-    const int rc = shellAudioGetCurrentBGMState(reinterpret_cast<SceShellAudioBGMState*>(st));
-    if (rc < 0) g_bgmStateRefused = true;
-    char b[160];
-    std::snprintf(b, sizeof(b), "%s: owner 0x%X, priority 0x%X, 0x%X, state 0x%X, 0x%X",
-                  hex(rc).c_str(), (unsigned)st[0], (unsigned)st[1], (unsigned)st[2],
-                  (unsigned)st[3], (unsigned)st[4]);
-    std::string s = b;
-    for (int i = 5; i < 16; i++) {
-        if (st[i] == 0) continue;
-        std::snprintf(b, sizeof(b), ", [%d] 0x%X", i, (unsigned)st[i]);
-        s += b;
-    }
-    return s;
-}
-
-// All of these must hold g_shellMutex, and act on whichever service
-// g_shellService says is running.
-bool appBgm() { return g_shellService == kServiceAppBgm; }
-
-int shellCommand(int eventId) {
-    return appBgm() ? sceMusicInternalAppSetPlaybackCommand(eventId, 0)
-                    : sceMusicPlayerServiceSendEvent(eventId, 0);
-}
-
-struct ShellClock {
-    int rc = 0;
-    int state = 0;
-    unsigned timeMs = 0;
-};
-
-ShellClock shellClock() {
-    ShellClock c;
-    if (appBgm()) {
-        SceMusicInternalAppResult res;
-        std::memset(&res, 0, sizeof(res));
-        c.rc = sceMusicInternalAppGetLastResult(&res);
-        c.state = res.state;
-        c.timeMs = res.time > 0 ? (unsigned)res.time : 0;
-    } else {
-        SceMusicPlayerServicePlayStatusExtension st;
-        std::memset(&st, 0, sizeof(st));
-        c.rc = sceMusicPlayerServiceGetPlayStatusExtension(&st);
-        c.state = st.currentState;
-        c.timeMs = st.currentTime;
-    }
-    return c;
-}
-
-// The music player service's loaded track length in ms, logged with its
-// title. Must hold g_shellMutex, with the music player service running.
-int playerDuration(const std::string& label) {
-    std::unique_ptr<SceMusicPlayerServiceTrackInfo> info(new SceMusicPlayerServiceTrackInfo());
-    const int rc = sceMusicPlayerServiceGetTrackInfo(info.get());
-    info->title[sizeof(info->title) - 1] = '\0';
-    brls::Logger::info("[bgaudio] system player: {}: track info {}, duration {} ms, title \"{}\"",
-                       label, hex(rc), info->duration, info->title);
-    return rc < 0 ? -1 : info->duration;
-}
-
-// A test holds the shell lock for most of a minute, and a watcher stuck
-// waiting for it would read as the process having been stopped.
-std::string shellStatusLine() {
-    std::unique_lock<std::mutex> lock(g_shellMutex, std::try_to_lock);
-    if (!lock.owns_lock()) return ", system player test running";
-    if (!g_shellPlaying) return {};
-    const ShellClock c = shellClock();
-    char b[80];
-    std::snprintf(b, sizeof(b), ", system player state %d at %s (%s)", c.state,
-                  mmss(c.timeMs).c_str(), hex(c.rc).c_str());
-    return b;
-}
-
-// Must hold g_shellMutex.
-void stopShellLocked(const char* why) {
-    if (!g_shellInit) return;
-    const int rcStop = shellCommand(SCE_MUSIC_EVENTID_STOP);
-    const int rcTerm = appBgm() ? sceMusicInternalAppTerminate() : sceMusicPlayerServiceTerminate();
-    brls::Logger::info("[bgaudio] system player ({}): stop {}, terminate {} ({})",
-                       serviceName(g_shellService), hex(rcStop), hex(rcTerm), why);
-    g_shellInit = false;
-    g_shellService = -1;
-    g_shellPlaying = false;
-}
-
-// Hands src to the shell's music player and watches whether its clock moves.
-// That, not the state it reports, is what counts as playing. Left playing
-// when it plays and `leave` is set; stopped otherwise. `service` is one of the
-// picker's six; switching between them is handled here. Must hold g_shellMutex.
-ShellTry shellTry(const std::string& label, const std::string& src, bool leave, int service,
-                  const TryTiming& t = TryTiming()) {
-    ShellTry r;
-    // The shell takes at most 0x400 characters and would cut a longer one.
-    if (src.size() > 0x400) {
-        r.line = label + ": " + std::to_string(src.size()) + " characters, more than the shell takes";
-        brls::Logger::info("[bgaudio] system player: {}", r.line);
-        return r;
-    }
-    std::vector<char> path(src.begin(), src.end());
-    path.push_back('\0');
-
-    // One service at a time: libShellAudio keeps a single session for both.
-    if (g_shellInit && g_shellService != service) stopShellLocked("switching service");
-    if (!g_shellInit) {
-        const int rc = service == kServiceAppBgm ? sceMusicInternalAppInitialize(1)
-                                                 : sceMusicPlayerServiceInitialize(service);
-        brls::Logger::info("[bgaudio] system player ({}): initialize: {}", serviceName(service),
-                           hex(rc));
-        if (rc < 0) {
-            r.line = label + ": the " + serviceName(service) + " service would not start (" +
-                     hex(rc) + ")";
-            return r;
-        }
-        g_shellInit = true;
-        g_shellService = service;
-    }
-
-    // What was loaded before this. The shell keeps its last file through stops
-    // and even through terminate and initialize, and when it cannot open a new
-    // source it says nothing and plays the old one, so "the clock moved" is not
-    // enough to count as playing: the new source has to be shown to have
-    // replaced the old. See the verdict below.
-    const ShellClock before = shellClock();
-    const int durBefore = appBgm() ? -1 : playerDuration(label + " (before)");
-
-    // The application-BGM service refuses commands before its first SetUri,
-    // and every attempt here ends stopped, so it needs no stop first.
-    const int rcStop = appBgm() ? 0 : shellCommand(SCE_MUSIC_EVENTID_STOP);
-    int rcOpen;
-    if (appBgm()) {
-        SceMusicOpt opt;
-        std::memset(&opt, 0, sizeof(opt));
-        rcOpen = sceMusicInternalAppSetUri(path.data(), &opt);
-    } else {
-        rcOpen = sceMusicPlayerServiceOpen(path.data(), nullptr);
-    }
-    const int rcPlay = shellCommand(SCE_MUSIC_EVENTID_PLAY);
-    brls::Logger::info("[bgaudio] system player ({}): {} ({}): stop {}, open {}, play {}",
-                       serviceName(service), label, src, hex(rcStop), hex(rcOpen), hex(rcPlay));
-    if (rcOpen < 0) {
-        r.line = label + ": refused (" + hex(rcOpen) + ")";
-        return r;
-    }
-
-    // Up to t.maxMs (12 s by default) for the clock to pass a second beyond
-    // where it was first seen moving: a stream has to be fetched and buffered
-    // before it starts.
-    ShellClock c;
-    int lastState = -1;
-    bool seenTime = false;
-    bool wentBack = false;
-    unsigned firstTime = 0, lastTime = 0;
-    const SceInt64 t0 = sceKernelGetSystemTimeWide();
-    SceInt64 lastPoll = t0;
-    for (;;) {
-        const SceInt64 now = sceKernelGetSystemTimeWide();
-        // A poll seconds late means this process was held (PS pressed): the
-        // shell went on meanwhile, unwatched, so this attempt shows nothing.
-        if (now - lastPoll > 2 * 1000000LL) {
-            r.interrupted = true;
-            break;
-        }
-        lastPoll = now;
-        const SceInt64 elapsedMs = (now - t0) / 1000;
-        if (elapsedMs >= t.maxMs) break;
-        c = shellClock();
-        if (c.state != lastState) {
-            brls::Logger::info("[bgaudio] system player: {}: state {} at {} ({})", label, c.state,
-                               mmss(c.timeMs), hex(c.rc));
-            lastState = c.state;
-        }
-        // The first readings after an open can still be the old source's
-        // clock, stopped where it was; a new source then starts again from
-        // the top. So a clock going back starts the measure over, and shows
-        // the source changed.
-        if (seenTime && c.timeMs + 1000 < lastTime) {
-            wentBack = true;
-            seenTime = false;
-            r.moved = false;
-        }
-        lastTime = c.timeMs;
-        if (c.timeMs > 0 && !seenTime) {
-            seenTime = true;
-            firstTime = c.timeMs;
-        }
-        if (seenTime && c.timeMs >= firstTime + 1000) r.moved = true;
-        if (r.moved && c.timeMs >= t.playToMs && elapsedMs >= t.minMs) break;
-        sceKernelDelayThread(250 * 1000);
-    }
-    r.played = r.moved && !r.interrupted;
-    if (!g_bgmStateRefused)
-        brls::Logger::info("[bgaudio] system player: {}: BGM port {}", label, bgmState());
-
-    int durAfter = -1;
-    if (appBgm()) {
-        // Layout unknown; logged whole in case it holds the clock after all.
-        unsigned char status[0x40];
-        std::memset(status, 0, sizeof(status));
-        const int rcStatus = sceMusicInternalAppGetPlaybackStatus(status);
-        std::string bytes;
-        for (unsigned char b : status) {
-            char h[4];
-            std::snprintf(h, sizeof(h), "%02X", b);
-            bytes += h;
-        }
-        brls::Logger::info("[bgaudio] system player: {}: playback status {}: {}", label,
-                           hex(rcStatus), bytes);
-    } else {
-        durAfter = playerDuration(label);
-    }
-
-    // Did the new source replace the old one? With the old one stopped 3 s or
-    // more into it, the clock says: a new source starts again from the top.
-    // Short of that, a different length says it did, as does there having
-    // been nothing loaded, and the same source opened again needs none of
-    // it. Otherwise it cannot be told from here, since a new source of the
-    // same length would look like the old one going on. The application-BGM
-    // service gives no length.
-    // An old source at its very end would start again from the top too, so
-    // then the clock says nothing.
-    const bool sameSource = src == g_shellLastSrc[lastSrcSlot(service)];
-    const bool oldAtEnd = durBefore > 0 && before.timeMs + 2000 >= (unsigned)durBefore;
-    const bool clockTells = before.timeMs >= 3000 && !oldAtEnd;
-    const bool nothingBefore = before.timeMs == 0 && durBefore <= 0;
-    const bool lengthChanged = !appBgm() && durAfter != durBefore;
-    const bool replaced = sameSource || (wentBack && !oldAtEnd) ||
-                          (clockTells ? firstTime + 2000 < before.timeMs
-                                      : nothingBefore || lengthChanged);
-
-    if (r.interrupted) {
-        r.line = label + ": interrupted, VitaPlex was put in the background during it";
-    } else if (r.played && !replaced) {
-        r.played = false;
-        r.unsure = !clockTells;
-        r.line = r.unsure
-            ? label + ": something played, but neither the clock nor the length can tell "
-                      "whether it was this or the file loaded before"
-            : label + ": not opened. The system player went on with the file it had before (" +
-                  mmss(firstTime) + " into it)";
-    } else if (r.played) {
-        r.line = label + ": plays (" + mmss(firstTime) + " -> " + mmss(c.timeMs) + ")";
-    } else if (seenTime) {
-        r.line = label + ": started, then its clock stopped at " + mmss(c.timeMs);
-    } else if (appBgm() && rcPlay >= 0) {
-        // This service may simply not report a clock, so no verdict from here.
-        r.maybe = true;
-        r.line = label + ": accepted, but this service reports no progress; listen for it";
-    } else {
-        r.line = label + ": no sound after " + std::to_string(t.maxMs / 1000) + "s (state " +
-                 std::to_string(c.state) + ")";
-    }
-    brls::Logger::info("[bgaudio] system player: {}", r.line);
-
-    if (r.played || r.maybe) g_shellLastSrc[lastSrcSlot(service)] = src;
-    if ((r.played || r.maybe) && leave) {
-        g_shellPlaying = true;
-    } else {
-        shellCommand(SCE_MUSIC_EVENTID_STOP);
-        g_shellPlaying = false;
-    }
-    return r;
-}
-
-// The system player and mpv would otherwise both be heard.
-void pauseMpvForShell() {
-    if (MpvPlayer::getInstance().isPlaying()) MusicController::getInstance().playPause(false);
-}
-
-// What to do with something a test left playing. `heard` is whether its clock
-// was seen moving; the application-BGM service may not report one.
-std::string listenAdvice(bool heard) {
-    return std::string(heard ? "Playing now. " : "It may be playing: if you hear it, it works. ") +
-           "Press PS and listen: if it keeps going outside VitaPlex, this works in the "
-           "background. While it plays, hold PS: do the quick menu's Music controls work "
-           "for it? \"Stop System Player Test\" ends it.";
-}
-
-void finishTest(const Report& done, const std::string& report) {
-    g_shellBusy = false;
-    brls::sync([done, report]() { done(report); });
-}
-
-// A test.* file the user placed takes precedence, then any download in a
-// format the shell decodes. Empty when there is neither. Called on the UI
-// thread, where the downloads list is normally read.
-std::string pickLocalFile() {
-    for (const char* e : kShellExts) {
-        const std::string p = platformPath(std::string("test.") + e);
-        if (fileExists(p)) return p;
-    }
-    for (const auto& d : DownloadsManager::getInstance().getDownloads()) {
-        if (d.state == DownloadState::COMPLETED && d.mediaType == "track" &&
-            shellDecodes(lowerExt(d.localPath)) && fileExists(d.localPath))
-            return d.localPath;
-    }
-    return {};
-}
-
-std::string headerValue(const std::map<std::string, std::string>& headers, const char* name) {
-    for (const auto& kv : headers) {
-        if (kv.first.size() != std::strlen(name)) continue;
-        bool same = true;
-        for (std::size_t i = 0; i < kv.first.size() && same; i++)
-            same = std::tolower((unsigned char)kv.first[i]) == std::tolower((unsigned char)name[i]);
-        if (same) return kv.second;
-    }
-    return {};
-}
-
-// Whether a server serves a link, asked with VitaPlex's own HTTP client: the
-// first 4 KB, as a player's first read would be. Only for static files; a
-// transcode link would start a transcode to answer it.
-struct ServerAnswer {
-    int status = 0;
-    std::string type;
-    std::size_t bytes = 0;
-};
-
-ServerAnswer askServer(const std::string& label, const std::string& url) {
-    HttpClient client;
-    HttpRequest req;
-    req.url = url;
-    req.timeout = 10;
-    req.headers["Range"] = "bytes=0-4095";
-    const HttpResponse resp = client.request(req);
-    ServerAnswer a;
-    a.status = resp.statusCode;
-    a.type = headerValue(resp.headers, "Content-Type");
-    a.bytes = resp.body.size();
-    brls::Logger::info("[bgaudio] server check, {}: status {}, type '{}', {} bytes{}{}", label,
-                       a.status, a.type, a.bytes, resp.error.empty() ? "" : ", error: ",
-                       resp.error);
-    return a;
-}
-
-std::string describe(const ServerAnswer& a) {
-    if (a.status == 0) return "VitaPlex got no answer from the server";
-    return "the server answers it (" + std::to_string(a.status) +
-           (a.type.empty() ? "" : " " + a.type) + ")";
-}
-
-// The first maxBytes of url, written to dest: enough of an MP3 for a player
-// to open and start, without waiting for a whole track. False, and nothing
-// left behind, if less than 64 KB arrived.
-bool downloadPrefix(const std::string& url, const std::string& dest, std::size_t maxBytes) {
-    FILE* f = std::fopen(dest.c_str(), "wb");
+bool writeWhole(const std::string& path, const std::string& text) {
+    const std::string part = path + ".part";
+    FILE* f = std::fopen(part.c_str(), "w");
     if (!f) return false;
-    std::size_t got = 0;
-    std::string err;
-    const SceInt64 t0 = sceKernelGetSystemTimeWide();
-    HttpClient client;
-    client.downloadFile(url, [&](const char* data, size_t size) {
-        const std::size_t take = std::min(size, maxBytes - got);
-        if (take > 0 && std::fwrite(data, 1, take, f) != take) return false;
-        got += take;
-        // Enough: stop the transfer here. A transcode comes no faster than
-        // the server makes it, so after 20 s whatever has come will do for
-        // attempts of a few seconds each.
-        const bool slow = got >= 256 * 1024 && sceKernelGetSystemTimeWide() - t0 > 20 * 1000000LL;
-        return got < maxBytes && !slow;
-    }, nullptr, {}, 0, nullptr, &err);
-    std::fclose(f);
-    brls::Logger::info("[bgaudio] control file: {} bytes into {}{}{}", got, dest,
-                       got < maxBytes && !err.empty() ? ", " : "",
-                       got < maxBytes ? err : std::string());
-    if (got < 64 * 1024) {
-        std::remove(dest.c_str());
+    const bool ok = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+    if (std::fclose(f) != 0 || !ok || !moveIn(part, path)) {
+        std::remove(part.c_str());
         return false;
     }
     return true;
@@ -965,691 +660,1193 @@ bool copyFile(const std::string& src, const std::string& dest) {
     return ok;
 }
 
-// A test's own file, removed when done with. The shell may still have it
-// open, so a refusal is logged rather than taken for an error.
-void removeTestFile(const std::string& path) {
-    if (std::remove(path.c_str()) != 0)
-        brls::Logger::info("[bgaudio] could not remove {} (errno {})", path, errno);
+// A field of a track line: '|' separates them, and a line ends the track.
+std::string trackField(std::string s) {
+    for (auto& c : s)
+        if (c == '|' || c == '\n' || c == '\r') c = ' ';
+    return s;
 }
 
-std::string wifiAddress() {
-    SceNetCtlInfo info;
-    std::memset(&info, 0, sizeof(info));
-    if (sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_IP_ADDRESS, &info) < 0) return {};
-    return info.ip_address;
+int repeatCode(RepeatMode m) {
+    return m == RepeatMode::ONE ? HANDOVER_REPEAT_ONE
+         : m == RepeatMode::ALL ? HANDOVER_REPEAT_ALL : HANDOVER_REPEAT_OFF;
 }
 
-// ── The control: VitaPlex serving a file itself ──────────────────────────
+// ── The songs' files in the folder of songs ───────────────────────────────
+// SceShell plays files, so a song handed over that is not on the card is
+// fetched whole before it plays: 5.8 s and 5.0 s of silence in build 2045's
+// run (log 5ae2ab41), each time for the song VitaPlex had been playing. So
+// while a song plays here and could be handed over, its file is fetched in
+// the background to the folder of songs, as SceShell would fetch it, and the
+// queue names it (file=) once whole: SceShell plays it at once. A download
+// is left alone, since SceShell plays it where it is. A song in a format the
+// shell does not play comes as the server's MP3 of it, as SceShell would
+// fetch that: it waited 23.3 s for one (log 8e7a4b23).
 //
-// Hands the system player the plainest link there is: plain http, a path
-// ending in the file's own extension, no query string, a length and range
-// support, for a file it has already played from disk. Every request is
-// logged, so "the player never connected" can be told apart from "it
-// connected and could not play what it got". An https client is recognised
-// by its handshake and turned away. Serves one path, with a per-run name in
-// it, and only for the length of the test.
-class ControlServer : public std::enable_shared_from_this<ControlServer> {
-public:
-    // Returns the port, or -1.
-    int start(const std::string& file) {
-        m_file = file;
-        char dir[24];
-        std::snprintf(dir, sizeof(dir), "/t%08x",
-                      (unsigned)(sceKernelGetSystemTimeWide() ^ (uintptr_t)this));
-        m_path = std::string(dir) + "/track." + lowerExt(file);
+// The files stay while their songs are near: the song before, for previous,
+// the one playing, and the next, which SceShell fetches ahead. VitaPlex plays
+// them too, once it has the music back (songFile): its stream of a song
+// whose file it had took 7.3 s to begin (log 8e7a4b23). Files of other songs
+// go as the queue moves (pruneSongs). A fetch for a song no longer playing is
+// stopped.
+std::mutex g_readyMutex;
+struct ReadySong {
+    std::string key;    // the song playing here, "" for none
+    std::string path;   // its file, once whole; "" until then
+    unsigned gen = 0;   // one more for each song, and as the music goes
+};
+ReadySong g_ready;      // under g_readyMutex
 
-        m_fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (m_fd < 0) return fail("socket");
-        int one = 1;
-        setsockopt(m_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-        sockaddr_in addr;
-        std::memset(&addr, 0, sizeof(addr));
-        addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = htonl(INADDR_ANY);
-        addr.sin_port = htons(0);
-        if (bind(m_fd, (sockaddr*)&addr, sizeof(addr)) < 0) return fail("bind");
-        if (listen(m_fd, 4) < 0) return fail("listen");
-        socklen_t len = sizeof(addr);
-        if (getsockname(m_fd, (sockaddr*)&addr, &len) < 0) return fail("getsockname");
-        m_port = ntohs(addr.sin_port);
+unsigned readyGen() {
+    std::lock_guard<std::mutex> lock(g_readyMutex);
+    return g_ready.gen;
+}
 
-        m_running = true;
-        auto self = shared_from_this();
-        platform::launchThread([self]() { self->acceptLoop(); });
-        brls::Logger::info("[bgaudio] control server: port {}, serving {} as {}", m_port, m_file,
-                           m_path);
-        return m_port;
+long long sizeOnCard(const std::string& path) {
+    SceIoStat st;
+    std::memset(&st, 0, sizeof(st));
+    return sceIoGetstat(path.c_str(), &st) >= 0 ? (long long)st.st_size : -1;
+}
+
+// The whole file of the song at key in the folder of songs, under the names
+// SceShell and VitaPlex give them (<key>.<extension>, moved in once whole);
+// "" for none.
+std::string songFileFor(const std::string& key) {
+    if (key.empty()) return std::string();
+    for (const char* ext : {"mp3", "m4a", "aac", "wav"}) {
+        const std::string path = std::string(HANDOVER_SONGS) + "/" + key + "." + ext;
+        if (sizeOnCard(path) > 0) return path;
+    }
+    return std::string();
+}
+
+// The queue in the order it plays, and the place of the song playing in it.
+// false when it has none.
+bool playOrder(std::vector<int>& order, int& at) {
+    MusicQueue& q = MusicQueue::getInstance();
+    const std::vector<QueueItem>& items = q.getQueue();
+    order.clear();
+    at = q.getCurrentIndex();
+    if (q.isShuffleEnabled() && q.getShuffleOrder().size() == items.size()) {
+        order = q.getShuffleOrder();
+        at = q.getShufflePosition();
+    } else {
+        for (int i = 0; i < (int)items.size(); i++) order.push_back(i);
+    }
+    return at >= 0 && at < (int)order.size();
+}
+
+// The ratingKeys of the song at `at` in `keys`, in play order, and of the
+// songs on either side of it, round the end with repeat all: the songs whose
+// files stay.
+std::vector<std::string> nearKeys(const std::vector<std::string>& keys, int at, bool round) {
+    std::vector<std::string> near;
+    const int n = (int)keys.size();
+    for (int d = -1; d <= 1 && n > 0; d++) {
+        int i = at + d;
+        if (round) i = ((i % n) + n) % n;
+        if (i >= 0 && i < n && !keys[(std::size_t)i].empty()) near.push_back(keys[(std::size_t)i]);
+    }
+    return near;
+}
+
+// The songs near the one playing here (nearKeys), from the queue. On the UI
+// thread, which owns it.
+std::vector<std::string> nearPlaying() {
+    std::vector<int> order;
+    int at = 0;
+    if (!playOrder(order, at)) return {};
+    const std::vector<QueueItem>& items = MusicQueue::getInstance().getQueue();
+    const bool round = MusicQueue::getInstance().getRepeatMode() == RepeatMode::ALL;
+    const int n = (int)order.size();
+    std::vector<std::string> near;
+    for (int d = -1; d <= 1; d++) {
+        int i = at + d;
+        if (round) i = ((i % n) + n) % n;
+        if (i < 0 || i >= n) continue;
+        const std::string& key = items[(std::size_t)order[(std::size_t)i]].ratingKey;
+        if (!key.empty()) near.push_back(key);
+    }
+    return near;
+}
+
+// The folder of songs cleared of all but the files of the songs at `keep`,
+// and their covers: whatever else SceShell or VitaPlex left there. How many
+// files went.
+int pruneSongs(const std::vector<std::string>& keep) {
+    const SceUID d = sceIoDopen(HANDOVER_SONGS);
+    if (d < 0) return 0;
+    SceIoDirent e;
+    int removed = 0;
+    for (;;) {
+        std::memset(&e, 0, sizeof(e));
+        if (sceIoDread(d, &e) <= 0) break;
+        if (e.d_name[0] == '.') continue;
+        const std::string name = e.d_name;
+        bool kept = false;
+        for (const std::string& key : keep)
+            kept = kept || (name.size() > key.size() && name.compare(0, key.size(), key) == 0 &&
+                            name[key.size()] == '.');
+        if (kept) continue;
+        if (std::remove((std::string(HANDOVER_SONGS) + "/" + name).c_str()) == 0) removed++;
+    }
+    sceIoDclose(d);
+    return removed;
+}
+
+// The song made ready forgotten, and its file removed: the music stopped, or
+// the app going without handing it over. A fetch under way stops.
+void dropReadySong() {
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lock(g_readyMutex);
+        g_ready.gen++;
+        path.swap(g_ready.path);
+        g_ready.key.clear();
+    }
+    if (!path.empty()) std::remove(path.c_str());
+}
+
+// The file made ready for the song at key, for the queue's file= as it goes
+// to SceShell, whose it is from then; "" when none is whole. A fetch still
+// under way stops, and SceShell fetches the song itself.
+std::string handReadySong(const std::string& key) {
+    std::lock_guard<std::mutex> lock(g_readyMutex);
+    g_ready.gen++;
+    std::string path;
+    if (g_ready.key == key && !g_ready.path.empty() && sizeOnCard(g_ready.path) > 0)
+        path = g_ready.path;
+    g_ready.path.clear();
+    g_ready.key.clear();
+    return path;
+}
+
+// The song at key, whose whole file SceShell had at path as it gave the music
+// back: made ready already, for VitaPlex plays it on.
+void keepReadySong(const std::string& key, const std::string& path) {
+    std::lock_guard<std::mutex> lock(g_readyMutex);
+    g_ready.gen++;
+    g_ready.key = key;
+    g_ready.path = path;
+}
+
+// What the framer passes on (mp3_frames.h), into the file.
+int mp3Write(void* ctx, const uint8_t* data, uint32_t n) {
+    return std::fwrite(data, 1, n, (FILE*)ctx) == n ? 0 : -1;
+}
+
+// The server's MP3 of the song at key, as SceShell asks for it (the plugin's
+// fetchMp3), in a session of its own: the decision, then start.mp3, framed as
+// it comes into f, behind a frame that gives its length. true when it came
+// to its end, the bytes that came in *got and the frames' length in *ms;
+// else why in *why. Stopped once the song is no longer the one playing (gen).
+bool fetchServerMp3(unsigned gen, const std::string& key, const std::string& server,
+                    const std::string& token, FILE* f, long long* got, uint32_t* ms,
+                    std::string* why) {
+    static unsigned sessions = 0;
+    const std::string query =
+        "?path=" + HttpClient::urlEncode("/library/metadata/" + key) +
+        "&mediaIndex=0&partIndex=0&directPlay=0&directStream=1&directStreamAudio=1&hasMDE=1"
+        "&location=lan&audioBoost=100&audioChannelCount=2&protocol=http&musicBitrate=320"
+        "&session=vitaplex-ready-" + key + "-" + std::to_string(++sessions) +
+        "&X-Plex-Client-Profile-Name=Generic&X-Plex-Client-Profile-Extra=" +
+        HttpClient::urlEncode("add-transcode-target(type=musicProfile&context=streaming"
+                              "&protocol=http&container=mp3&audioCodec=mp3)");
+    const std::map<std::string, std::string> headers = {
+        {"X-Plex-Token", token},
+        {"X-Plex-Client-Identifier", "vitaplex-sceshell"},
+        {"X-Plex-Product", "VitaPlex"}};
+    HttpRequest req;
+    req.url = server + "/music/:/transcode/universal/decision" + query;
+    req.headers = headers;
+    req.timeout = 15;
+    HttpClient decision;
+    const HttpResponse r = decision.request(req);
+    if (r.statusCode != 200) {
+        *why = "its transcode decision: HTTP " + std::to_string(r.statusCode);
+        return false;
+    }
+    // As SceShell does, start.mp3 whatever the decision says.
+    std::unique_ptr<Mp3Frames> mp3(new Mp3Frames);
+    mp3fInit(mp3.get());
+    bool writeFailed = false;
+    HttpClient client;
+    const bool fetched = client.downloadFile(
+        server + "/music/:/transcode/universal/start.mp3" + query,
+        [&](const char* data, size_t size) {
+            if (readyGen() != gen) return false;
+            if (mp3fFeed(mp3.get(), (const uint8_t*)data, (uint32_t)size, mp3Write, f) < 0) {
+                writeFailed = true;
+                return false;
+            }
+            *got += (long long)size;
+            return true;
+        },
+        nullptr, headers, 0, nullptr, why);
+    if (!fetched || writeFailed) {
+        if (writeFailed) *why = "its file not written";
+        return false;
+    }
+    const int made = mp3fFinish(mp3.get());
+    if (made < 0) {
+        *why = "no MP3 frame in the server's MP3 of it";
+        return false;
+    }
+    *ms = mp3fMs(mp3.get());
+    if (made > 0 && (std::fseek(f, 0, SEEK_SET) != 0 ||
+                     std::fwrite(mp3->frame, 1, mp3->room, f) != mp3->room)) {
+        *why = "the frame giving its length not written";
+        return false;
+    }
+    return true;
+}
+
+// The fetch, on a thread of its own: the song's details, its first part, and
+// that file as the server has it into HANDOVER_SONGS through a file beside
+// it, moved in once all of it has come. It stops, and leaves nothing, once
+// the song is no longer the one playing (gen). That file ends in ".ready",
+// not in the plugin's ".part": SceShell, handed the queue as this stops, may
+// be fetching the same song, and the two must never share a file. It is
+// moved in under g_readyMutex, which a hand-over takes too, so that a file
+// moved in is either named in the queue or never moved in.
+void readyFetch(unsigned gen, const std::string& key, const std::string& title,
+                const std::string& server, const std::string& token) {
+    // Not for a song skipped past in its first seconds, and not as mpv
+    // fills its own cache at a song's start; after that the server sends it
+    // at about the pace it plays (log 7c97dfa5: 1.29 MB in 22 s). Soon, for
+    // a game started a few seconds into a song: 6.7 s in build 2045's run.
+    for (int i = 0; i < 20; i++) {
+        sceKernelDelayThread(100 * 1000);
+        if (readyGen() != gen) return;
+    }
+    MediaItem item;
+    if (!PlexClient::getInstance().fetchMediaDetails(key, item) || item.partPath.empty()) {
+        brls::Logger::info("[bgaudio] SceShell: \"{}\" not made ready: no file of it in its "
+                           "details",
+                           title);
+        return;
+    }
+    // The formats the plugin plays as they are (its shellExt); any other as
+    // the server's MP3 of it.
+    std::string ext = lowerExt(item.partPath);
+    if (ext == "mp4") ext = "m4a";
+    const bool asItIs = ext == "mp3" || ext == "m4a" || ext == "aac" || ext == "wav";
+    const std::string from = ext.empty() ? "a file of no known format" : ext;
+    if (!asItIs) ext = "mp3";
+    // A second transcode of the song, beside the one mpv plays it from, not
+    // until mpv's own is well under way: 10 s in.
+    for (int i = 0; !asItIs && i < 80; i++) {
+        sceKernelDelayThread(100 * 1000);
+        if (readyGen() != gen) return;
+    }
+    const std::string path = std::string(HANDOVER_SONGS) + "/" + key + "." + ext;
+    const std::string part = path + ".ready";
+    sceIoMkdir(HANDOVER_SONGS, 0777);
+    FILE* f = std::fopen(part.c_str(), "wb");
+    if (!f) {
+        brls::Logger::info("[bgaudio] SceShell: \"{}\" not made ready: {} not written", title, part);
+        return;
+    }
+    // In large writes: stdio's own buffer made the background player's
+    // copies slow (log 2114643f).
+    std::unique_ptr<char[]> buffer(new char[64 * 1024]);
+    std::setvbuf(f, buffer.get(), _IOFBF, 64 * 1024);
+    long long got = 0;
+    int64_t length = -1;
+    bool writeFailed = false;
+    std::string why;
+    const double t0 = systemSecs();
+    bool fetched;
+    if (asItIs) {
+        HttpClient client;
+        fetched = client.downloadFile(
+            server + item.partPath + "?download=1",
+            [&](const char* data, size_t size) {
+                if (readyGen() != gen) return false;
+                if (std::fwrite(data, 1, size, f) != size) {
+                    writeFailed = true;
+                    return false;
+                }
+                got += (long long)size;
+                return true;
+            },
+            [&](int64_t total) { length = total; }, {{"X-Plex-Token", token}}, 0, nullptr, &why);
+    } else {
+        brls::Logger::info("[bgaudio] SceShell: \"{}\" is {}: the server's MP3 of it made ready", title,
+                           from);
+        uint32_t ms = 0;
+        fetched = fetchServerMp3(gen, key, server, token, f, &got, &ms, &why);
+        // A transcode has no length, so one cut short ends as one done would:
+        // its frames are to make the song, to the 3 s the plugin allows.
+        if (fetched && item.duration > 0 && ms + 3000 < (uint32_t)item.duration) {
+            fetched = false;
+            why = "its frames make " + mmss(ms) + " of its " + mmss((unsigned)item.duration);
+        }
+    }
+    const bool closed = std::fclose(f) == 0;
+    // Whole, as the answer gave its size, else as the details did: the client
+    // takes a transfer cut short for one done. The answer's first, since the
+    // details can be older than the file: 4,418,566 bytes for a song that
+    // came whole at 4,343,040, which was thrown away, and SceShell fetched it
+    // again with the music stopped (log dd6a5eb9, build 2046). A transcode
+    // sends no length: what the framer took is whole.
+    const long long want = !asItIs ? 0 : length > 0 ? length : item.partSize;
+    const bool stopped = readyGen() != gen;
+    if (!fetched || writeFailed || !closed || got <= 0 || (want > 0 && got != want) || stopped) {
+        std::remove(part.c_str());
+        if (!stopped)
+            brls::Logger::info("[bgaudio] SceShell: \"{}\" not made ready: {}", title,
+                               writeFailed || !closed ? "its file not written"
+                               : !why.empty()         ? why
+                                                      : std::to_string(got) + " bytes of its " +
+                                                            std::to_string(want) + " came");
+        return;
+    }
+    const double took = systemSecs() - t0;
+    std::lock_guard<std::mutex> lock(g_readyMutex);
+    if (g_ready.gen != gen) {
+        std::remove(part.c_str());   // no longer the song playing, or handed over
+    } else if (!moveIn(part, path)) {
+        std::remove(part.c_str());
+        brls::Logger::info("[bgaudio] SceShell: \"{}\" not made ready: {} not moved in", title, part);
+    } else {
+        g_ready.path = path;
+        brls::Logger::info("[bgaudio] SceShell: \"{}\" made ready for a hand-over, {:.2f} MB in {:.1f} "
+                           "s, at {}",
+                           title, got / 1048576.0, took, path);
+    }
+}
+
+// From the UI thread, as MusicController publishes what plays (now_playing.hpp):
+// the song playing made ready, when it is a new one that could be handed over.
+void readySongForPlaying() {
+    if (g_outsideMusic == kOutsideStops || g_handedOverAt != 0) return;
+    MusicQueue& q = MusicQueue::getInstance();
+    const QueueItem* t = q.getCurrentTrack();
+    if (!t || t->ratingKey.empty() || !q.isMusicQueue()) return;
+    const std::string key = t->ratingKey, title = t->title;
+    unsigned gen;
+    {
+        std::lock_guard<std::mutex> lock(g_readyMutex);
+        if (g_ready.key == key) return;
+        g_ready.path.clear();
+        g_ready.key = key;
+        gen = ++g_ready.gen;
+    }
+    // The files of the songs near this one stay; the others go.
+    const int pruned = pruneSongs(nearPlaying());
+    if (pruned)
+        brls::Logger::info("[bgaudio] SceShell: {} file(s) of songs no longer near removed", pruned);
+    // Its file there already, kept as the music came back or fetched before:
+    // ready as it is.
+    const std::string kept = songFileFor(key);
+    if (!kept.empty()) {
+        std::lock_guard<std::mutex> lock(g_readyMutex);
+        if (g_ready.gen == gen) g_ready.path = kept;
+        return;
+    }
+    DownloadItem dl;
+    if (DownloadsManager::getInstance().getDownloadCopy(key, dl) &&
+        dl.state == DownloadState::COMPLETED)
+        return;   // SceShell plays the download
+    std::string server = PlexClient::getInstance().getServerUrl();
+    const std::string token = PlexClient::getInstance().getAuthToken();
+    while (!server.empty() && server.back() == '/') server.pop_back();
+    if (server.empty()) return;
+    platform::launchThread([gen, key, title, server, token]() {
+        readyFetch(gen, key, title, server, token);
+    });
+}
+
+// VitaPlex's server, with no '/' at its end; "" with none.
+std::string plexServer() {
+    std::string server = PlexClient::getInstance().getServerUrl();
+    while (!server.empty() && server.back() == '/') server.pop_back();
+    return server;
+}
+
+// The header lines every request of the plugin's for VitaPlex carries:
+// VitaPlex's names for itself, as its own requests have them, so that Plex
+// shows the music the shell plays as VitaPlex's and keeps its place, and the
+// token. The plugin never logs them.
+std::string plexHeaderLines(const std::string& token) {
+    std::string h = std::string("X-Plex-Client-Identifier: ") + PLEX_CLIENT_ID +
+                    "\r\nX-Plex-Product: VitaPlex\r\nX-Plex-Platform: PlayStation Vita"
+                    "\r\nX-Plex-Device: PS Vita";
+    if (!token.empty()) h += "\r\nX-Plex-Token: " + token;
+    return h;
+}
+
+// The server's MP3 of the song at key, as the plugin fetches a song in a
+// format the shell does not play, or one VitaPlex has no file of: `which` is
+// "decision", fetched first, or "start.mp3"; {session} the plugin fills in,
+// one number for both. Kept short: the plugin holds 512 bytes of altPrep. An
+// MP3 on the server comes as it is (directStreamAudio).
+std::string mp3Url(const std::string& server, const std::string& key, const char* which) {
+    return server + "/music/:/transcode/universal/" + which + "?path=" +
+           HttpClient::urlEncode("/library/metadata/" + key) +
+           "&mediaIndex=0&partIndex=0&directPlay=0&directStream=1&directStreamAudio=1&hasMDE=1"
+           "&location=lan&protocol=http&musicBitrate=320&session=vp-" + key +
+           "-{session}&X-Plex-Client-Profile-Name=Generic&X-Plex-Client-Profile-Extra=" +
+           HttpClient::urlEncode("add-transcode-target(type=musicProfile&context=streaming"
+                                 "&protocol=http&container=mp3&audioCodec=mp3)");
+}
+
+// A cover from the server as the row shows it: a PNG of SC_ART_SIZE.
+std::string coverUrl(const std::string& server, const std::string& thumb) {
+    if (thumb.empty()) return std::string();
+    char size[16];
+    std::snprintf(size, sizeof(size), "%d", SC_ART_SIZE);
+    return server + "/photo/:/transcode?width=" + size + "&height=" + size +
+           "&minSize=1&upscale=1&format=png&url=" + HttpClient::urlEncode(thumb);
+}
+
+// The written= of a file of the plugin's queue, as scWriteQueue wrote it: the
+// status names the queue it plays by it, and VitaPlex's own copy carries the
+// same. "" when it cannot be read.
+std::string writtenOf(const std::string& path) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return std::string();
+    char line[64] = "";
+    const bool got = std::fgets(line, sizeof(line), f) != nullptr;
+    std::fclose(f);
+    if (!got || std::strncmp(line, "written=", 8) != 0) return std::string();
+    std::string w = line + 8;
+    while (!w.empty() && (w.back() == '\n' || w.back() == '\r')) w.pop_back();
+    return w;
+}
+
+// The queue in the order it plays, the song playing and where in it: the
+// plugin's queue (SC_QUEUE, written with scWriteQueue), and VitaPlex's own
+// copy (HANDOVER_QUEUE) with the same written=. A queue longer than the plugin
+// allows goes from the song playing on. Each song plays from its download, or
+// for the one playing, the file made ready for it (whole, and the shell's from
+// then); else the plugin fetches the server's MP3 of it. A download's cover is
+// the PNG the server made of it beside the download; the others, the server's
+// as a PNG. The server is told where the music is and of each song played,
+// as VitaPlex tells it. On the UI thread, which owns the queue. The song, for
+// the log, in *what, and its ratingKey in *key.
+bool writeQueue(std::string& what, std::string& key) {
+    MusicQueue& q = MusicQueue::getInstance();
+    const std::vector<QueueItem>& items = q.getQueue();
+    std::vector<int> order;
+    int at = 0;
+    if (!playOrder(order, at)) return false;
+    std::size_t from = 0;
+    if (order.size() > HANDOVER_MAX_TRACKS) {
+        from = (std::size_t)at;
+        at = 0;
     }
 
-    void stop() {
-        m_stop = true;
-        for (int i = 0; i < 40 && m_running; i++) sceKernelDelayThread(50 * 1000);
+    // Where in the song: mpv's clock counts from where its stream begins,
+    // which a seek that restarted the transcode moved part-way in.
+    const double position = MpvPlayer::getInstance().getPosition();
+    const long long positionMs = std::max(
+        0LL, MusicController::getInstance().streamStartOffsetMs() +
+                 (position > 0 ? (long long)(position * 1000) : 0));
+
+    const QueueItem& now = items[(std::size_t)order[from + (std::size_t)at]];
+    const std::string file = handReadySong(now.ratingKey);
+    const std::string server = plexServer();
+    const std::string token = PlexClient::getInstance().getAuthToken();
+
+    // The fields of each song, kept while scWriteQueue reads them.
+    struct Strings {
+        std::string id, local, url, altUrl, altPrep, coverUrl, coverPng;
+    };
+    std::vector<Strings> strings;
+    std::vector<ScTrack> tracks;
+    std::string mine;   // VitaPlex's own copy's track lines
+    DownloadsManager& downloads = DownloadsManager::getInstance();
+    for (std::size_t i = from; i < order.size() && i - from < HANDOVER_MAX_TRACKS; i++) {
+        const QueueItem& t = items[(std::size_t)order[i]];
+        Strings st;
+        st.id = t.ratingKey;
+        DownloadItem dl;
+        if (downloads.getDownloadCopy(t.ratingKey, dl) && dl.state == DownloadState::COMPLETED) {
+            st.local = dl.localPath;
+            st.coverPng = DownloadsManager::smallCoverPath(dl.thumbPath);
+            if (!st.coverPng.empty() && !fileExists(st.coverPng)) st.coverPng.clear();
+        }
+        if (&t == &now && !file.empty()) st.local = file;
+        if (!server.empty() && !t.ratingKey.empty()) {
+            st.altUrl = mp3Url(server, t.ratingKey, "start.mp3");
+            st.altPrep = mp3Url(server, t.ratingKey, "decision");
+            st.coverUrl = coverUrl(server, t.thumb);
+        }
+        char rating[16];
+        std::snprintf(rating, sizeof(rating), "%.1f", t.userRating);
+        mine += "track=" + trackField(t.ratingKey) + "|" + std::to_string(t.duration * 1000) +
+                "|" + trackField(st.local == file && !file.empty() ? std::string() : st.local) +
+                "|" + rating + "|" + trackField(t.thumb) + "|" + trackField(t.title) + "|" +
+                trackField(t.artist) + "|" + trackField(t.album) + "|" + trackField(st.coverPng) +
+                "\n";
+        strings.push_back(std::move(st));
+    }
+    tracks.resize(strings.size());
+    for (std::size_t k = 0; k < strings.size(); k++) {
+        const QueueItem& t = items[(std::size_t)order[from + k]];
+        const Strings& st = strings[k];
+        ScTrack& tr = tracks[k];
+        std::memset(&tr, 0, sizeof(tr));
+        tr.id = st.id.c_str();
+        tr.durationMs = (uint32_t)std::max(0, t.duration) * 1000u;
+        tr.local = st.local.c_str();
+        tr.altUrl = st.altUrl.c_str();
+        tr.altPrep = st.altPrep.c_str();
+        tr.title = t.title.c_str();
+        tr.artist = t.artist.c_str();
+        tr.album = t.album.c_str();
+        tr.coverUrl = st.coverUrl.c_str();
+        tr.coverPng = st.coverPng.c_str();
     }
 
-    const std::string& path() const { return m_path; }
-    // Counted as they are accepted, so none is put down to a later attempt.
-    int connections() const { return m_connections; }
-    int tlsHandshakes() const { return m_tls; }
-    long long bytesSent() const { return m_sent; }
+    ScQueue sq;
+    std::memset(&sq, 0, sizeof(sq));
+    sq.index = (uint32_t)at;
+    sq.positionMs = (uint32_t)positionMs;
+    sq.repeat = repeatCode(q.getRepeatMode());
+    sq.offlineSkip = g_offlineSkip ? 1 : 0;
+    const std::string headers = plexHeaderLines(token);
+    sq.headers = headers.c_str();
+    // As PlexClient::reportTimeline and the background player's scrobble.
+    const std::string timeline =
+        server.empty() ? std::string()
+                       : server + "/:/timeline?ratingKey={id}&key=%2Flibrary%2Fmetadata%2F{id}"
+                                  "&state={state}&time={positionMs}&duration={durationMs}";
+    const std::string scrobble =
+        server.empty() ? std::string()
+                       : server + "/:/scrobble?key={id}&identifier=com.plexapp.plugins.library";
+    sq.state.url = timeline.c_str();
+    sq.state.method = "POST";   // openapi.json: /:/timeline is POST, /:/scrobble PUT
+    sq.stateEveryS = 10;
+    sq.played.url = scrobble.c_str();
+    sq.played.method = "PUT";
+    // No remote control (the plugin's control.* lines) yet: Plex's companion
+    // protocol is to be tried in VitaPlex itself first.
+    if (scWriteQueue(&sq, tracks.data(), (uint32_t)tracks.size()) < 0) return false;
 
-private:
-    int fail(const char* what) {
-        brls::Logger::info("[bgaudio] control server: {} failed, errno {}", what, errno);
-        if (m_fd >= 0) close(m_fd);
-        m_fd = -1;
+    const std::string written = writtenOf(shellcomp::path(SC_QUEUE));
+    char head[160];
+    std::snprintf(head, sizeof(head), "written=%s\nindex=%d\npositionMs=%lld\nrepeat=%d\n",
+                  written.c_str(), at, positionMs, repeatCode(q.getRepeatMode()));
+    if (written.empty() || !writeWhole(HANDOVER_QUEUE, head + mine + "end\n")) return false;
+    what = std::to_string(tracks.size()) + " song(s), from \"" + now.title + "\" at " +
+           mmss((unsigned)positionMs) +
+           (file.empty() ? std::string(", for SceShell to fetch") : ", from " + file);
+    key = now.ratingKey;
+    return true;
+}
+
+// vita-shell-companion's plugin open, loaded into SceShell first if it is
+// not there: what SceShell plays the queue through. On the UI thread.
+bool shellPluginOpen() {
+    return shellcomp::open("[bgaudio] SceShell");
+}
+
+// The cover made for the row here, put beside the songs for SceShell
+// ("<ratingKey>.png" in the folder of songs) as the song playing's, so that
+// the row keeps it.
+// Before the plugin is asked, which then fetches any it does not find.
+void shellSongCover(const std::string& key) {
+    uint32_t serial = 0;
+    std::string made, wanted;
+    {
+        std::lock_guard<std::mutex> lock(g_qmArtMutex);
+        serial = g_qmArtSerial;
+        made = g_qmArtDone;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_qmMutex);
+        wanted = g_qmSong.artUrl;
+    }
+    if (key.empty() || serial == 0 || made != wanted) return;
+    char artName[32], to[200];
+    std::snprintf(artName, sizeof(artName), SC_ART_FMT, (unsigned)(serial & 1));
+    const std::string from = shellcomp::path(artName);
+    std::snprintf(to, sizeof(to), "%s/%s.png", HANDOVER_SONGS, key.c_str());
+    const std::string part = std::string(to) + ".part";
+    if (!copyFile(from, part) || !moveIn(part, to)) {
+        std::remove(part.c_str());
+        brls::Logger::info("[bgaudio] SceShell: the song's cover could not be put at {}", to);
+    }
+}
+
+// The queue, written already, to SceShell (SC_CMD_MUSIC_PLAY). The row is
+// given back first, with the tick's lock held, so that nothing of this
+// process's follows. true when the plugin took it.
+bool handToShell() {
+    std::lock_guard<std::mutex> tickLock(g_qmTickMutex);
+    quickMenuRelease("handed to SceShell");
+    const int rc = scMusicPlay();
+    brls::Logger::info("[bgaudio] SceShell: asked to play the queue: {}", hex(rc));
+    return rc >= 0;
+}
+
+// Music playing goes to SceShell through vita-shell-companion's plugin, which
+// plays the queue on there through the shell's music player: the queue and
+// the song's cover written first, then mpv paused and the BGM port given
+// back, so that the two never play at once, then the plugin asked. The music
+// plays on once the app has gone, so the caller quits. Without the plugin, or
+// if it will not take the queue, the music is not handed over: it plays on
+// here. On the UI thread. true when it was handed over.
+bool handOver(const char* why) {
+    if (g_outsideMusic == kOutsideStops || g_handedOverAt != 0) return false;
+    const MpvPlayer::Snapshot s = MpvPlayer::getInstance().snapshot();
+    const bool playing = mpvPlays(s) && s.audioOnly;
+    if (!playing || !MusicQueue::getInstance().isMusicQueue()) {
+        // Which of the two: log b8cde643 said "no music playing" with mpv
+        // playing a queue of downloaded songs that was not marked as music.
+        brls::Logger::info("[bgaudio] SceShell: {}, {} ({}); nothing handed over", why,
+                           playing ? "with a queue that is not music" : "with no music playing",
+                           describeMpv(s));
+        return false;
+    }
+    if (!shellPluginOpen()) {
+        brls::Logger::warning("[bgaudio] SceShell: {}, but the shell companion plugin is not "
+                              "there to play the queue; nothing handed over",
+                              why);
+        return false;
+    }
+    std::string what, key;
+    if (!writeQueue(what, key)) {
+        brls::Logger::error("[bgaudio] SceShell: {}, but the queue could not be written to {} "
+                            "and {}",
+                            why, shellcomp::path(SC_QUEUE), HANDOVER_QUEUE);
+        return false;
+    }
+    // The folder of songs, there for SceShell to fetch into, with the song's
+    // cover.
+    sceIoMkdir(HANDOVER_SONGS, 0777);
+    shellSongCover(key);
+    MusicController::getInstance().playPause(false);
+    releasePort("handed to SceShell");
+    if (handToShell()) {
+        g_handedOverAt = sceKernelGetSystemTimeWide();
+        brls::Logger::info("[bgaudio] SceShell: {}: handed over {}", why, what);
+        return true;
+    }
+    brls::Logger::warning("[bgaudio] SceShell did not take the queue; the music plays on here");
+    MusicController::getInstance().playPause(true);
+    return false;
+}
+
+// ── Taking the music back ────────────────────────────────────────────────
+
+// A status SceShell wrote longer ago than this is not of a queue it carries on
+// now: it writes one every 2 s as it does.
+const double kCarryingSecs = 10.0;
+
+// A note as handover.h lays them out: "key=value" lines, and "end" last. The
+// track lines in order, split into their fields, in *tracks when asked for.
+bool readNote(const char* path, std::map<std::string, std::string>& fields,
+              std::vector<std::vector<std::string>>* tracks) {
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return false;
+    // Read whole, in 64 KB reads: a queue of a thousand songs, some 200 KB,
+    // took 1.3 s to read through stdio's 1 KB reads with VitaPlex starting
+    // (log 7c97dfa5), and more than 2.8 s in log 7c38c1fa.
+    std::setvbuf(f, nullptr, _IOFBF, 64 * 1024);
+    std::string text;
+    char buf[16384];
+    for (std::size_t n; (n = std::fread(buf, 1, sizeof(buf), f)) > 0;) text.append(buf, n);
+    std::fclose(f);
+    bool whole = false;
+    for (std::size_t at = 0; at < text.size();) {
+        std::size_t end = text.find('\n', at);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(at, end - at);
+        at = end + 1;
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+        if (line == "end") {
+            whole = true;
+            continue;
+        }
+        const std::size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string key = line.substr(0, eq);
+        const std::string value = line.substr(eq + 1);
+        if (key == "track" && tracks) {
+            std::vector<std::string> parts;
+            std::size_t from = 0;
+            for (;;) {
+                const std::size_t bar = value.find('|', from);
+                parts.push_back(value.substr(from, bar == std::string::npos ? bar : bar - from));
+                if (bar == std::string::npos) break;
+                from = bar + 1;
+            }
+            parts.resize(HANDOVER_TRACK_FIELDS);
+            tracks->push_back(std::move(parts));
+        } else if (key != "track") {
+            fields[key] = value;
+        }
+    }
+    return whole;
+}
+
+// SceShell's status, read again a few times when it is missing or not whole:
+// the plugin replaces it by removing it and moving the new one in
+// (carryStatusOf), and one read between the two finds none.
+bool readStatus(std::map<std::string, std::string>& status) {
+    for (int i = 0; i < 5; i++) {
+        if (i) sceKernelDelayThread(20 * 1000);
+        status.clear();
+        if (readNote(HANDOVER_STATUS, status, nullptr)) return true;
+    }
+    return false;
+}
+
+double fieldNum(const std::map<std::string, std::string>& m, const char* key) {
+    const auto it = m.find(key);
+    return it == m.end() ? -1 : std::atof(it->second.c_str());
+}
+
+std::string fieldText(const std::map<std::string, std::string>& m, const char* key) {
+    const auto it = m.find(key);
+    return it == m.end() ? std::string() : it->second;
+}
+
+// The songs SceShell played the queue from, once nothing plays them; but for
+// the files of the songs at keep, whole as the plugin moves its files in,
+// which go on here. Logged when any went.
+void removePlayerSongs(const std::vector<std::string>& keep = {}) {
+    const int removed = pruneSongs(keep);
+    if (removed)
+        brls::Logger::info("[bgaudio] take back: removed {} file(s) SceShell left{}", removed,
+                           keep.empty() ? "" : ", but for those of the songs near the one taken back");
+}
+
+// The song the shell plays on for SceShell's queue, when the plugin did not
+// stop it as told (takeBackFromShell): its clock read twice, half a second
+// apart, and its length checked against the queue's song, so that the system
+// Music app's song is left alone (BG Test 21, build 2012). Stopped when it is
+// the queue's. Where it was, or -1.
+long long takeFromShell(int durationMs) {
+    const int rcInit = sceMusicPlayerServiceInitialize(0);
+    if (rcInit < 0) {
+        brls::Logger::info("[bgaudio] take back: the system player would not start ({}); its "
+                           "song is left as it is",
+                           hex(rcInit));
         return -1;
     }
+    SceMusicPlayerServicePlayStatusExtension a, b;
+    std::memset(&a, 0, sizeof(a));
+    std::memset(&b, 0, sizeof(b));
+    sceMusicPlayerServiceGetPlayStatusExtension(&a);
+    sceKernelDelayThread(500 * 1000);
+    sceMusicPlayerServiceGetPlayStatusExtension(&b);
+    const bool plays = b.currentTime != a.currentTime || b.currentState == 1;
+    std::unique_ptr<SceMusicPlayerServiceTrackInfo> info(new SceMusicPlayerServiceTrackInfo());
+    const int rcInfo = sceMusicPlayerServiceGetTrackInfo(info.get());
+    const int off = info->duration - durationMs;
+    const bool ours = rcInfo >= 0 && durationMs > 0 && off > -3000 && off < 3000;
+    brls::Logger::info("[bgaudio] take back: the system player is at {} then {} (state {}), "
+                       "with a song {} long against the queue's {}",
+                       mmss(a.currentTime), mmss(b.currentTime), b.currentState,
+                       mmss((unsigned)std::max(0, info->duration)),
+                       mmss((unsigned)std::max(0, durationMs)));
+    long long at = -1;
+    if (plays && ours) {
+        at = b.currentTime;
+        const int rcStop = sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_STOP, 0);
+        brls::Logger::info("[bgaudio] take back: its song plays on in the system player; "
+                           "stopped there ({}) to go on here",
+                           hex(rcStop));
+    }
+    sceMusicPlayerServiceTerminate();
+    return at;
+}
 
-    void acceptLoop() {
-        while (!m_stop) {
-            pollfd p = {m_fd, POLLIN, 0};
-            if (poll(&p, 1, 250) <= 0) continue;
-            const int c = accept(m_fd, nullptr, nullptr);
-            if (c < 0) continue;
-            const int id = ++m_connections;
-            auto self = shared_from_this();
-            platform::launchThread([self, c, id]() { self->serve(c, id); });
-        }
-        close(m_fd);
-        m_fd = -1;
-        m_running = false;
+// Why the queue at HANDOVER_QUEUE is not the one SceShell played, as its
+// status says, which the take-back goes on with; "" when it is.
+std::string queueProblem(bool haveQueue, const std::map<std::string, std::string>& queue,
+                         std::size_t tracks, const std::map<std::string, std::string>& status) {
+    char why[128];
+    if (!haveQueue) {
+        std::snprintf(why, sizeof(why), "its queue at %s is %s", HANDOVER_QUEUE,
+                      fileExists(HANDOVER_QUEUE) ? "not whole" : "gone");
+    } else if (fieldNum(queue, "written") != fieldNum(status, "queue")) {
+        std::snprintf(why, sizeof(why), "its queue at %s is another, written at %.6f, not %.6f",
+                      HANDOVER_QUEUE, fieldNum(queue, "written"), fieldNum(status, "queue"));
+    } else if (fieldNum(status, "index") < 0 || fieldNum(status, "index") >= (double)tracks) {
+        std::snprintf(why, sizeof(why), "its song %d is not among the %d of its queue",
+                      (int)fieldNum(status, "index") + 1, (int)tracks);
+    } else {
+        return std::string();
+    }
+    return why;
+}
+
+// A queue SceShell carries on (handover.h), as VitaPlex opens: its player
+// set up here at SceShell's song and place, with SceShell playing on, and the
+// music taken back by the player once it is ready to play it (takeBackNow).
+// Up to build 2048 SceShell was told first and its song stopped here before
+// the player was set up, and mpv with it: 5 s of silence (log 4e8bcb05), or,
+// when VitaPlex went before it got to the shell, the song left playing there
+// with nothing looking after it (log 7c38c1fa). Off the UI thread: it reads
+// the queue, of a thousand songs at most.
+void takeBack() {
+    std::map<std::string, std::string> status, queue;
+    std::vector<std::vector<std::string>> tracks;
+    if (!readStatus(status)) {
+        removePlayerSongs();   // never handed over, or long done
+        return;
+    }
+    const double now = systemSecs();
+    const double written = fieldNum(status, "written");
+    // The system clock starts again with the Vita, so a status written later
+    // than now is from before it last started: one read as written 1101 s
+    // after VitaPlex started (log fbc54add). Nothing of it plays.
+    if (written > now + 1.0) {
+        brls::Logger::info("[bgaudio] take back: SceShell's status (\"{}\") is from before the "
+                           "Vita last started",
+                           fieldText(status, "state"));
+        removePlayerSongs();
+        return;
+    }
+    const std::string state = fieldText(status, "state");
+    const int index = (int)fieldNum(status, "index");
+    const long long at = (long long)std::max(0.0, fieldNum(status, "positionMs"));
+    brls::Logger::info("[bgaudio] take back: SceShell last said \"{}\", song {} at {}{}{}, "
+                       "{:.1f} s ago",
+                       state, index + 1, mmss((unsigned)at),
+                       fieldNum(status, "fetching") == 1 ? " as it is fetched" : "",
+                       fieldNum(status, "paused") == 1 ? ", paused" : "", now - written);
+    // SceShell writes its status every 2 s as it carries a queue on: one not
+    // written for longer is of music over, or of a plugin no longer there.
+    // Its files stay then, as the shell may yet play one of them: a file
+    // written over as the shell played it preceded a crash (logs 8fe35d97,
+    // 7ba90482). VitaPlex's own music clears them as it goes (pruneSongs).
+    if (state != HANDOVER_STATE_PLAYING) {
+        removePlayerSongs();
+        return;
+    }
+    if (now - written > kCarryingSecs) {
+        brls::Logger::info("[bgaudio] take back: that is too long ago for SceShell to be "
+                           "carrying it on");
+        return;
+    }
+    const bool haveQueue = readNote(HANDOVER_QUEUE, queue, &tracks);
+    const std::string problem = queueProblem(haveQueue, queue, tracks.size(), status);
+    if (!problem.empty()) {
+        brls::Logger::warning("[bgaudio] take back: {}; SceShell plays on", problem);
+        return;
     }
 
-    // Waits for the socket to take more, so a player that stops reading
-    // cannot hold this thread past the end of the test.
-    bool sendAll(int c, const char* data, std::size_t size) {
-        while (size > 0 && !m_stop) {
-            pollfd p = {c, POLLOUT, 0};
-            if (poll(&p, 1, 250) <= 0) continue;
-            const int n = send(c, data, size, 0);
-            if (n <= 0) return false;
-            data += n;
-            size -= (std::size_t)n;
-            m_sent += n;
-        }
-        return size == 0;
+    std::vector<MediaItem> items;
+    items.reserve(tracks.size());
+    for (const auto& t : tracks) {
+        MediaItem item;
+        item.ratingKey = t[HANDOVER_TRACK_KEY];
+        item.duration = std::atoi(t[HANDOVER_TRACK_DURATION].c_str());
+        item.userRating = (float)std::atof(t[HANDOVER_TRACK_RATING].c_str());
+        item.thumb = t[HANDOVER_TRACK_THUMB];
+        item.title = t[HANDOVER_TRACK_TITLE];
+        item.grandparentTitle = t[HANDOVER_TRACK_ARTIST];
+        item.parentTitle = t[HANDOVER_TRACK_ALBUM];
+        item.type = "track";
+        item.mediaType = MediaType::MUSIC_TRACK;
+        items.push_back(std::move(item));
     }
-
-    void serve(int c, int id) {
-        std::string req;
-        char buf[2048];
-        const SceInt64 t0 = sceKernelGetSystemTimeWide();
-        while (req.find("\r\n\r\n") == std::string::npos && req.size() < 8192 && !m_stop &&
-               sceKernelGetSystemTimeWide() - t0 < 5 * 1000000LL) {
-            pollfd p = {c, POLLIN, 0};
-            if (poll(&p, 1, 250) <= 0) continue;
-            const int n = recv(c, buf, sizeof(buf), 0);
-            if (n <= 0) break;
-            req.append(buf, (std::size_t)n);
-            if ((unsigned char)req[0] == 0x16) break;
-        }
-
-        // 0x16 opens a TLS record: an https client's handshake. There is no
-        // certificate here to answer it with, but that it came at all shows
-        // the player tried the https link.
-        if (!req.empty() && (unsigned char)req[0] == 0x16) {
-            m_tls++;
-            brls::Logger::info("[bgaudio] control server: request {}: a TLS handshake ({} bytes), "
-                               "an https client; closed, as this server has no certificate",
-                               id, req.size());
-            close(c);
+    const int repeat = (int)fieldNum(queue, "repeat");
+    {
+        std::lock_guard<std::mutex> lock(g_shellQueueMutex);
+        g_shellQueue.written = fieldNum(queue, "written");
+        g_shellQueue.keys.clear();
+        for (const auto& t : tracks) g_shellQueue.keys.push_back(t[HANDOVER_TRACK_KEY]);
+        g_shellQueue.repeatAll = repeat == HANDOVER_REPEAT_ALL;
+    }
+    brls::sync([items, index, at, repeat]() {
+        const MpvPlayer::Snapshot s = MpvPlayer::getInstance().snapshot();
+        if (s.initialized && s.state != MpvPlayerState::IDLE && s.state != MpvPlayerState::ENDED &&
+            s.state != MpvPlayerState::ERROR) {
+            brls::Logger::info("[bgaudio] take back: VitaPlex plays something already; the queue "
+                               "is not taken back");
             return;
         }
+        MusicQueue::getInstance().setRepeatMode(repeat == HANDOVER_REPEAT_ONE ? RepeatMode::ONE
+                                                : repeat == HANDOVER_REPEAT_ALL ? RepeatMode::ALL
+                                                                                : RepeatMode::OFF);
+        brls::Logger::info("[bgaudio] take back: the queue goes on here from \"{}\" once its "
+                           "player is ready; SceShell plays on until then",
+                           items[(std::size_t)index].title);
+        brls::Application::pushActivity(
+            PlayerActivity::createWithRestoredQueue(items, index, at, true));
+    });
+}
 
-        // "GET /path HTTP/1.1", then headers one to a line.
-        const std::string first = req.substr(0, req.find("\r\n"));
-        const std::size_t sp1 = first.find(' ');
-        const std::size_t sp2 = sp1 == std::string::npos ? sp1 : first.find(' ', sp1 + 1);
-        const std::string method = first.substr(0, sp1);
-        const std::string target =
-            sp1 == std::string::npos ? std::string() : first.substr(sp1 + 1, sp2 - sp1 - 1);
-        std::map<std::string, std::string> headers;
-        for (std::size_t at = req.find("\r\n"); at != std::string::npos;) {
-            const std::size_t next = req.find("\r\n", at + 2);
-            const std::string line = req.substr(at + 2, next == std::string::npos ? next : next - at - 2);
-            const std::size_t colon = line.find(':');
-            if (colon != std::string::npos) {
-                std::size_t v = colon + 1;
-                while (v < line.size() && line[v] == ' ') v++;
-                headers[line.substr(0, colon)] = line.substr(v);
-            }
-            at = next;
-        }
-        const std::string range = headerValue(headers, "Range");
-        brls::Logger::info("[bgaudio] control server: request {}: {} {}, range '{}', "
-                           "user-agent '{}'", id, method, target, range,
-                           headerValue(headers, "User-Agent"));
-
-        FILE* f = target == m_path ? std::fopen(m_file.c_str(), "rb") : nullptr;
-        if (!f) {
-            const char* notFound = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n"
-                                   "Connection: close\r\n\r\n";
-            sendAll(c, notFound, std::strlen(notFound));
-            close(c);
-            return;
-        }
-        std::fseek(f, 0, SEEK_END);
-        const long long size = std::ftell(f);
-        long long from = 0, to = size - 1;
-        bool partial = false;
-        if (range.rfind("bytes=", 0) == 0) {
-            const std::string spec = range.substr(6);
-            const std::size_t dash = spec.find('-');
-            if (dash != std::string::npos) {
-                from = std::atoll(spec.substr(0, dash).c_str());
-                if (dash + 1 < spec.size()) to = std::atoll(spec.substr(dash + 1).c_str());
-                if (to >= size) to = size - 1;
-                partial = from > 0 || to < size - 1;
-            }
-        }
-        const std::string ext = lowerExt(m_file);
-        const char* type = ext == "mp3" ? "audio/mpeg"
-                         : ext == "wav" ? "audio/wav"
-                         : ext == "at9" ? "audio/at9" : "audio/mp4";
-        const std::string contentRange =
-            partial ? "Content-Range: bytes " + std::to_string(from) + "-" + std::to_string(to) +
-                          "/" + std::to_string(size) + "\r\n"
-                    : std::string();
-        char head[400];
-        std::snprintf(head, sizeof(head),
-                      "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %lld\r\n"
-                      "Accept-Ranges: bytes\r\n%sConnection: close\r\n\r\n",
-                      partial ? "206 Partial Content" : "200 OK", type, to - from + 1,
-                      contentRange.c_str());
-        bool ok = sendAll(c, head, std::strlen(head));
-        long long sent = 0;
-        if (ok && method != "HEAD") {
-            std::fseek(f, (long)from, SEEK_SET);
-            std::vector<char> chunk(32 * 1024);
-            while (ok && from + sent <= to) {
-                const std::size_t want = (std::size_t)std::min<long long>(chunk.size(), to - from - sent + 1);
-                const std::size_t got = std::fread(chunk.data(), 1, want, f);
-                if (got == 0) break;
-                ok = sendAll(c, chunk.data(), got);
-                if (ok) sent += (long long)got;
-            }
-        }
-        std::fclose(f);
-        close(c);
-        brls::Logger::info("[bgaudio] control server: request {} done, {} of {} bytes sent", id,
-                           sent, to - from + 1);
+// The music taken back from SceShell for the player takeBack set up, now
+// that it is ready to play (takeBackNow): SceShell is told to stop, stops its
+// song, and writes where in the status once more, which it did 0.14 s after
+// it was told in log d6e76980. The songs near the one going on here keep
+// their files, which VitaPlex plays on from (songFile): the song before, for
+// previous, that song, made ready for the next hand-over too, and the next,
+// which SceShell fetched ahead (log 8e7a4b23: 22.6 s to stream it again).
+// On the UI thread, which waits on the shell meanwhile.
+ShellPlace takeBackFromShell() {
+    ShellQueue q;
+    {
+        std::lock_guard<std::mutex> lock(g_shellQueueMutex);
+        q = g_shellQueue;
     }
+    ShellPlace place;
+    const double asked = systemSecs();
+    const int rc = scMusicTakeBack();
+    std::map<std::string, std::string> status;
+    bool answered = false;
+    for (int i = 0; rc >= 0 && i < 60 && !answered; i++) {
+        sceKernelDelayThread(25 * 1000);
+        status.clear();
+        if (!readNote(HANDOVER_STATUS, status, nullptr)) continue;
+        answered = fieldNum(status, "written") >= asked;
+        // The queue over since VitaPlex read the status: no answer comes, and
+        // the UI need not wait for one.
+        if (!answered && fieldText(status, "state") != HANDOVER_STATE_PLAYING) break;
+    }
+    const double took = systemSecs() - asked;
+    // The files go only with nothing of the queue playing in the shell: a
+    // file written over as the shell played it preceded a crash (logs
+    // 8fe35d97, 7ba90482).
+    bool prune = answered;
+    if (answered) {
+        place.index = (int)fieldNum(status, "index");
+        place.atMs = (long long)std::max(0.0, fieldNum(status, "positionMs"));
+        place.play = fieldNum(status, "queue") == q.written;
+        // Paused from the quick menu: it stays paused here (build 2052).
+        place.paused = fieldNum(status, "paused") == 1;
+        brls::Logger::info("[bgaudio] take back: SceShell stopped at song {}, {} (\"{}\"), {:.2f} s "
+                           "after it was told{}{}",
+                           place.index + 1, mmss((unsigned)place.atMs), fieldText(status, "state"),
+                           took, place.paused ? ", paused from the quick menu" : "",
+                           place.play ? "" : ", in another queue");
+    } else {
+        // No answer: SceShell carried nothing on by then, its queue over or
+        // something else playing in the shell, or its plugin is one of before
+        // build 2049, which leaves its song playing. A song of the queue still
+        // in the shell is stopped here, as it was up to build 2048.
+        readStatus(status);
+        const std::string state = fieldText(status, "state");
+        brls::Logger::info("[bgaudio] take back: no answer from SceShell in {:.1f} s ({}); it "
+                           "last said \"{}\"",
+                           took, hex(rc), state);
+        prune = state != HANDOVER_STATE_PLAYING;
+        if (state == HANDOVER_STATE_PLAYING && fieldNum(status, "queue") == q.written) {
+            const long long at = takeFromShell((int)fieldNum(status, "durationMs"));
+            if (at >= 0) {
+                place.play = true;
+                place.index = (int)fieldNum(status, "index");
+                place.atMs = at;
+                prune = true;
+            }
+        }
+    }
+    if (place.play && (place.index < 0 || place.index >= (int)q.keys.size())) {
+        brls::Logger::warning("[bgaudio] take back: its song {} is not among the {} of the queue",
+                              place.index + 1, q.keys.size());
+        place.play = false;
+    }
+    if (prune) {
+        std::vector<std::string> near;
+        if (place.play) near = nearKeys(q.keys, place.index, q.repeatAll);
+        removePlayerSongs(near);
+        const std::string key = place.play ? q.keys[(std::size_t)place.index] : std::string();
+        const std::string kept = songFileFor(key);
+        if (!kept.empty()) keepReadySong(key, kept);
+        for (const std::string& k : near)
+            if (!songFileFor(k).empty())
+                brls::Logger::info("[bgaudio] take back: kept the file of song {}, {}", k,
+                                   k == key ? "the one taken back" : "near it");
+    }
+    return place;
+}
 
-    std::string m_file, m_path;
-    int m_fd = -1;
-    int m_port = 0;
-    std::atomic<bool> m_stop{false};
-    std::atomic<bool> m_running{false};
-    std::atomic<int> m_connections{0};
-    std::atomic<int> m_tls{0};
-    std::atomic<long long> m_sent{0};
-};
+// What VitaPlex's own plugin (up to build 2095) and the background player
+// (up to build 2047) left under their names (handover.h's HANDOVER_OLD*),
+// removed; but not while SceShell may still play from them, a queue handed
+// over by such a build carrying on in this boot, its status written in the
+// last 30 s.
+void removeOldNames() {
+    const double now = systemSecs();
+    int removed = 0;
+    const struct {
+        const char* status;
+        const char* songs;
+        const char* files[4];
+    } kOld[2] = {
+        {HANDOVER_OLD17_STATUS, HANDOVER_OLD17_SONGS, {HANDOVER_OLD17_STATUS, nullptr}},
+        {HANDOVER_OLD_STATUS,
+         HANDOVER_OLD_SONGS,
+         {HANDOVER_OLD_QUEUE, HANDOVER_OLD_STATUS, HANDOVER_OLD_LOG, HANDOVER_OLD_LOG2}},
+    };
+    for (const auto& old : kOld) {
+        std::map<std::string, std::string> status;
+        const double written =
+            readNote(old.status, status, nullptr) ? fieldNum(status, "written") : -1.0;
+        if (fieldText(status, "state") == HANDOVER_STATE_PLAYING && written <= now + 1.0 &&
+            now - written < 30.0) {
+            brls::Logger::info("[bgaudio] the files at {} left as they are: SceShell may still "
+                               "play from them",
+                               old.songs);
+            continue;
+        }
+        for (const char* path : old.files)
+            if (path) removed += std::remove(path) == 0 ? 1 : 0;
+        const SceUID d = sceIoDopen(old.songs);
+        if (d >= 0) {
+            SceIoDirent e;
+            for (;;) {
+                std::memset(&e, 0, sizeof(e));
+                if (sceIoDread(d, &e) <= 0) break;
+                if (e.d_name[0] == '.') continue;
+                const std::string path = std::string(old.songs) + "/" + e.d_name;
+                removed += std::remove(path.c_str()) == 0 ? 1 : 0;
+            }
+            sceIoDclose(d);
+            sceIoRmdir(old.songs);
+        }
+    }
+    if (removed)
+        brls::Logger::info("[bgaudio] removed {} file(s) under the names older builds gave them",
+                           removed);
+}
 
 }  // namespace
 
-bool available() {
-    static const bool bg = runningTitleId() == VITAPLEX_BG_TITLEID;
-    return bg;
+std::string songFile(const std::string& ratingKey) { return songFileFor(ratingKey); }
+
+ShellPlace takeBackNow() { return takeBackFromShell(); }
+
+void init(int outsideMusic) {
+    if (outsideMusic < kOutsideStops || outsideMusic > kOutsideHandsOver)
+        outsideMusic = kOutsideStops;
+    g_outsideMusic = outsideMusic;
+    g_keepPlaying = outsideMusic != kOutsideStops;
+    shellcomp::init();
+    brls::Logger::info("[bgaudio] music after leaving: {}",
+                       outsideMusic == kOutsidePlaysOn     ? "plays on, then SceShell"
+                       : outsideMusic == kOutsideHandsOver ? "SceShell at once"
+                                                           : "stops");
+    startWatcher();
+    // SceShell may be playing a queue handed over before: it
+    // plays on until the player takeBack sets up for it, once the first
+    // frame is up, is ready and tells it to stop (takeBackNow). Whatever the
+    // setting: music handed over before it was changed comes back all the
+    // same. In the first frame, once the server is connected and the main
+    // screen is up; the song plays on in the shell until then.
+    brls::sync([]() {
+        platform::launchThread([]() {
+            takeBack();
+            removeOldNames();
+        });
+    });
 }
 
-void init(bool keepPlaying) {
-    // A toggle saved where it was offered stays off in VitaPlex itself.
-    g_keepPlaying = keepPlaying && available();
-    brls::Logger::info("[bgaudio] running as {}; keep playing in background: {}",
-                       available() ? "VitaPlex BG" : "VitaPlex", g_keepPlaying.load());
-    // Whatever the setting, and in either package: the watcher is also what
-    // answers the system's request to quit (see onRequestQuit and
-    // watcherMain). Off, that is all it does.
-    startWatcher(g_keepPlaying);
-}
-
-void setKeepPlaying(bool on) {
-    if (!available()) return;
+void setOutsideMusic(int mode) {
+    if (mode < kOutsideStops || mode > kOutsideHandsOver) mode = kOutsideStops;
+    g_outsideMusic = mode;
+    const bool on = mode != kOutsideStops;
     g_keepPlaying = on;
-    brls::Logger::info("[bgaudio] keep playing in background set to {}", on);
+    brls::Logger::info("[bgaudio] music after leaving set to {}", mode);
     if (on) {
-        startWatcher();
-        if (MpvPlayer::getInstance().isPlaying()) holdPort(kPortForApp, "mpv, already playing");
+        if (MpvPlayer::getInstance().isPlaying()) holdPort("mpv, already playing");
+        // The song playing, begun with the setting off, made ready for a
+        // hand-over now: else SceShell fetched it as VitaPlex quit, 14 s
+        // after the setting was changed, and waited 11.7 s for it (log
+        // 9ed6aa55).
+        readySongForPlaying();
     } else {
-        releasePort(kPortForApp, "setting turned off");
+        dropReadySong();
+        releasePort("setting turned off");
     }
+}
+
+int outsideMusic() { return g_outsideMusic; }
+
+void setOfflineSkip(bool on) {
+    g_offlineSkip = on;
+    brls::Logger::info("[bgaudio] SceShell, with the server not answering: {}",
+                       on ? "on to the songs on the memory card" : "songs passed over");
+}
+
+bool installUpdate() {
+    if (!shellPluginOpen()) {
+        brls::Logger::warning("[bgaudio] update: the shell companion plugin is not there to "
+                              "install it");
+        return false;
+    }
+    const int rc = scUpdateInstall();
+    brls::Logger::info("[bgaudio] update: the plugin asked to install it once VitaPlex has gone: "
+                       "{}",
+                       hex(rc));
+    if (rc < 0) return false;
+    // As onRequestQuit does as the system closes VitaPlex.
+    quickMenuRelease("the app quits to be updated");
+    releasePort("quitting to be updated");
+    if (!handOver("VitaPlex quits to be updated")) dropReadySong();
+    return true;
+}
+
+bool installUpdateVpk(const std::string& vpkPath) {
+    if (!shellPluginOpen()) {
+        brls::Logger::warning("[bgaudio] update: the shell companion plugin is not there to "
+                              "install it");
+        return false;
+    }
+    const int rc = scUpdateInstallVpk(vpkPath.c_str());
+    brls::Logger::info("[bgaudio] update: the plugin asked to unpack and install {} once VitaPlex "
+                       "has gone: {}",
+                       vpkPath, rc == -2 ? std::string("not sent, the plugin can't") : hex(rc));
+    if (rc < 0) return false;
+    // As onRequestQuit does as the system closes VitaPlex.
+    quickMenuRelease("the app quits to be updated");
+    releasePort("quitting to be updated");
+    if (!handOver("VitaPlex quits to be updated")) dropReadySong();
+    return true;
 }
 
 bool keepPlaying() { return g_keepPlaying; }
 
+void exitProcess(int code) {
+    sceKernelExitProcess(code);
+    for (;;) sceKernelDelayThread(1000 * 1000);
+}
+
 void onAudioPlayback(bool playing) {
     // Held from the first play and through pauses, like ElevenMPV-A; it goes
     // when the player does, or when the setting is turned off.
-    if (playing && g_keepPlaying) holdPort(kPortForApp, "mpv playback");
+    if (playing && g_keepPlaying) holdPort("mpv playback");
 }
 
-void onTrackLoad() { g_loads++; }
+void onPlayerShutdown() { releasePort("player shut down"); }
 
-void onPlayerShutdown() { releasePort(kPortForApp, "player shut down"); }
-
-void runShellFileTest(Report done) {
-    if (g_shellBusy.exchange(true)) {
-        done("A system player test is already running.");
-        return;
-    }
-    startWatcher();
-
-    const std::string path = pickLocalFile();
-    if (path.empty()) {
-        g_shellBusy = false;
-        done("No file to try. Download a track that is MP3, M4A, AAC or WAV, or put a "
-             "test.mp3 in " + platformPath("") + ", then run this again.");
-        return;
-    }
-
-    pauseMpvForShell();
-    const std::string service = serviceName(g_service.load());
-    platform::launchThread([done, path, service]() {
-        ShellTry r;
-        {
-            std::lock_guard<std::mutex> lock(g_shellMutex);
-            holdPort(kPortForShell, "system player test");
-            r = shellTry("File " + baseName(path), path, true, g_service.load());
-        }
-        std::string report = "System player (" + service + "), local file\n\n" + r.line + "\n\n";
-        report += (r.played || r.maybe)
-            ? listenAdvice(r.played)
-            : "The system player did not play it. The log has every return code "
-              "(Settings > Interface > View Log, lines with [bgaudio]).";
-        finishTest(done, report);
-    });
+void setQuickMenuControls(bool on) {
+    g_qmEnabled = on;
+    if (!on && g_qmActive.exchange(false)) scRowRelease();
 }
 
-// Not a guess at what the shell wants but an experiment with controls. The
-// first build tried only Plex's live transcode. The next added Plex's own
-// file and a control, a plain link VitaPlex served itself, which the music
-// player (type 0) and then the application-BGM service never connected to on
-// a console. That left two things open: the control was a WAV there, and four
-// services were never tried. So now, on all six in turn:
-//
-//   1. From disk: an MP3 of this track (its first 2 MB, from the server),
-//      opened by a path on the memory card. A service that cannot play that
-//      proves nothing by failing on a link.
-//   2. Links: the same MP3, served by VitaPlex on the plainest link there
-//      is (plain http, its own extension, no query string, a length and
-//      range support), every connection logged. None at all means the
-//      service never tried to fetch it, whatever it returned. Then an https
-//      link to the same server: with no certificate that cannot play, but a
-//      TLS handshake arriving shows the service does try https links.
-//   3. Plex's own file and its MP3 transcode, over http and https, but only
-//      on a service that tried one of those links: on any other they cannot
-//      work, and earlier runs showed they did not.
-void runShellStreamTest(Report done) {
-    if (g_shellBusy.exchange(true)) {
-        done("A system player test is already running.");
-        return;
+void quickMenuNowPlaying(const std::string& title, const std::string& artist,
+                         const std::string& album, const std::string& artUrl, bool playing) {
+    {
+        std::lock_guard<std::mutex> lock(g_qmMutex);
+        if (!g_qmSong.wanted || title != g_qmSong.title || artist != g_qmSong.artist ||
+            album != g_qmSong.album)
+            g_qmSong.serial++;
+        g_qmSong.title = title;
+        g_qmSong.artist = artist;
+        g_qmSong.album = album;
+        g_qmSong.artUrl = artUrl;
+        g_qmSong.playing = playing;
+        g_qmSong.wanted = true;
     }
-    const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
-    if (!track || track->ratingKey.empty()) {
-        g_shellBusy = false;
-        done("Play a track first; this tries that track's Plex stream in the system player.");
-        return;
-    }
-    startWatcher();
-    pauseMpvForShell();
-
-    const std::string ratingKey = track->ratingKey;
-    const std::string title = track->title;
-    const int picked = g_service.load();
-    const std::string localFile = pickLocalFile();
-    platform::launchThread([done, ratingKey, title, picked, localFile]() {
-        PlexClient& plex = PlexClient::getInstance();
-        std::vector<std::string> lines;
-
-        // What the server has for this track: the file's link, and the
-        // source of the MP3.
-        MediaItem item;
-        const bool haveDetails = plex.fetchMediaDetails(ratingKey, item);
-        const std::string fileExt = lowerExt(item.partPath);
-        const bool fileDecodes = haveDetails && !item.partPath.empty() && shellDecodes(fileExt);
-        const std::string fileUrl = fileDecodes
-            ? plex.getServerUrl() + item.partPath + "?X-Plex-Token=" + plex.getAuthToken()
-            : std::string();
-
-        // The MP3: the start of this track's own file when that is an MP3,
-        // else of its MP3 transcode (the start of an M4A need not play: its
-        // index can be at the end). A download the shell decodes only if
-        // neither can be had.
-        std::string controlFile;
-        bool controlDownloaded = false;
-        {
-            std::string src = fileExt == "mp3" ? fileUrl : std::string(), session;
-            if (src.empty()) plex.getTranscodeUrlSpeculative(ratingKey, src, session);
-            const std::string dest = platformPath("bgtest-control.mp3");
-            if (!src.empty() && downloadPrefix(src, dest, 2 * 1024 * 1024)) {
-                controlFile = dest;
-                controlDownloaded = true;
-            }
-            if (controlFile.empty()) controlFile = localFile;
-        }
-
-        std::lock_guard<std::mutex> lock(g_shellMutex);
-        holdPort(kPortForShell, "system player test");
-        brls::Logger::info("[bgaudio] BGM port before the test: {}", bgmState());
-
-        // 1 and 2, on each service: the picked one first (its http link also
-        // on the Wi-Fi address), then the other five. From disk, the clock is
-        // let run to 3.5 s, so the attempt after it can tell a new source by
-        // the clock going back to the start. A link is given at least 4 s,
-        // time enough for a player that fetches to have connected.
-        const TryTiming fromDisk{8000, 0, 3500};
-        const TryTiming onLink{8000, 4000, 3500};
-        struct ServiceRun {
-            int service = 0;
-            ShellTry disk;
-            bool fetchedHttp = false;  // made an http request of the test server
-            bool triedHttps = false;   // began a TLS handshake with it
-            bool linkPlayed = false;
-            bool linkHeld = false;     // a link attempt VitaPlex was held through, twice
-        };
-        int repeated = 0;   // attempts made again because VitaPlex was held
-        std::vector<ServiceRun> runs;
-        bool controlValid = !controlFile.empty();
-        if (controlFile.empty()) {
-            lines.push_back("Control: skipped. No MP3 came from the server, and there is no MP3, "
-                            "M4A, AAC or WAV download, or test.mp3, to use instead");
-        } else {
-            lines.push_back("Control: " +
-                            (controlDownloaded ? std::string("the first 2 MB of this track as an MP3")
-                                               : "your " + baseName(controlFile)) +
-                            ", played by each service from the memory card, then from a plain "
-                            "http link VitaPlex serves itself, and an https one to the same server");
-            auto server = std::make_shared<ControlServer>();
-            const int port = server->start(controlFile);
-            if (port < 0) {
-                lines.push_back("  skipped: VitaPlex could not start its test server");
-                controlValid = false;
-            } else if (const ServerAnswer self = askServer(
-                           "control server self-check",
-                           "http://127.0.0.1:" + std::to_string(port) + server->path());
-                       self.status != 200 && self.status != 206) {
-                // Without this, "the player never connected" could be the
-                // server's fault rather than the player's.
-                lines.push_back("  VitaPlex could not fetch from its own test server either (" +
-                                describe(self) + "), so the control shows nothing");
-                controlValid = false;
-            } else {
-                lines.push_back("  VitaPlex fetched from the link itself: it works");
-                std::vector<int> order = {picked};
-                for (int sv = 0; sv <= kServiceAppBgm; sv++)
-                    if (sv != picked) order.push_back(sv);
-                const std::string wifi = wifiAddress();
-                const std::string ext = lowerExt(controlFile);
-                std::string diskFile;
-                for (int sv : order) {
-                    ServiceRun run;
-                    run.service = sv;
-                    const std::string tag = "  " + shortName(sv);
-
-                    // A name of its own for each service, so that one service
-                    // having opened the file cannot count for the next.
-                    if (!diskFile.empty() && diskFile != controlFile) removeTestFile(diskFile);
-                    const std::string copy =
-                        platformPath("bgtest-disk-" + std::to_string(sv) + "." + ext);
-                    diskFile = copyFile(controlFile, copy) ? copy : controlFile;
-                    // The first try cannot tell when what was loaded before
-                    // is as long and had not played 3 s; the second can. A
-                    // try VitaPlex was held through is made again.
-                    for (int k = 0; k < 3; k++) {
-                        run.disk = shellTry(tag + ", from disk", diskFile, false, sv, fromDisk);
-                        if (!run.disk.unsure && !run.disk.interrupted) break;
-                        if (run.disk.interrupted && k < 2) repeated++;
-                    }
-                    lines.push_back(run.disk.line);
-
-                    // Plex serves https as well as http. The test server
-                    // cannot finish an https connection, having no
-                    // certificate, but whether one is begun at all it sees.
-                    struct Link {
-                        std::string host;
-                        bool https;
-                    };
-                    std::vector<Link> links = {{"127.0.0.1", false}, {"127.0.0.1", true}};
-                    if (sv == picked && !wifi.empty() && wifi != "127.0.0.1")
-                        links.push_back({wifi, false});
-                    for (const auto& link : links) {
-                        // Connections are counted over every try: one made
-                        // while VitaPlex was held still happened.
-                        const int connBefore = server->connections();
-                        const int tlsBefore = server->tlsHandshakes();
-                        const long long sentBefore = server->bytesSent();
-                        const std::string url = std::string(link.https ? "https://" : "http://") +
-                                                link.host + ":" + std::to_string(port) + server->path();
-                        const std::string label = tag + (link.https ? ", https link" : ", http link") +
-                                                  (link.host == "127.0.0.1" ? "" : " via " + link.host);
-                        ShellTry r;
-                        for (int k = 0; k < 2; k++) {
-                            r = shellTry(label, url, false, sv, onLink);
-                            if (!r.interrupted) break;
-                            if (k == 0) repeated++;
-                        }
-                        const int conns = server->connections() - connBefore;
-                        const int tls = server->tlsHandshakes() - tlsBefore;
-                        const long long kb = (server->bytesSent() - sentBefore) / 1024;
-                        if (r.interrupted && conns == 0) {
-                            run.linkHeld = true;
-                        } else if (conns == 0) {
-                            // Nothing was fetched, so nothing it played was the link.
-                            r.played = false;
-                            r.line = label + ": never connected to the server" +
-                                     (r.moved ? "; the file from before went on"
-                                              : r.maybe ? "" : ", and no sound");
-                        } else if (tls == conns) {
-                            r.played = false;
-                            run.triedHttps = true;
-                            r.line = label + ": connected and began https (" + std::to_string(tls) +
-                                     " TLS handshake(s)), which the test server cannot finish. "
-                                     "So it does try https links";
-                        } else {
-                            run.fetchedHttp = true;
-                            // The same MP3 is loaded under its disk name, so
-                            // the length cannot see a switch; the server can.
-                            if (!r.played && r.moved && kb >= 64) {
-                                r.played = true;
-                                r.line = label + ": plays";
-                            }
-                            r.line += " [server: " + std::to_string(conns) + " connection(s), " +
-                                      std::to_string(kb) + " KB sent]";
-                        }
-                        run.linkPlayed = run.linkPlayed || r.played;
-                        lines.push_back(r.line);
-                    }
-                    runs.push_back(run);
-                }
-                lines.push_back("  (type 0 to 4: the music player's five client types. app BGM: "
-                                "the app background music service.)");
-                if (!diskFile.empty() && diskFile != controlFile) removeTestFile(diskFile);
-            }
-            server->stop();
-        }
-        if (controlDownloaded) removeTestFile(controlFile);
-
-        std::vector<std::string> fetchedHttp, triedHttps, fromDiskNames, noClock, notSeen, held;
-        bool anyLinkPlayed = false;
-        // Plex's links go to the service that did best with the control:
-        // played the link, else fetched it, else began https.
-        int plexService = picked, plexRank = 0;
-        for (const auto& run : runs) {
-            const std::string n = shortName(run.service);
-            if (run.fetchedHttp) fetchedHttp.push_back(n);
-            if (run.triedHttps) triedHttps.push_back(n);
-            anyLinkPlayed = anyLinkPlayed || run.linkPlayed;
-            const int rank = run.linkPlayed ? 3 : run.fetchedHttp ? 2 : run.triedHttps ? 1 : 0;
-            if (rank > plexRank) {
-                plexRank = rank;
-                plexService = run.service;
-            }
-            if (run.linkHeld && !run.fetchedHttp && !run.triedHttps) held.push_back(n);
-            else if (run.disk.played) fromDiskNames.push_back(n);
-            else if (run.disk.maybe) noClock.push_back(n);
-            else notSeen.push_back(n);
-        }
-        const bool linkTried = plexRank > 0;
-
-        // 3. Plex's own file and its MP3 transcode: on a service that tried
-        // one of the control's links, or on the picked one when there was no
-        // control to ask.
-        const bool tryPlex = !controlValid || linkTried;
-        const bool https = plex.getServerUrl().rfind("https://", 0) == 0;
-        auto asHttp = [](std::string url) {
-            if (url.rfind("https://", 0) == 0) url = "http://" + url.substr(8);
-            return url;
-        };
-        struct Attempt {
-            std::string label;
-            bool transcode;
-            bool http;
-        };
-        std::vector<Attempt> attempts;
-        if (tryPlex) {
-            lines.push_back("");
-            if (!haveDetails) {
-                lines.push_back("Plex's file: could not read the track's details");
-            } else if (!fileDecodes) {
-                lines.push_back("Plex's file: skipped, it is " +
-                                (fileExt.empty() ? std::string("an unknown format") : fileExt) +
-                                ", which the shell does not decode");
-            } else {
-                lines.push_back("Plex's " + fileExt + " file, as stored on the server (" +
-                                serviceName(plexService) + ")");
-                attempts.push_back({"http", false, true});
-                if (https) attempts.push_back({"https", false, false});
-            }
-        }
-        const std::size_t firstTranscode = attempts.size();
-        if (tryPlex) {
-            attempts.push_back({"http", true, true});
-            if (https) attempts.push_back({"https", true, false});
-        }
-
-        int firstPlayed = -1, firstMaybe = -1;
-        auto urlFor = [&](const Attempt& a) {
-            std::string url;
-            if (a.transcode) {
-                // A fresh session for every attempt, so the server never sees
-                // one session asked for twice.
-                std::string session;
-                if (!plex.getTranscodeUrlSpeculative(ratingKey, url, session)) return std::string();
-            } else {
-                url = fileUrl;
-            }
-            return a.http ? asHttp(url) : url;
-        };
-        for (std::size_t i = 0; i < attempts.size(); i++) {
-            if (i == firstTranscode) {
-                lines.push_back("");
-                lines.push_back("Plex's MP3 transcode, as VitaPlex plays it (" +
-                                serviceName(plexService) + ")");
-            }
-            const std::string url = urlFor(attempts[i]);
-            if (url.empty()) {
-                lines.push_back("  " + attempts[i].label + ": could not get a link from the server");
-                continue;
-            }
-            const std::string server =
-                attempts[i].transcode ? std::string() : describe(askServer("file, " + attempts[i].label, url));
-            const ShellTry r = shellTry("  " + attempts[i].label, url, false, plexService);
-            lines.push_back(r.line + (server.empty() ? "" : " [" + server + "]"));
-            if (r.played && firstPlayed < 0) firstPlayed = (int)i;
-            if (r.maybe && firstMaybe < 0) firstMaybe = (int)i;
-        }
-
-        // Start the best Plex form again and leave it going, so the user can
-        // hear whether it carries on outside the app. The control cannot be
-        // left going: its server stops with the test.
-        const int best = firstPlayed >= 0 ? firstPlayed : firstMaybe;
-        ShellTry replay;
-        if (best >= 0) {
-            const std::string url = urlFor(attempts[best]);
-            if (!url.empty()) replay = shellTry("  " + attempts[best].label, url, true, plexService);
-        }
-        const bool playingNow = replay.played || replay.maybe;
-        if (!playingNow) {
-            stopShellLocked("test over, nothing left playing");
-            releasePort(kPortForShell, "system player test over");
-        }
-
-        std::string report = "System player, streaming \"" + title + "\"\n\n";
-        for (const auto& l : lines) report += l + "\n";
-        report += "\n";
-        if (repeated > 0)
-            report += "Leaving VitaPlex holds it, so " + std::to_string(repeated) +
-                      (repeated == 1 ? " step was" : " steps were") + " run again. ";
-        if (!held.empty())
-            report += joinNames(held) + ": VitaPlex was in the background during a link twice, so "
-                      "what " + (held.size() == 1 ? "that service does" : "those services do") +
-                      " with links is not known. Run the test again and stay in VitaPlex. ";
-        if (controlValid && !linkTried) {
-            if (fromDiskNames.empty()) {
-                report += "No service was seen playing the MP3 from the memory card, so this run "
-                          "shows nothing about links. The log has every return code (lines with "
-                          "[bgaudio]).";
-            } else {
-                const bool one = fromDiskNames.size() == 1;
-                report += joinNames(fromDiskNames) + " played the MP3 from the memory card, but " +
-                          (one ? "did not connect" : "none of them connected") +
-                          " to the same MP3 on a plain http link (one VitaPlex itself fetched from "
-                          "without trouble), or even " + (one ? "open" : "opened") +
-                          " a connection for an https link to it. ";
-                if (!noClock.empty())
-                    report += joinNames(noClock) + (noClock.size() == 1 ? " reports" : " report") +
-                              " no progress, so whether it played from the memory card could not "
-                              "be measured; it did not connect either. ";
-                if (!notSeen.empty())
-                    report += joinNames(notSeen) + (notSeen.size() == 1 ? " was" : " were") +
-                              " not seen playing it from the memory card, so what " +
-                              (notSeen.size() == 1 ? "it" : "they") +
-                              " did with the links shows nothing. ";
-                report += "So the system player does not fetch links, http or https. It cannot "
-                          "stream from Plex whatever the link, and that is not down to Plex, the "
-                          "certificate or the query string. Plex's own links were not tried for "
-                          "that reason.";
-            }
-        } else {
-            if (!fetchedHttp.empty())
-                report += "Fetched the http link: " + joinNames(fetchedHttp) +
-                          (anyLinkPlayed ? ". The system player can play a plain http link. "
-                                         : ", but did not play it. ");
-            if (!triedHttps.empty())
-                report += "Began https on the https link: " + joinNames(triedHttps) +
-                          ". The test server cannot finish https, so Plex's own https link, "
-                          "above, is the test of that. ";
-            if (playingNow) {
-                report += "Plex: " + std::string(attempts[best].transcode ? "the transcode" : "the file") +
-                          " over " + attempts[best].label + ". " + listenAdvice(replay.played);
-            } else if (best >= 0) {
-                report += "A Plex link looked like it worked during the test but did not start "
-                          "again afterwards. The log has the details (lines with [bgaudio]).";
-            } else {
-                report += "No Plex link played. The log has every return code and request "
-                          "(lines with [bgaudio]).";
-            }
-        }
-        finishTest(done, report);
-    });
+    readySongForPlaying();
 }
 
-int shellService() { return g_service; }
-
-void setShellService(int service) {
-    if (service < 0 || service > kServiceAppBgm) service = 0;
-    g_service = service;
-    brls::Logger::info("[bgaudio] system player tests will use {}", serviceName(service));
-}
-
-std::string stopShellTest() {
-    std::unique_lock<std::mutex> lock(g_shellMutex, std::try_to_lock);
-    if (!lock.owns_lock()) return "A test is still running; stop it once it has reported.";
-    if (!g_shellInit) return "The system player is not playing anything from VitaPlex.";
-    stopShellLocked("stopped from settings");
-    lock.unlock();
-    releasePort(kPortForShell, "system player test over");
-    return "System player stopped.";
+void quickMenuNowPlayingCleared() {
+    {
+        std::lock_guard<std::mutex> lock(g_qmMutex);
+        g_qmSong.wanted = false;
+    }
+    dropReadySong();
 }
 
 }  // namespace bgaudio

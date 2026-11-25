@@ -51,6 +51,7 @@ private:
         SEC_DOWNLOADS,
         SEC_MUSIC,
         SEC_LIVETV,
+        SEC_LOGS,
         SEC_ABOUT,
         SEC_COUNT
     };
@@ -69,6 +70,7 @@ private:
     brls::Box* createDownloadsSection();
     brls::Box* createMusicSection();
     brls::Box* createLiveTVSection();
+    brls::Box* createLogsSection();
 
     // Master/detail plumbing — see settings_tab.cpp for the layout.
     brls::Box*           makeSectionBox();
@@ -106,7 +108,6 @@ private:
     void onSubtitleSizeChanged(int index);
     void onSeekIntervalChanged(int index);
     void onPlayerLayoutChanged(int index);
-    void onVideoPlayerLayoutChanged(int index);
     void onControlsAutoHideChanged(int index);
     void onConnectionTimeoutChanged(int index);
     void onManageHiddenLibraries();
@@ -159,7 +160,6 @@ private:
     brls::DetailCell*   m_seekIntervalSelector = nullptr;
     brls::DetailCell*   m_controlsAutoHideSelector = nullptr;
     brls::DetailCell*   m_playerLayoutSelector = nullptr;
-    brls::DetailCell*   m_videoPlayerLayoutSelector = nullptr;
     brls::BooleanCell* m_autoSkipIntroToggle = nullptr;
     brls::BooleanCell* m_autoSkipCreditsToggle = nullptr;
 

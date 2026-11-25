@@ -68,6 +68,15 @@ inline void setProgress(double, const std::string&, const std::string&, bool) {}
 
 #endif
 
+// Vita only: whether the progress notification showing is the one VitaPlex's
+// quick menu plugin shows for it, which SceShell goes on with once VitaPlex
+// has gone, rather than VitaPlex's own.
+#if defined(__vita__)
+bool progressInShell();
+#else
+inline bool progressInShell() { return false; }
+#endif
+
 // Windows only, and only meaningful there: whether the app may write the Start
 // Menu shortcut that toast notifications are keyed on. A portable install can
 // turn it off and leave nothing behind on the machine, at the cost of a

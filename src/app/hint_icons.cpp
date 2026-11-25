@@ -32,6 +32,11 @@
 #include <SDL2/SDL_system.h>
 #endif
 
+// patches/brls_hint.cpp: borealis' hints ask this for a picture of a button.
+namespace brls {
+std::function<std::string(ControllerButton)>& hintIconImageResolver();
+}
+
 namespace vitaplex {
 
 namespace {
@@ -231,6 +236,9 @@ void HintIcons::init() {
     if (SDL_IsAndroidTV())
         g_source.store(InputSource::Controller);
 #endif
+    // borealis' own hints (dialogs, the keyboard's Back / OK) show the same
+    // per-platform pictures as the app's hint bar, not Switch-style glyphs.
+    brls::hintIconImageResolver() = [](brls::ControllerButton b) { return getResPath(b); };
     g_initialized = true;
 }
 

@@ -1081,14 +1081,19 @@ void LibrarySectionTab::jumpToLetter(char letter) {
     char target = (char)toupper((unsigned char)letter);
     auto rank = [](char b) { return b == '#' ? 0 : (int)b; };   // '#' sorts first
 
-    // m_items is sorted by titleSort asc → first item whose bucket reaches target.
+    // m_items is sorted by titleSort, A-Z or Z-A → the first item whose bucket
+    // reaches the target in that direction (Z-A: '#' comes last).
+    const bool descending = (m_sortParam == "titleSort:desc");
     size_t found = m_items.size();
     for (size_t i = 0; i < m_items.size(); i++) {
-        if (rank(azBucket(m_items[i].title)) >= rank(target)) { found = i; break; }
+        const int r = rank(azBucket(m_items[i].title));
+        if (descending ? r <= rank(target) : r >= rank(target)) { found = i; break; }
     }
     if (found >= m_items.size()) found = m_items.size() - 1;   // letter beyond loaded range
 
     m_contentGrid->scrollToItemIndex(found, true);
+    // LEFT off the rail goes to that item, not the one focused before the jump.
+    m_contentGrid->setPendingFocusIndex(found);
     m_currentAzLetter = target;
     refreshAzRail();
 }
@@ -1096,7 +1101,7 @@ void LibrarySectionTab::jumpToLetter(char letter) {
 void LibrarySectionTab::refreshAzRail() {
     if (!m_azRail) return;
     bool active = (m_viewMode == LibraryViewMode::ALL_ITEMS &&
-                   m_sortParam == "titleSort:asc");
+                   (m_sortParam == "titleSort:asc" || m_sortParam == "titleSort:desc"));
     m_azRail->setVisibility(active ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
     if (!active) return;
 
@@ -1360,7 +1365,7 @@ void LibrarySectionTab::onItemSelected(const MediaItem& item) {
 
     // Normal item selection
     if (item.mediaType == MediaType::MUSIC_TRACK) {
-        Application::getInstance().pushPlayerActivity(item.ratingKey);
+        Application::getInstance().pushTrackPlayerActivity(item.ratingKey);
         return;
     }
 
@@ -1938,7 +1943,8 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
                             playlistTitle, 0, fullItem.index,
                             fullItem.thumb,
                             DownloadGroupType::PLAYLIST, playlistId,
-                            playlistTitle, playlistThumb)) {
+                            playlistTitle, playlistThumb,
+                            fullItem.parentTitle, fullItem.grandparentTitle)) {
                             queued++;
                         }
                     }

@@ -1,7 +1,11 @@
 // VitaPlex - Player Activity implementation
 
+#include <atomic>
+#include <mutex>
 #include "activity/player_activity.hpp"
 #include "app/application.hpp"
+#include "app/video_queue.hpp"
+#include "app/video_background.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/music_queue.hpp"
@@ -11,6 +15,7 @@
 #include "app/synclounge_session.hpp"
 #include "player/mpv_player.hpp"
 #include "utils/async.hpp"
+#include "utils/background_audio.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
 #include "utils/media_keys.hpp"
@@ -35,6 +40,18 @@
 #endif
 
 namespace vitaplex {
+
+namespace {
+// PlayerActivity::resumeNextAt's, taken by the load it is for.
+std::string s_resumeKey;
+int s_resumeMs = 0;
+// The place to start mediaKey at if one was asked for, else -1.
+int takeForcedResume(const std::string& mediaKey) {
+    if (s_resumeKey.empty() || s_resumeKey != mediaKey) return -1;
+    s_resumeKey.clear();
+    return s_resumeMs;
+}
+}  // namespace
 
 // Base temp path for streamed audio (mpv's HTTP handling crashes on Vita); extension added from the real file type.
 
@@ -93,6 +110,12 @@ PlayerActivity::PlayerActivity(const std::string& mediaKey, bool isLocalFile)
                        isLocalFile ? "local" : "remote", mediaKey);
 }
 
+PlayerActivity* PlayerActivity::createForTrack(const std::string& mediaKey, bool isLocalFile) {
+    PlayerActivity* activity = new PlayerActivity(mediaKey, isLocalFile);
+    activity->m_singleTrack = true;
+    return activity;
+}
+
 PlayerActivity* PlayerActivity::createForDirectFile(const std::string& filePath) {
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isDirectFile = true;
@@ -120,13 +143,20 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isQueueMode = true;
 
+    // Music starting: the videos waiting are let go, as a video starting
+    // lets the music queue go. The two are never both in use.
+    VideoQueue::getInstance().clear();
+
     MusicQueue& queue = MusicQueue::getInstance();
 
     // Try a server-side play queue when online, from the parent ratingKey (album/season) or the first track's.
     bool serverOk = false;
     // Whether the server already shuffled this queue; shuffling again would override an authoritative order.
     bool serverShuffled = false;
-    if (!tracks.empty() && !PlexClient::getInstance().getServerUrl().empty()) {
+    // Not offline: the server is not there to ask, and the request waited
+    // out its timeout on the UI thread (15 s, log 3ffa60d4).
+    if (!tracks.empty() && !PlexClient::getInstance().getServerUrl().empty() &&
+        !Application::getInstance().isOfflineMode()) {
         PlexClient& client = PlexClient::getInstance();
         PlexClient::PlayQueueContainer pq;
 
@@ -237,6 +267,34 @@ PlayerActivity* PlayerActivity::createResumeQueue() {
     return activity;
 }
 
+PlayerActivity* PlayerActivity::createWithRestoredQueue(const std::vector<MediaItem>& tracks,
+                                                        int startIndex, long long startOffsetMs,
+                                                        bool fromShell) {
+    PlayerActivity* activity = new PlayerActivity("", false);
+    activity->m_isQueueMode = true;
+    activity->m_queueStartOffsetMs = startOffsetMs > 0 ? startOffsetMs : 0;
+    activity->m_takeBackFromShell = fromShell;
+
+    // Shuffle off first: setQueue would shuffle the order it was played in again.
+    MusicQueue& queue = MusicQueue::getInstance();
+    queue.setShuffle(false);
+    queue.setQueue(tracks, startIndex);
+
+    MusicController::getInstance().attachForeground({
+        [activity]() { activity->playNext(); },
+        [activity]() { activity->playPrevious(); },
+        [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); },
+        [activity](bool on) { activity->setShuffleFromOs(on); },
+        [activity](RepeatMode m) { activity->setRepeatFromOs(m); },
+        [activity](int index) { activity->playFromQueue(index); },
+        [activity]() { activity->reloadAlbumArt(); }
+    });
+
+    brls::Logger::info("PlayerActivity created with a restored queue of {} tracks, at {} from {}ms",
+                       tracks.size(), startIndex, startOffsetMs);
+    return activity;
+}
+
 // borealis fatal()s on a navigation route to a non-focusable view, so skip rather than die.
 static void routeIfFocusable(brls::View* v, brls::FocusDirection dir, brls::View* target) {
     if (v && v->isFocusable()) v->setCustomNavigationRoute(dir, target);
@@ -257,25 +315,26 @@ bool PlayerActivity::useMobileLayout() const {
     return platform::isPhoneScreen();
 }
 
-// The landscape OSD over video. Separate from useMobileLayout(): wanting one design says nothing about the other.
+// The landscape OSD over video: the only video player, on every platform (the
+// classic video controls and their setting are gone). Music keeps its own
+// choice of layouts, below and in useMobileLayout().
 bool PlayerActivity::useVideoOsd() const {
-    // Music picks its own mobile layout above; everything else reaching this player is video.
+    // Music picks its own layout; everything else reaching this player is video.
     if (m_isQueueMode && MusicQueue::getInstance().isMusicQueue()) return false;
 
-    switch (Application::getInstance().getSettings().videoPlayerLayout) {
-        case 1: return false;   // Classic, everywhere
-        case 2: return true;    // Mobile, everywhere -- including handheld and TV
-        default: break;         // Auto
-    }
+    // A track played on its own, outside a queue, goes through this player
+    // too and is laid out as it was before the classic video controls went:
+    // the classic screen with its cover, but the OSD on phones.
+    if (m_singleTrack) {
 #if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IOS)
-    const float vw = platform::viewportWidth();
-    const float vh = platform::viewportHeight();
-    if (vw <= 0.0f || vh <= 0.0f) return false;   // unknown: leave it classic
-    // Short edge, not orientation: a phone suits touch controls either way, a tablet has room for the classic ones.
-    return std::min(vw, vh) < 600.0f;
+        const float vw = platform::viewportWidth();
+        const float vh = platform::viewportHeight();
+        return vw > 0.0f && vh > 0.0f && std::min(vw, vh) < 600.0f;
 #else
-    return false;   // PSV / PS4 / Switch / desktop keep the classic controls
+        return false;
 #endif
+    }
+    return true;
 }
 
 // Photos and music keep controls up, but m_isQueueMode also covers single videos, which get an OSD.
@@ -297,6 +356,9 @@ brls::View* PlayerActivity::createContentView() {
 
 void PlayerActivity::onContentAvailable() {
     brls::Logger::debug("PlayerActivity content available");
+
+    // A video playing on with its player left gives way to what this plays.
+    VideoBackground::getInstance().stop();
 
     // CENTERED so D-pad up/down always move focus; the default NATURAL cannot reach a row that is off screen.
     if (queueScroll)
@@ -354,11 +416,85 @@ void PlayerActivity::onContentAvailable() {
     if (playerContainer) {
         playerContainer->addGestureRecognizer(new brls::TapGestureRecognizer(
             [this](brls::TapGestureStatus status, brls::Sound* soundToPlay) {
-                if (status.state == brls::GestureState::END) {
-                    resetControlsIdleTimer();
-                    toggleControls();
+                if (status.state != brls::GestureState::END) return;
+                resetControlsIdleTimer();
+
+                // The subtitle panel up: its own rows answer taps on them; a
+                // tap anywhere else on the picture closes it.
+                if (m_subPanelVisible) {
+                    if (!subtitlePanelHit(status.position.x, status.position.y)) {
+                        if (m_subPopupWhich >= 0) closeSubtitlePopup();
+                        else                      hideSubtitlePanel();
+                    }
+                    return;
                 }
+                // The audio list (opened from the OSD, no panel behind it):
+                // a tap outside it closes it.
+                if (m_subPopupWhich >= 0) {
+                    if (!subtitlePanelHit(status.position.x, status.position.y)) closeSubtitlePopup();
+                    return;
+                }
+
+                // Video: a double tap on the left or right third skips back or
+                // forward by the seek interval, as in most phone players. The
+                // first tap has already toggled the controls; the second puts
+                // them back the way they were.
+                if (!m_isQueueMode && !m_isPhoto && playerContainer->getWidth() > 0) {
+                    const float rel = (status.position.x - playerContainer->getX()) /
+                                      playerContainer->getWidth();
+                    const int zone = rel < 1.0f / 3.0f ? -1 : (rel > 2.0f / 3.0f ? 1 : 0);
+                    const int64_t now = (int64_t)(brls::getCPUTimeUsec() / 1000);
+                    if (zone != 0 && zone == m_lastTapZone && now - m_lastTapMs < 350) {
+                        m_lastTapMs = 0;
+                        toggleControls();
+                        const int interval = Application::getInstance().getSettings().seekInterval;
+                        seek(zone * interval);
+                        MpvPlayer::getInstance().showOSD(
+                            (zone < 0 ? "-" : "+") + std::to_string(interval) + " s", 0.8);
+                        return;
+                    }
+                    m_lastTapZone = zone;
+                    m_lastTapMs = now;
+                }
+                toggleControls();
             }));
+
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IOS)
+        // Video on a phone: swipe up or down on the left half for brightness
+        // (where the platform can set it) and on the right half for volume.
+        playerContainer->addGestureRecognizer(new brls::PanGestureRecognizer(
+            [this](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
+                if (m_isQueueMode || m_isPhoto || !playerContainer) return;
+                const float w = playerContainer->getWidth();
+                const float h = playerContainer->getHeight();
+                if (w <= 0 || h <= 0) return;
+                MpvPlayer& player = MpvPlayer::getInstance();
+
+                if (status.state == brls::GestureState::START) {
+                    const float rel = (status.startPosition.x - playerContainer->getX()) / w;
+                    m_swipeBrightness = rel < 0.5f && platform::canSetScreenBrightness();
+                    m_swipeStart = m_swipeBrightness ? platform::getScreenBrightness()
+                                                     : std::min(player.getVolume(), 100) / 100.0f;
+                    return;
+                }
+                if (status.state != brls::GestureState::STAY &&
+                    status.state != brls::GestureState::END)
+                    return;
+
+                // The full height of the video is most of the range.
+                float v = m_swipeStart + (status.startPosition.y - status.position.y) / (h * 0.8f);
+                v = std::max(0.0f, std::min(1.0f, v));
+                const int pct = (int)std::lround(v * 100.0f);
+                if (m_swipeBrightness) {
+                    platform::setScreenBrightness(v);
+                    player.showOSD("Brightness " + std::to_string(pct) + "%", 0.8);
+                } else {
+                    player.setVolume(pct);
+                    player.showOSD("Volume " + std::to_string(pct) + "%", 0.8);
+                }
+            },
+            brls::PanAxis::VERTICAL));
+#endif
     }
 
     // Tap the cover to read along. The art is the biggest target on the music
@@ -425,6 +561,15 @@ void PlayerActivity::onContentAvailable() {
 
     this->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
         resetControlsIdleTimer();
+        // The subtitle panel: its list first, then the panel.
+        if (m_subPopupWhich >= 0) {
+            closeSubtitlePopup();
+            return true;
+        }
+        if (m_subPanelVisible) {
+            hideSubtitlePanel();
+            return true;
+        }
         // If track overlay is showing, dismiss it instead of leaving player
         if (m_trackSelectMode != TrackSelectMode::NONE) {
             hideTrackOverlay();
@@ -450,6 +595,10 @@ void PlayerActivity::onContentAvailable() {
             brls::Application::popActivity();
             return true;
         }
+        // A video, with "Keep Video Audio Playing": its sound plays on.
+        if (canKeepVideoPlaying()) m_keepVideoPlaying = true;
+        brls::Logger::info("PlayerActivity: Back leaves the player ({})",
+                           m_keepVideoPlaying ? "the video plays on" : "playback stops");
         brls::Application::popActivity();
         return true;
     });
@@ -672,13 +821,18 @@ void PlayerActivity::onContentAvailable() {
         if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
         if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
 
-        // Resize the cover for the current viewport and keep it right across rotations.
+        // Resize the cover for the current viewport and keep it right across
+        // any change of size. Rotations alone were not enough: a Fold going
+        // from its tall outer screen to the near-square inner one keeps
+        // portrait, and the cover sized for the outer screen then covered the
+        // title and pushed the controls under the up-next sheet.
         applyMusicLayoutForViewport();
         std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
-        platform::onOrientationChanged([this, aliveWeak]() {
+        platform::onViewportResized([this, aliveWeak]() {
             auto alive = aliveWeak.lock();
             if (!alive || !alive->load()) return;
             applyMusicLayoutForViewport();
+            updateMobileSheet();  // whether the sheet fits depends on the height
         });
 
         wireMobileSheet();
@@ -736,6 +890,18 @@ void PlayerActivity::onContentAvailable() {
             repeatBtn->addGestureRecognizer(new brls::TapGestureRecognizer(repeatBtn));
             // Set initial icon based on current repeat state
             updateRepeatIcon();
+        }
+
+        // AirPlay / audio output picker, where the platform has one (iPhone).
+        if (auto* airplayBtn = dynamic_cast<brls::Box*>(getView("player/airplay_btn"))) {
+            if (platform::canShowAudioRoutePicker()) {
+                airplayBtn->setVisibility(brls::Visibility::VISIBLE);
+                airplayBtn->registerClickAction([](brls::View*) {
+                    platform::showAudioRoutePicker();
+                    return true;
+                });
+                airplayBtn->addGestureRecognizer(new brls::TapGestureRecognizer(airplayBtn));
+            }
         }
 
         // Lyrics: the track picker always listed them, but music had no button to open it with.
@@ -799,7 +965,10 @@ void PlayerActivity::onContentAvailable() {
                 setIconRes(audioIcon, "icons/translate.png");
             }
             audioBtn->registerClickAction([this](brls::View* view) {
-                showTrackOverlay(TrackSelectMode::AUDIO);
+                // Video: a drop-down list over the pill, like the subtitle
+                // panel's. Music keeps its overlay.
+                if (m_videoOsd) showAudioTrackPopup();
+                else            showTrackOverlay(TrackSelectMode::AUDIO);
                 return true;
             });
             audioBtn->addGestureRecognizer(new brls::TapGestureRecognizer(audioBtn));
@@ -817,7 +986,8 @@ void PlayerActivity::onContentAvailable() {
                 setIconRes(subtitleIcon, "icons/subtitles.png");
             }
             subBtn->registerClickAction([this](brls::View* view) {
-                showTrackOverlay(TrackSelectMode::SUBTITLE);
+                if (m_videoOsd) showSubtitlePanel();
+                else            showTrackOverlay(TrackSelectMode::SUBTITLE);
                 return true;
             });
             subBtn->addGestureRecognizer(new brls::TapGestureRecognizer(subBtn));
@@ -825,12 +995,16 @@ void PlayerActivity::onContentAvailable() {
 
         // Video track button - shows track selection overlay
         if (videoBtn) {
-            videoBtn->setVisibility(brls::Visibility::VISIBLE);
+            // Video OSD: shown by updateVideoOsd only when the file has more
+            // than one video track to choose from.
+            videoBtn->setVisibility(m_videoOsd ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
             if (videoIcon) {
                 setIconRes(videoIcon, "icons/video-image.png");
             }
             videoBtn->registerClickAction([this](brls::View* view) {
-                showTrackOverlay(TrackSelectMode::VIDEO);
+                // Video OSD: a drop-down list under the button, like Audio's.
+                if (m_videoOsd) showVideoTrackPopup();
+                else            showTrackOverlay(TrackSelectMode::VIDEO);
                 return true;
             });
             videoBtn->addGestureRecognizer(new brls::TapGestureRecognizer(videoBtn));
@@ -854,6 +1028,24 @@ void PlayerActivity::onContentAvailable() {
         routeIfFocusable(audioBtn, brls::FocusDirection::DOWN, audioBtn);
         routeIfFocusable(subBtn, brls::FocusDirection::DOWN, subBtn);
         routeIfFocusable(videoBtn, brls::FocusDirection::DOWN, videoBtn);
+    }
+
+    // The video OSD (phones) has its own top bar above the transport: Up from
+    // the transport reaches it, Down from it comes back to Play / Pause. The
+    // routes above blocked both ways, so the top bar was only reachable by
+    // going round through the pills below.
+    if (m_videoOsd) {
+        brls::View* backBtn = getView("player/back_btn");
+        if (backBtn && backBtn->isFocusable()) {
+            routeIfFocusable(playBtn, brls::FocusDirection::UP, backBtn);
+            routeIfFocusable(rewindBtn, brls::FocusDirection::UP, backBtn);
+            routeIfFocusable(forwardBtn, brls::FocusDirection::UP, backBtn);
+        }
+        if (playBtn && playBtn->isFocusable()) {
+            for (const char* id : {"player/back_btn", "player/speed_btn", "player/sub_btn",
+                                   "player/video_btn", "player/pip_btn"})
+                routeIfFocusable(getView(id), brls::FocusDirection::DOWN, playBtn);
+        }
     }
 
     // Wire up skip button for intro/credits
@@ -916,7 +1108,9 @@ void PlayerActivity::onContentAvailable() {
             [this](brls::KeyState ks) {
                 if (!ks.pressed || m_destroying) return;
                 const int k = (int)ks.key;
-                if (k != brls::BRLS_KBD_KEY_SPACE &&
+                // PAUSE is the Apple TV remote's Play/Pause button (SDL maps
+                // UIPressTypePlayPause to it) and a keyboard's Pause key.
+                if (k != brls::BRLS_KBD_KEY_SPACE && k != brls::BRLS_KBD_KEY_PAUSE &&
                     k != mediakey::PLAY_PAUSE && k != mediakey::STOP &&
                     k != mediakey::NEXT && k != mediakey::PREV) return;
                 // Only when this player is on top: the event is global, and Space typed into a search field must not reach playback.
@@ -935,7 +1129,7 @@ void PlayerActivity::onContentAvailable() {
                     }
                     return;
                 }
-                togglePlayPause();   // Space, Play/Pause, and Stop
+                togglePlayPause();   // Space, Pause, Play/Pause, and Stop
             });
         m_kbSubscribed = true;
     }
@@ -957,6 +1151,7 @@ void PlayerActivity::setBackgroundTransparent(bool transparent) {
 }
 
 void PlayerActivity::willDisappear(bool resetState) {
+    if (resetState) PlexClient::getInstance().setPlayerShowsSubtitle(false);   // the next player's transcodes
     brls::Activity::willDisappear(resetState);
 
     // The keyboard event is owned by the input manager and outlives us.
@@ -992,7 +1187,7 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Hand the display back: a 24Hz mode left set would redraw the whole UI at 24Hz.
     if (m_refreshRateApplied) {
         m_refreshRateApplied = false;
-        platform::setPreferredRefreshRate(0.0f);
+        platform::setPreferredVideoMode(0.0f, platform::VideoDynamicRange::SDR);
     }
 
     // Re-enable background thumbnail loading now that playback is ending
@@ -1008,6 +1203,25 @@ void PlayerActivity::willDisappear(bool resetState) {
     scePowerSetGpuClockFrequency(166);
     scePowerSetGpuXbarClockFrequency(111);
 #endif
+
+    // Back from a video that is to play on: mpv is left as it is, and
+    // VideoBackground keeps its place and its end from here.
+    if (m_keepVideoPlaying && canKeepVideoPlaying()) {
+        brls::Logger::info("PlayerActivity: leaving the video playing on (its sound)");
+        m_updateTimer.stop();
+        if (m_alive) m_alive->store(false);
+        if (videoView) videoView->setVideoVisible(false);
+        VideoBackground::Session session;
+        session.ratingKey = m_mediaKey;
+        session.title = titleLabel ? titleLabel->getFullText() : std::string();
+        session.isLocalFile = m_isLocalFile;
+        session.baseOffsetMs = m_transcodeBaseOffsetMs;
+        session.durationMs = m_mediaDurationMs > 0
+            ? m_mediaDurationMs
+            : m_transcodeBaseOffsetMs + (int)(MpvPlayer::getInstance().getDuration() * 1000);
+        VideoBackground::getInstance().begin(session);
+        return;
+    }
 
     // If background music is enabled and we're in queue mode, don't stop playback
     if (m_isQueueMode && Application::getInstance().getSettings().backgroundMusic && !m_destroying) {
@@ -1143,6 +1357,9 @@ void PlayerActivity::loadFromQueue() {
     // New track: the stream restarts at the top, so drop any offset a seek left behind.
     MusicController::getInstance().resetStreamStartOffset();
     m_transcodeBaseOffsetMs = 0;
+    // A queue taken back from SceShell goes on where its song had got to; the first load only.
+    const long long startAt = m_queueStartOffsetMs;
+    m_queueStartOffsetMs = 0;
 
     // Reset streams cache for the new track
     m_streamsLoaded = false;
@@ -1246,6 +1463,51 @@ void PlayerActivity::loadFromQueue() {
     // Update queue info display
     updateQueueDisplay();
 
+    // A queue SceShell plays on: mpv set up first, which took 2.5 s (log
+    // 4e8bcb05), and then SceShell asked for the music and the track loaded
+    // where it stopped, the next one should it have gone on meanwhile. Up to
+    // build 2048 SceShell was stopped before any of this, and the silence
+    // lasted all of it, 5 s.
+    if (m_takeBackFromShell) {
+        m_loadingMedia = false;
+        // As a track's load below stops them.
+        ImageLoader::setPaused(true);
+        ImageLoader::cancelAll();
+        if (!MpvPlayer::getInstance().isInitialized()) {
+            // As the deferred load below does on MPV's first init.
+            ImageLoader::clearCache();
+            m_pendingMpvInit = true;
+            m_queueStartOffsetMs = startAt;
+            return;
+        }
+        m_takeBackFromShell = false;
+        // SceShell asked and the track loaded on this thread, one after the
+        // other, the UI held while SceShell answers (read 0.15 and 0.24 s
+        // after asking in logs 72ac5052 and b63e93ca, 1.5 s at most). Asked
+        // from a thread of its own in builds 2049 and 2050, the load waited
+        // its turn on this one: 1.86 s of the take-back's 2.5 s of silence in
+        // log b63e93ca, as the home screen behind made its rows' cells.
+        const bgaudio::ShellPlace place = bgaudio::takeBackNow();
+        if (!place.play) {
+            brls::Logger::info("PlayerActivity: SceShell had nothing to go on with; the queue "
+                               "waits here");
+            m_isPlaying = false;
+            updatePlayPauseLabel();
+            return;
+        }
+        MusicQueue& q = MusicQueue::getInstance();
+        if (place.index != q.getCurrentIndex()) q.playTrack(place.index);
+        m_queueStartOffsetMs = place.atMs;
+        // Paused from the quick menu, it stays paused here, at its place.
+        m_startPaused = place.paused;
+        loadFromQueue();
+        return;
+    }
+
+    // Spent by this load whatever becomes of it.
+    const bool startPaused = m_startPaused;
+    m_startPaused = false;
+
     // Use the rating key to get the playback URL
     m_mediaKey = track->ratingKey;
 
@@ -1262,27 +1524,47 @@ void PlayerActivity::loadFromQueue() {
     DownloadsManager& downloads = DownloadsManager::getInstance();
     DownloadItem dlItem;
     bool useLocalFile = false;
+    // Where a file mpv can seek in starts: at the place a queue taken back
+    // had got to, from the load itself, so its first moment is never heard.
+    double startSec = 0.0;
+    // A file of the track SceShell or VitaPlex fetched for a hand-over, kept
+    // as the music came back (utils/background_audio.hpp): played in place of
+    // the server's stream, which took 7.3 s to begin after a take-back. The
+    // server still hears of it, as of a stream.
+    const std::string keptFile = bgaudio::songFile(track->ratingKey);
+    // A download's own cover, preferred over the server's, decoded on this
+    // thread once mpv has the file below: decoded first, it held the song's
+    // load back 0.33 s (log d87c0489).
+    std::string localCover;
     if (downloads.getDownloadCopy(track->ratingKey, dlItem) && dlItem.state == DownloadState::COMPLETED) {
         url = dlItem.localPath;
         useLocalFile = true;
         m_isLocalFile = true;  // Suppress timeline reports when offline
+        if (startAt > 0) startSec = startAt / 1000.0;
         brls::Logger::info("PlayerActivity: Using downloaded file for track: {}", url);
-
-        // Load cover art from local file if available (preferred over server URL)
-        if (albumArt && !dlItem.thumbPath.empty()) {
-            if (ImageLoader::loadFromFile(dlItem.thumbPath, albumArt)) {
-                albumArt->setVisibility(brls::Visibility::VISIBLE);
-            }
-        }
+        if (albumArt) localCover = dlItem.thumbPath;
     } else {
         // Stream from server
         m_isLocalFile = false;  // Reset in case previous track was local
         PlexClient& client = PlexClient::getInstance();
 
+        if (!keptFile.empty()) {
+            url = keptFile;
+            if (startAt > 0) startSec = startAt / 1000.0;
+            brls::Logger::info("PlayerActivity: Using the file kept from SceShell for track: {}", url);
+        }
+
         // Use a prefetch resolved during the previous track; see kPrefetchMaxAgeMs, an expired session is answered 400.
         const int64_t prefetchAgeMs =
             m_prefetchAtMs > 0 ? (brls::getCPUTimeUsec() / 1000) - m_prefetchAtMs : 0;
-        const bool prefetchStale = m_prefetchAtMs > 0 && prefetchAgeMs > kPrefetchMaxAgeMs;
+        // Only a transcode URL goes stale: a direct-play file URL
+        // (/library/parts/...) has no session to reap, and expiring it after
+        // a minute meant every song longer than that was resolved again at
+        // its end, on this thread, freezing the screen ~0.3 s per track.
+        const bool prefetchIsTranscode =
+            m_prefetchUrl.find("/transcode/") != std::string::npos;
+        const bool prefetchStale = m_prefetchAtMs > 0 && prefetchIsTranscode &&
+                                   prefetchAgeMs > kPrefetchMaxAgeMs;
         if (prefetchStale && !m_prefetchUrl.empty()) {
             brls::Logger::info("PlayerActivity: prefetched URL for {} is {}s old — resolving again",
                                m_prefetchKey, prefetchAgeMs / 1000);
@@ -1291,7 +1573,7 @@ void PlayerActivity::loadFromQueue() {
                                 m_prefetchKey == track->ratingKey &&
                                 m_prefetchVersion == queue.getVersion() &&
                                 !prefetchStale;
-        if (prefetched) {
+        if (prefetched && keptFile.empty()) {
             url = m_prefetchUrl;
             // The speculative resolve left the live session alone; now this URL is playing, it becomes current.
             client.adoptTranscodeSession(m_prefetchSession);
@@ -1304,7 +1586,7 @@ void PlayerActivity::loadFromQueue() {
         m_prefetchSession.clear();
         m_prefetchAtMs = 0;
 
-        if (!prefetched && !client.getTranscodeUrl(track->ratingKey, url, 0)) {
+        if (!prefetched && keptFile.empty() && !client.getTranscodeUrl(track->ratingKey, url, (int)startAt)) {
             brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
             m_loadingMedia = false;
             // Usually the connection: this used to be the end of it, with the
@@ -1313,6 +1595,14 @@ void PlayerActivity::loadFromQueue() {
             m_isPlaying = MusicController::getInstance().isRecovering();
             updatePlayPauseLabel();
             return;
+        }
+        if (startAt > 0 && !prefetched && keptFile.empty()) {
+            // A transcode starts there itself, so mpv's clock runs from 0 and the controller adds
+            // the offset back; the server's own file starts there from the load.
+            if (url.find("/transcode/universal/start") != std::string::npos)
+                MusicController::getInstance().setStreamStartOffset(startAt);
+            else
+                startSec = startAt / 1000.0;
         }
 
         // Unpause briefly so loadAsync accepts the album-art request, then re-pause to block other page loads.
@@ -1340,28 +1630,46 @@ void PlayerActivity::loadFromQueue() {
         ImageLoader::clearCache();
     }
 
+    // The length of what mpv is given: a stream started part-way into the track is that much shorter.
+    int64_t expectedMs = (int64_t)track->duration * 1000 - MusicController::getInstance().streamStartOffsetMs();
+    if (expectedMs < 0) expectedMs = 0;
+
+    auto showLocalCover = [this, &localCover]() {
+        if (!localCover.empty() && ImageLoader::loadFromFile(localCover, albumArt))
+            albumArt->setVisibility(brls::Visibility::VISIBLE);
+    };
+
     // Stream audio directly via MPV (transcode API returns mp3 stream or local file)
     if (!player.isInitialized()) {
         // Defer MPV init + load to after activity transition completes
         m_pendingPlayUrl = url;
         m_pendingPlayTitle = track->title;
-        m_pendingDurationMs = (int64_t)track->duration * 1000;
+        m_pendingDurationMs = expectedMs;
+        m_pendingStartSec = startSec;
+        m_pendingStartPaused = startPaused;
         m_pendingIsAudio = true;
-        m_isPlaying = true;
+        m_isPlaying = !startPaused;
         m_loadingMedia = false;
+        showLocalCover();
         return;
     }
 
     // Player already initialized (track change) - load immediately
-    if (!player.loadUrl(url, track->title, (int64_t)track->duration * 1000)) {
+    if (!player.loadUrl(url, track->title, expectedMs, startSec, startPaused)) {
         brls::Logger::error("Failed to load URL: {}", redactTokensInUrl(url));
         m_loadingMedia = false;
+        showLocalCover();
         return;
     }
 
-    m_isPlaying = true;
+    m_isPlaying = !startPaused;
     m_loadingMedia = false;
-    MusicController::getInstance().publishNowPlaying(1);
+    if (startPaused) {
+        brls::Logger::info("PlayerActivity: loaded paused, as SceShell had it");
+        updatePlayPauseLabel();
+    }
+    MusicController::getInstance().publishNowPlaying(startPaused ? 0 : 1);
+    showLocalCover();
 }
 
 void PlayerActivity::prefetchNextTrack() {
@@ -1375,10 +1683,21 @@ void PlayerActivity::prefetchNextTrack() {
     // Already resolved or already failed for this track and queue state; without it the 1s caller re-resolves forever.
     if (m_prefetchKey == next->ratingKey && m_prefetchVersion == version) return;
 
-    // A downloaded track plays from disk; there is no URL to resolve.
+    // A downloaded track plays from disk, as does one whose file was kept from
+    // SceShell; there is no URL to resolve.
     DownloadItem dl;
     if (DownloadsManager::getInstance().getDownloadCopy(next->ratingKey, dl) &&
         dl.state == DownloadState::COMPLETED && !dl.localPath.empty()) {
+        return;
+    }
+    if (!bgaudio::songFile(next->ratingKey).empty()) {
+        // Recorded with no URL, as a failed resolve is, so the card is not
+        // looked at again every tick.
+        m_prefetchKey = next->ratingKey;
+        m_prefetchUrl.clear();
+        m_prefetchSession.clear();
+        m_prefetchVersion = version;
+        m_prefetchAtMs = 0;
         return;
     }
 
@@ -1422,6 +1741,10 @@ void PlayerActivity::loadMedia() {
     m_mediaDurationMs = 0;
     m_syncRecoverAttempts = 0;
     m_directPlay = false;
+    m_sideloadedSubUrl.clear();   // the last item's subtitle file
+    m_sideloadUrls.clear();
+    PlexClient::getInstance().setPlayerShowsSubtitle(false);
+    m_sidecarCheck = false;
 
     // Same reason: auto-play-next reloads into this activity, so the old poster must not survive into the next item.
     m_osArtUrl.clear();
@@ -1530,11 +1853,12 @@ void PlayerActivity::loadMedia() {
 
         if (isAudioTrack) {
             // Set up music UI labels
+            const std::string artist = downloadArtist(dlItem);
             if (musicTitleLabel) musicTitleLabel->setText(dlItem.title);
-            if (musicArtistLabel) musicArtistLabel->setText(dlItem.parentTitle);
+            if (musicArtistLabel) musicArtistLabel->setText(artist);
             if (titleLabel) titleLabel->setText(dlItem.title);
             if (artistLabel) {
-                artistLabel->setText(dlItem.parentTitle);
+                artistLabel->setText(artist);
                 artistLabel->setVisibility(brls::Visibility::VISIBLE);
             }
 
@@ -1552,16 +1876,9 @@ void PlayerActivity::loadMedia() {
             if (videoView) videoView->setVisibility(brls::Visibility::GONE);
             if (photoImage) photoImage->setVisibility(brls::Visibility::GONE);
         } else {
-            if (m_videoOsd) {
-                setVideoOsdTitle(dlItem.parentTitle.empty() ? dlItem.title : dlItem.parentTitle,
-                                 dlItem.parentTitle.empty() ? "" : dlItem.title);
-            } else if (titleLabel) {
-                std::string title = dlItem.title;
-                if (!dlItem.parentTitle.empty()) {
-                    title = dlItem.parentTitle + " - " + dlItem.title;
-                }
-                titleLabel->setText(title);
-            }
+            // A downloaded video: always the OSD now.
+            setVideoOsdTitle(dlItem.parentTitle.empty() ? dlItem.title : dlItem.parentTitle,
+                             dlItem.parentTitle.empty() ? "" : dlItem.title);
             // Offline: the cover is already a file on disk, so the session can show it with no server to reach.
             m_osArtUrl = dlItem.thumbPath;
             m_osArtist = dlItem.parentTitle;
@@ -1586,6 +1903,9 @@ void PlayerActivity::loadMedia() {
                 m_pendingSeek = dlItem.viewOffset / 1000.0;
             }
         }
+        // Opened again from the background: where the sound was.
+        const int forcedLocal = takeForcedResume(m_mediaKey);
+        if (forcedLocal >= 0) m_pendingSeek = forcedLocal / 1000.0;
 
         if (!player.isInitialized()) {
             // Defer MPV init + load to after activity transition completes
@@ -1741,6 +2061,9 @@ void PlayerActivity::loadMedia() {
                 resumeOffset = item.viewOffset;
             }
         }
+        // Opened again from the background: where the sound was.
+        const int forced = takeForcedResume(m_mediaKey);
+        if (forced >= 0) resumeOffset = forced;
 
         // Watch party: open at the host's timecode so playback starts in sync, with no corrective seek.
         if (SyncLoungeSession::instance().isConnected()) {
@@ -1766,12 +2089,38 @@ void PlayerActivity::loadMedia() {
         // Remember Plex's full length: mpv's duration reads stale after a transcode reload and let the bar run past the end.
         m_mediaDurationMs = (item.duration > 0) ? (int)item.duration : 0;
         std::string url;
+        // A sidecar subtitle selected on the server (an .srt beside the file,
+        // or one found online): the player shows it itself, so Size and Style
+        // reach it and a transcode is not asked to burn it into the picture,
+        // where neither could (a log: both changed, nothing on the screen did).
+        // setSideloadedSubtitle makes the transcode ask for no subtitle.
+        if (Application::getInstance().getSettings().showSubtitles) {
+            std::vector<PlexStream> streams;
+            int partId = 0;
+            if (client.fetchStreams(m_mediaKey, streams, partId)) {
+                m_plexStreams = streams;
+                m_partId = partId;
+                m_streamsLoaded = true;
+                for (const auto& ps : m_plexStreams) {
+                    if (ps.streamType != 3 || !ps.selected || ps.key.empty()) continue;
+                    brls::Logger::info("PlayerActivity: the player shows the subtitle {} itself",
+                                       ps.displayTitle);
+                    setSideloadedSubtitle(ps);
+                    break;
+                }
+            }
+        }
         if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {
             // Direct play: the server returned the original file, so mpv owns the timeline and seeks are local, not restarts.
             m_directPlay = (url.find("/transcode/universal/start") == std::string::npos);
+            m_serverBurnsSub = !m_directPlay && PlexClient::getInstance().lastTranscodeBurnsSubtitle();
+            if (m_serverBurnsSub && !m_sideloadUrls.empty())
+                brls::Logger::warning("PlayerActivity: the server draws the subtitle into the picture; "
+                                      "not adding the player's own");
             if (m_directPlay) {
                 brls::Logger::info("PlayerActivity: direct play (original file), resume {}ms",
                                    resumeOffset);
+                // (A sidecar selected on the server was taken up above.)
                 m_transcodeBaseOffsetMs = 0;
                 if (resumeOffset > 0) m_pendingSeek = resumeOffset / 1000.0;
             }
@@ -1840,6 +2189,36 @@ void PlayerActivity::syncHiddenFocus() {
     if (queueClearBtn) queueClearBtn->setFocusable(queue);
 }
 
+// The playing/paused timeline reports, sent off the UI thread in order:
+// each is numbered as it is made, and one whose number is not past the last
+// sent is dropped (updateProgress).
+static std::mutex s_timelineMutex;
+static std::atomic<uint64_t> s_timelineSeq{0};
+static uint64_t s_timelineSent = 0;  // under s_timelineMutex
+
+// mpv's sub-delay: the transcode's shift (below) plus the panel's Timing.
+void PlayerActivity::applySubtitleDelay() {
+    if (!MpvPlayer::getInstance().isInitialized()) return;
+    // A transcode starts its clock at the offset it was asked for
+    // (m_transcodeBaseOffsetMs), but a sidecar file is timed from the start
+    // of the film: without this, 1:28 into Iron Man the player looked for
+    // the subtitle lines of the first minutes, and showed nothing or the
+    // wrong ones. mpv's sub-delay shifts them back; 0 for the file itself.
+    {
+        const bool direct = m_directPlay || m_isLocalFile || m_isDirectFile;
+        const double want = ((!m_sideloadUrls.empty() && !direct)
+                                 ? -(m_transcodeBaseOffsetMs / 1000.0) : 0.0) + m_subUserDelay;
+        // Set once at the start too: mpv keeps it from the last player.
+        if (!m_subDelaySet || want != m_appliedSubDelay) {
+            MpvPlayer::getInstance().setSubtitleDelay(want);
+            m_appliedSubDelay = want;
+            m_subDelaySet = true;
+            brls::Logger::info("PlayerActivity: subtitle timing shifted by {:.2f} s", want);
+        }
+    }
+
+}
+
 void PlayerActivity::updateProgress() {
     // Don't update if destroying or showing photo
     if (m_destroying || m_isPhoto) return;
@@ -1856,8 +2235,105 @@ void PlayerActivity::updateProgress() {
     // Tick the diagnostic overlay with progress; lazy-created, so it costs no layout passes while the toggle is off.
     updateMpvStatsOverlay();
 
+    // A sidecar subtitle shown through mpv (selectTrack): a transcode reload
+    // (a seek, a switch of audio) starts a new file without it, so it is added
+    // again whenever none is showing. Not more than every 6 s, so a slow
+    // fetch is not asked for twice.
+    //
+    // The file has more than one address (sidecarSubtitleUrls), and a server
+    // may answer only some: a TV log has 404 for /library/streams/N.srt, the
+    // spec's form, on subtitles found online. Each try takes the next one;
+    // the one that worked is tried first after a reload. After three rounds
+    // with none showing, the player says so and stops asking.
+    updateSubtitlePosition();   // once mpv exists (the first calls come before)
+
+    applySubtitleDelay();
+
+    if (!m_sideloadUrls.empty() && !m_serverBurnsSub && MpvPlayer::getInstance().isPlaying()) {
+        const int64_t nowMs = (int64_t)(brls::getCPUTimeUsec() / 1000);
+        if (m_sideloadTriedMs == 0 || nowMs - m_sideloadTriedMs > 6000) {
+            bool showing = false;
+            for (const auto& t : MpvPlayer::getInstance().getTrackList("sub"))
+                showing = showing || t.selected;
+            const int n = (int)m_sideloadUrls.size();
+            if (showing) {
+                if (m_sideloadLast >= 0 && m_sideloadGood != m_sideloadLast) {
+                    m_sideloadGood = m_sideloadLast;
+                    brls::Logger::info("PlayerActivity: the sidecar subtitle loaded from address {}",
+                                       m_sideloadGood + 1);
+                }
+                m_sideloadTries = 0;
+            } else if (m_sideloadTries >= 3 * n) {
+                brls::Logger::warning("PlayerActivity: the sidecar subtitle could not be fetched");
+                MpvPlayer::getInstance().showOSD("Couldn't load the subtitle", 3.0);
+                m_sideloadUrls.clear();
+                PlexClient::getInstance().setPlayerShowsSubtitle(false);
+                m_sideloadedSubUrl.clear();
+            } else {
+                const int idx = (m_sideloadTries == 0 && m_sideloadGood >= 0) ? m_sideloadGood
+                                                                               : m_sideloadNext % n;
+                m_sideloadNext = idx + 1;
+                m_sideloadLast = idx;
+                m_sideloadTries++;
+                brls::Logger::info("PlayerActivity: adding the sidecar subtitle (address {})", idx + 1);
+                MpvPlayer::getInstance().loadSubtitleUrl(m_sideloadUrls[idx], /*select=*/true);
+                m_sideloadTriedMs = nowMs;
+            }
+        }
+    }
+
+    // Direct play with a sidecar subtitle selected on the server (an .srt
+    // beside the file, or one added by a search): the original file has no
+    // such track, and only a transcode would have carried it, so it is added
+    // to mpv here once the file is playing.
+    if (m_sidecarCheck && !m_mediaKey.empty() && MpvPlayer::getInstance().isPlaying()) {
+        m_sidecarCheck = false;
+        const std::string key = m_mediaKey;
+        std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+        asyncRun([this, aliveWeak, key]() {
+            std::vector<PlexStream> streams;
+            int partId = 0;
+            if (!PlexClient::getInstance().fetchStreams(key, streams, partId)) return;
+            brls::sync([this, aliveWeak, key, streams, partId]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !alive->load() || key != m_mediaKey || !m_directPlay) return;
+                if (!m_streamsLoaded) {
+                    m_plexStreams = streams;
+                    m_partId = partId;
+                    m_streamsLoaded = true;
+                }
+                for (const auto& ps : m_plexStreams) {
+                    if (ps.streamType != 3 || !ps.selected || ps.key.empty()) continue;
+                    brls::Logger::info("PlayerActivity: adding the selected sidecar subtitle {}",
+                                       ps.displayTitle);
+                    // Into mpv by the check below: already selected on the server.
+                    setSideloadedSubtitle(ps);
+                    break;
+                }
+            });
+        });
+    }
+
     // Keeps the pills, mute glyph and speed honest after anything changes them. No-op in the other two layouts.
     updateVideoOsd();
+
+    // A queue SceShell plays on: MPV set up with nothing loaded, and the first
+    // load again at once, which asks SceShell for the music off this thread;
+    // the track is loaded frames later, once it has answered.
+    if (m_pendingMpvInit) {
+        m_pendingMpvInit = false;
+        brls::Logger::info("PlayerActivity: setting MPV up before SceShell is asked for the music...");
+        MpvPlayer& player = MpvPlayer::getInstance();
+        player.setAudioOnly(true);
+        setBackgroundTransparent(false);
+        if (!player.isInitialized() && !player.init()) {
+            brls::Logger::error("PlayerActivity: MPV init failed; SceShell keeps the music");
+            m_takeBackFromShell = false;
+            return;
+        }
+        loadFromQueue();
+        return;
+    }
 
     // Phase 1 of 2: create MPV and its render context; loadUrl waits for the next frame.
     if (!m_pendingPlayUrl.empty()) {
@@ -1883,14 +2359,18 @@ void PlayerActivity::updateProgress() {
         // Phase 2: loadUrl next iteration, so NanoVG draws a full frame of fresh GXM state before the decoder touches it.
         auto alive = m_alive;
         const int64_t durationMs = m_pendingDurationMs;
-        brls::sync([this, url, title, isAudio, alive, durationMs]() {
+        const double startSec = m_pendingStartSec;
+        const bool startPaused = m_pendingStartPaused;
+        m_pendingStartSec = 0.0;
+        m_pendingStartPaused = false;
+        brls::sync([this, url, title, isAudio, alive, durationMs, startSec, startPaused]() {
             if (!alive->load() || m_destroying) return;
 
             brls::Logger::info("PlayerActivity: Deferred MPV load (phase 2: loadUrl)...");
 
             MpvPlayer& player = MpvPlayer::getInstance();
 
-            if (player.loadUrl(url, title, durationMs)) {
+            if (player.loadUrl(url, title, durationMs, startSec, startPaused)) {
                 if (videoView && !isAudio) {
                     videoView->setVisibility(brls::Visibility::VISIBLE);
                     videoView->setVideoVisible(true);
@@ -1900,9 +2380,9 @@ void PlayerActivity::updateProgress() {
                 if (!isAudio && !m_isQueueMode) {
                     pip::setVideoPlaybackState(true, 16, 9);
                 }
-                m_isPlaying = true;
+                m_isPlaying = !startPaused;
                 updatePlayPauseLabel();
-                if (m_isQueueMode) MusicController::getInstance().publishNowPlaying(1);
+                if (m_isQueueMode) MusicController::getInstance().publishNowPlaying(startPaused ? 0 : 1);
                 brls::Logger::info("PlayerActivity: Deferred load started successfully");
             } else {
                 brls::Logger::error("PlayerActivity: Deferred loadUrl failed");
@@ -2165,7 +2645,8 @@ void PlayerActivity::updateProgress() {
 
     // Auto-hide controls after inactivity
     int autoHide = Application::getInstance().getSettings().controlsAutoHideSeconds;
-    if (autoHide > 0 && m_controlsVisible && !m_isPhoto) {
+    if (autoHide > 0 && m_controlsVisible && !m_isPhoto && !m_subPanelVisible &&
+        m_subPopupWhich < 0) {
         m_controlsIdleSeconds++;
         if (m_controlsIdleSeconds >= autoHide) {
             hideControls();
@@ -2239,9 +2720,19 @@ void PlayerActivity::updateProgress() {
                         }
                     }
 
+                    // Off the UI thread: sent from here, every report held
+                    // the player 0.3-1.2 s (the "anim" stalls every 10 s in
+                    // build 2091's frame log). Numbered, so one overtaken by
+                    // a newer report is dropped rather than sent after it.
                     std::string key = "/library/metadata/" + ratingKey;
-                    PlexClient::getInstance().reportTimeline(
-                        ratingKey, key, currentState, timeMs, durationMs, pqItemID);
+                    const uint64_t seq = ++s_timelineSeq;
+                    asyncRun([ratingKey, key, currentState, timeMs, durationMs, pqItemID, seq]() {
+                        std::lock_guard<std::mutex> lock(s_timelineMutex);
+                        if (seq <= s_timelineSent) return;
+                        s_timelineSent = seq;
+                        PlexClient::getInstance().reportTimeline(
+                            ratingKey, key, currentState, timeMs, durationMs, pqItemID);
+                    });
                 }
             }
         }
@@ -2291,6 +2782,10 @@ void PlayerActivity::updateProgress() {
                 brls::Logger::info("PlayerActivity: Auto-deleted download after watch: {}", m_mediaKey);
             }
 
+            // A video queued to follow comes before the next episode: the
+            // queue is what the user asked for after this.
+            if (playQueuedVideo()) return;
+
             // Auto-play next episode if enabled and this is an episode
             if (Application::getInstance().getSettings().autoPlayNext
                 && m_mediaType == MediaType::EPISODE
@@ -2318,6 +2813,49 @@ void PlayerActivity::updateProgress() {
         m_isPlaying = actuallyPlaying;
         updatePlayPauseLabel();
     }
+}
+
+void PlayerActivity::resumeNextAt(const std::string& mediaKey, int timeMs) {
+    s_resumeKey = mediaKey;
+    s_resumeMs = timeMs;
+}
+
+bool PlayerActivity::canKeepVideoPlaying() const {
+    if (m_isQueueMode || m_isDirectFile || m_mediaKey.empty() || m_loadingMedia) return false;
+    if (!Application::getInstance().getSettings().backgroundVideo) return false;
+    if (m_mediaType != MediaType::MOVIE && m_mediaType != MediaType::EPISODE &&
+        m_mediaType != MediaType::CLIP)
+        return false;
+    if (SyncLoungeSession::instance().isConnected()) return false;   // the party follows the player
+    MpvPlayer& player = MpvPlayer::getInstance();
+    return player.isInitialized() && !player.isAudioOnly() &&
+           (player.isPlaying() || player.isPaused());
+}
+
+// The next video of the video queue, in this player: false when there is
+// none. As playNextEpisode loads its episode.
+bool PlayerActivity::playQueuedVideo() {
+    VideoQueueItem next;
+    if (!VideoQueue::getInstance().popNext(next)) return false;
+    brls::Logger::info("PlayerActivity: playing the queued video {} ({}), {} more waiting",
+                       next.ratingKey, next.title, VideoQueue::getInstance().size());
+    const std::string nextKey = next.ratingKey;
+    brls::sync([this, nextKey]() {
+        MpvPlayer::getInstance().stop();
+
+        m_mediaKey = nextKey;
+        m_isLocalFile = false;   // a queued video is the server's
+        m_endHandled = false;
+        m_introSkipped = false;
+        m_creditsSkipped = false;
+        m_markers.clear();
+        m_activeMarkerType.clear();
+        m_skipButtonVisible = false;
+        if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+
+        loadMedia();
+    });
+    return true;
 }
 
 void PlayerActivity::playNextEpisode() {
@@ -2480,7 +3018,7 @@ void PlayerActivity::setupVideoMediaSession() {
                 case T::Play:        if (!m_isPlaying) togglePlayPause(); break;
                 case T::Pause:       if (m_isPlaying)  togglePlayPause(); break;
                 case T::Toggle:      togglePlayPause(); break;
-                case T::Next:        playNextEpisode(); break;
+                case T::Next:        if (!playQueuedVideo()) playNextEpisode(); break;
                 case T::Previous: {
                     double pos = MpvPlayer::getInstance().getPosition();
                     seek(-(int)(pos + 1.0));   // restart current item
@@ -2523,7 +3061,13 @@ void PlayerActivity::applyContentRefreshRate() {
     if (!std::isfinite(fps) || fps < 10.0 || fps > 121.0) return;
 
     m_refreshRateApplied = true;
-    platform::setPreferredRefreshRate((float)fps);
+    // The transfer function says whether this is HDR, for a display that can
+    // switch to it (Apple TV); mpv names PQ and HLG "pq" and "hlg".
+    platform::VideoDynamicRange range = platform::VideoDynamicRange::SDR;
+    const std::string gamma = p.getProperty("video-params/gamma");
+    if (gamma == "pq") range = platform::VideoDynamicRange::HDR10;
+    else if (gamma == "hlg") range = platform::VideoDynamicRange::HLG;
+    platform::setPreferredVideoMode((float)fps, range);
 }
 
 void PlayerActivity::publishVideoNowPlaying() {
@@ -2582,7 +3126,12 @@ void PlayerActivity::registerIcons() {
     note(audioIcon,       "icons/translate.png");
     note(subtitleIcon,    "icons/subtitles.png");
     note(videoIcon,       "icons/video-image.png");
-    note(pipIcon,         "icons/video-image.png");
+    // player_mobile.xml (the video OSD, and music's mobile layout) has its own
+    // PiP glyph; player.xml reuses the video one. Recording the wrong one put
+    // the old icon back whenever the icons were reloaded (after the app came
+    // back from the background, or lost its GL context).
+    note(pipIcon, (m_mobileLayout || m_videoOsd) ? "icons/picture-in-picture.png"
+                                                 : "icons/video-image.png");
     note(queueIcon,       "icons/format-list-group.png");
     note(lyricsIcon,      "icons/subtitles.png");
 }
@@ -2725,6 +3274,11 @@ void PlayerActivity::updatePlayPauseLabel() {
 }
 
 void PlayerActivity::cycleAudioTrack() {
+    if (m_videoOsd) {
+        showControls();
+        showAudioTrackPopup();
+        return;
+    }
     showTrackOverlay(TrackSelectMode::AUDIO);
 }
 
@@ -3835,8 +4389,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
                         brls::Logger::info("selectTrack: Reloading audio at offset={}ms", offsetMs);
                         player.showOSD("Switching: " + displayTitle, 2.0);
-                        m_transcodeBaseOffsetMs = offsetMs;
-                        player.loadUrl(newUrl, "");
+                        loadServerStream(newUrl, offsetMs);
                     }
                 }
             } else {
@@ -3847,6 +4400,79 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
             break;
 
         case TrackSelectMode::SUBTITLE:
+            // A sidecar subtitle (an .srt beside the file, or one found
+            // online, served by its own key) goes straight into mpv with
+            // sub-add, transcode or not, and comes out with sid=no. The
+            // server-side way reloaded the stream through the transcoder: it
+            // made a direct-played file a transcode, and on a TV log its
+            // decision answered 400 for a just-added subtitle five times in a
+            // row and playback failed each time. In a transcode the server is
+            // told "no subtitle", or it would burn this one in as well; a
+            // direct-played file keeps the choice on the server.
+            {
+                const PlexStream* side = nullptr;
+                bool burnedIn = false;   // a transcode carrying an embedded one now
+                for (const auto& ps : m_plexStreams) {
+                    if (ps.id == trackId && ps.streamType == 3 && !ps.key.empty()) side = &ps;
+                    if (ps.streamType == 3 && ps.selected && ps.key.empty()) burnedIn = true;
+                }
+                const bool direct = m_directPlay || m_isLocalFile;
+                burnedIn = burnedIn && !direct;
+                const bool offFromSidecar = trackId < 0 && (direct || !m_sideloadedSubUrl.empty()) && !burnedIn;
+                if (hasPlexStreams && (side || offFromSidecar)) {
+                    const int partId = m_partId;
+                    // Kept selected on the server: a subtitle found online is
+                    // dropped by the server once deselected (a TV log: picked,
+                    // then subtitleStreamID=0, then 404 for its file at every
+                    // address). The transcode is told subtitles=none instead
+                    // (setPlayerShowsSubtitle), so it does not burn it in too.
+                    const int serverSub = side ? trackId : 0;
+                    // Off from a sidecar the player shows: hidden here only.
+                    // Telling the server would delete one found online, and
+                    // On then asked for a file that was gone (404 at every
+                    // address, a TV log). It stays selected there, so its
+                    // transcodes still ask for no subtitle.
+                    const bool hideOnly = !side && !m_sideloadedSubUrl.empty();
+                    for (auto& ps : m_plexStreams)
+                        if (ps.streamType == 3 || ps.streamType == 4)
+                            ps.selected = (ps.id == trackId);
+                    if (burnedIn && partId > 0) {
+                        // Off the server first, then the stream without it.
+                        PlexClient::getInstance().setStreamSelection(partId, -1, 0);
+                        double currentPos = player.getPosition();
+                        int offsetMs = m_transcodeBaseOffsetMs + static_cast<int>(currentPos * 1000);
+                        PlexClient& client = PlexClient::getInstance();
+                        client.stopTranscode();
+                        std::string newUrl;
+                        if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
+                            loadServerStream(newUrl, offsetMs);
+                        }
+                    } else if (partId > 0 && !hideOnly) {
+                        asyncRun([partId, serverSub]() {
+                            PlexClient::getInstance().setStreamSelection(partId, -1, serverSub);
+                        });
+                    }
+                    if (!side) {
+                        m_sideloadedSubUrl.clear();
+                        m_sideloadUrls.clear();
+                        PlexClient::getInstance().setPlayerShowsSubtitle(hideOnly);
+                        player.removeExternalSubtitles();
+                        player.showOSD("Subtitles off", 1.5);
+                    } else {
+                        // updateProgress adds it, at once unless a reload is under
+                        // way, and again after one.
+                        setSideloadedSubtitle(*side);
+                        if (burnedIn) m_sideloadTriedMs = (int64_t)(brls::getCPUTimeUsec() / 1000);
+                        player.showOSD("Subtitles: " + (side->displayTitle.empty() ? side->language
+                                                                                   : side->displayTitle), 2.0);
+                    }
+                    break;
+                }
+            }
+            // Anything else (an embedded subtitle) is the server's to deliver.
+            m_sideloadedSubUrl.clear();
+            m_sideloadUrls.clear();
+            PlexClient::getInstance().setPlayerShowsSubtitle(false);
             if (trackId < 0) {
                 // Disable subtitles
                 if (m_partId > 0) {
@@ -3866,8 +4492,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
                         brls::Logger::info("selectTrack: Reloading subs off at offset={}ms", offsetMs);
                         player.showOSD("Subtitles off", 2.0);
-                        m_transcodeBaseOffsetMs = offsetMs;
-                        player.loadUrl(newUrl, "");
+                        loadServerStream(newUrl, offsetMs);
                     }
                 }
             } else if (const PlexStream* lyrics = findSideloadableStream(trackId)) {
@@ -3901,8 +4526,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
                         brls::Logger::info("selectTrack: Reloading subs at offset={}ms", offsetMs);
                         player.showOSD("Switching: " + displayTitle, 2.0);
-                        m_transcodeBaseOffsetMs = offsetMs;
-                        player.loadUrl(newUrl, "");
+                        loadServerStream(newUrl, offsetMs);
                     }
                 }
             } else {
@@ -3969,9 +4593,75 @@ bool PlayerActivity::restartTranscodeAtMs(int offsetMs) {
     std::string url;
     if (!client.getTranscodeUrl(m_mediaKey, url, offsetMs)) return false;
     brls::Logger::info("Player: restarting transcode at offset={}ms", offsetMs);
-    m_transcodeBaseOffsetMs = offsetMs;
-    MpvPlayer::getInstance().loadUrl(url, "");
+    loadServerStream(url, offsetMs);
     return true;
+}
+
+// A sidecar subtitle's file, at each address it may be served from, in the
+// order tried: the bare key, as Plex's own clients and python-plexapi fetch
+// it; /library/streams/{streamId}.{ext}, openapi.json's form, which a TV log
+// shows answering 404 for subtitles found online; and the key with the
+// spec's format parameter.
+std::vector<std::string> PlayerActivity::sidecarSubtitleUrls(const PlexStream& ps) const {
+    const std::string server = PlexClient::getInstance().getServerUrl();
+    const std::string& token = PlexClient::getInstance().getAuthToken();
+    auto withToken = [&token](std::string url) {
+        if (!token.empty())
+            url += (url.find('?') == std::string::npos ? "?" : "&") + std::string("X-Plex-Token=") + token;
+        return url;
+    };
+    std::vector<std::string> out;
+    const std::string& key = ps.key;
+    out.push_back(withToken(server + key));
+    const size_t slash = key.find_last_of('/');
+    const bool plain = key.find('?') == std::string::npos &&
+                       key.find('.', slash == std::string::npos ? 0 : slash) == std::string::npos;
+    const std::string fmt = ps.codec.empty() ? std::string("srt") : ps.codec;
+    if (plain) out.push_back(withToken(server + key + "." + fmt));
+    out.push_back(withToken(server + key + (key.find('?') == std::string::npos ? "?" : "&") + "format=" + fmt));
+    return out;
+}
+
+// Show this sidecar through mpv from now on (updateProgress adds it).
+void PlayerActivity::setSideloadedSubtitle(const PlexStream& ps) {
+    // Another one may be showing (a second subtitle found while the first
+    // is up): off first, or the check below sees a subtitle showing and never
+    // adds this one (a TV log: the second found subtitle never appeared).
+    MpvPlayer::getInstance().removeExternalSubtitles();
+    m_sideloadUrls = sidecarSubtitleUrls(ps);
+    PlexClient::getInstance().setPlayerShowsSubtitle(true);
+    m_sideloadedSubUrl = m_sideloadUrls.front();
+    m_sideloadNext = 0;
+    m_sideloadGood = -1;
+    m_sideloadLast = -1;
+    m_sideloadTries = 0;
+    m_sideloadTriedMs = 0;
+}
+
+// Load what getTranscodeUrl gave for offsetMs. The server answers a transcode
+// or, when it can, the original file, and the two keep time differently: a
+// transcode starts at the offset (positions are relative to it, seeks restart
+// it), the original file is the whole film (positions are absolute, seeks are
+// mpv's own). m_directPlay was set only at the first load, so a reload that
+// came back as the original file was still treated as a transcode: on a TV
+// log, scrubbing restarted the "transcode" nine times in eight seconds, each
+// time the whole file again.
+void PlayerActivity::loadServerStream(const std::string& url, int offsetMs) {
+    m_directPlay = url.find("/transcode/universal/start") == std::string::npos;
+    if (m_directPlay) {
+        m_transcodeBaseOffsetMs = 0;
+        if (offsetMs > 0) m_pendingSeek = offsetMs / 1000.0;
+    } else {
+        m_transcodeBaseOffsetMs = offsetMs;
+    }
+    // The server's decision said it draws a subtitle into this transcode's
+    // picture (it did once though asked for none): the player adds no copy
+    // of its own, which would show twice.
+    m_serverBurnsSub = !m_directPlay && PlexClient::getInstance().lastTranscodeBurnsSubtitle();
+    if (m_serverBurnsSub && !m_sideloadUrls.empty())
+        brls::Logger::warning("PlayerActivity: the server draws the subtitle into the picture; "
+                              "not adding the player's own");
+    MpvPlayer::getInstance().loadUrl(url, "");
 }
 
 void PlayerActivity::requestTranscodeSeek(double absMs) {
@@ -4457,10 +5147,24 @@ void PlayerActivity::wireVideoOsd() {
     // The subtitle line stays hidden until it has text, so a film gets a title rather than a title and a blank.
     if (brls::View* v = getView("player/osd_bottom")) v->setVisibility(brls::Visibility::VISIBLE);
     if (brls::View* v = getView("player/subs_pill")) v->setVisibility(brls::Visibility::VISIBLE);
+    // The "Subs" pill is the subtitle control here (it names the track, as
+    // the Audio pill does); the top bar's subtitle icon opened the same
+    // panel, a second button for one thing.
+    if (subBtn) {
+        subBtn->setFocusable(false);
+        subBtn->setVisibility(brls::Visibility::GONE);
+    }
 
-    tap(box("player/back_btn"),   [] { brls::Application::popActivity(); });
+    // As the Back button leaves: a video that is to play on does (the
+    // on-screen arrow stopped it, where Back did not; build 2118).
+    tap(box("player/back_btn"),   [this] {
+        if (canKeepVideoPlaying()) m_keepVideoPlaying = true;
+        brls::Logger::info("PlayerActivity: the on-screen back leaves the player ({})",
+                           m_keepVideoPlaying ? "the video plays on" : "playback stops");
+        brls::Application::popActivity();
+    });
     tap(box("player/speed_btn"),  [this] { cycleSpeed(); });
-    tap(box("player/subs_pill"),  [this] { showTrackOverlay(TrackSelectMode::SUBTITLE); });
+    tap(box("player/subs_pill"),  [this] { showSubtitlePanel(); });
     tap(box("player/next_btn"),   [this] {
         if (m_isQueueMode) playNext();
         else               playNextEpisode();
@@ -4491,7 +5195,12 @@ void PlayerActivity::applyVideoOsdForViewport() {
         if (!v) return;
         if (w > 0.0f) v->setWidth(w * k);
         if (h > 0.0f) v->setHeight(h * k);
-        if (r > 0.0f) v->setCornerRadius(r * k);
+        if (r > 0.0f) {
+            v->setCornerRadius(r * k);
+            // The focus highlight follows the round shape instead of a square;
+            // half its stroke wider, as it is drawn around the outline.
+            v->setHighlightCornerRadius(r * k + 2.5f);
+        }
     };
     auto font = [&](const char* id, float pt) {
         if (auto* l = dynamic_cast<brls::Label*>(getView(id))) l->setFontSize(pt * k);
@@ -4565,6 +5274,21 @@ void PlayerActivity::updateVideoOsd() {
         while (txt.size() > 1 && txt.back() == '0') txt.pop_back();
         if (!txt.empty() && txt.back() == '.') txt.pop_back();
         l->setText(txt + "x");
+    }
+
+    // The video button only when there is a video track to switch to.
+    if (videoBtn) {
+        // Cover pictures in the file count as video tracks to mpv; not here.
+        int videos = 0;
+        for (const auto& t : player.getTrackList("video"))
+            if (!t.albumArt) videos++;
+        const bool several = videos > 1;
+        const auto want = several ? brls::Visibility::VISIBLE : brls::Visibility::GONE;
+        if (videoBtn->getVisibility() != want) {
+            if (!several && brls::Application::getCurrentFocus() == videoBtn && playBtn)
+                brls::Application::giveFocus(playBtn);
+            videoBtn->setVisibility(want);
+        }
     }
 
     // "Audio · English", "Subs · Off" — the selected track, which is why these are pills and not glyphs.
@@ -6178,8 +6902,20 @@ void PlayerActivity::setVideoOsdChromeVisible(bool visible) {
     setSubtreeClickAvailable(getView("player/osd_top"), visible);
 }
 
+// Over a video the OSD's bottom bar and scrim cover the bottom of the
+// picture, where subtitles sit: raised above them while it is up, or while
+// the subtitle panel is, and back to the bottom when they go.
+void PlayerActivity::updateSubtitlePosition() {
+    if (!m_videoOsd || !MpvPlayer::getInstance().isInitialized()) return;
+    const int pos = (m_controlsVisible || m_subPanelVisible) ? 72 : 100;
+    if (pos == m_subtitlePos) return;
+    m_subtitlePos = pos;
+    MpvPlayer::getInstance().setSubtitlePosition(pos);
+}
+
 void PlayerActivity::showControls() {
     m_controlsVisible = true;
+    updateSubtitlePosition();
     resetControlsIdleTimer();
     setSubtreeClickAvailable(controlsBox, true);
     setSubtreeClickAvailable(centerControls, true);
@@ -6208,6 +6944,7 @@ void PlayerActivity::hideControls() {
     if (!controlsCanHide()) return;
 
     m_controlsVisible = false;
+    updateSubtitlePosition();
     if (controlsBox) {
         controlsBox->setAlpha(0.0f);
         controlsBox->setVisibility(brls::Visibility::GONE);

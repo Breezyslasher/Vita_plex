@@ -3,6 +3,7 @@
      com.gamemaker.game
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="org.VitaPlex.app"
     android:versionCode="2"
     android:versionName="0.6.3"
@@ -91,7 +92,12 @@
 
          An example Java class can be found in README-android.md
     -->
+    <!-- enableOnBackInvokedCallback="false": the Back key reaches the app
+         as a key, as it did before Android 16. Targeting API 36, the system
+         otherwise takes Back itself (predictive back) and SDL, and so every
+         screen's Back, never sees it. -->
     <application android:label="@string/app_name"
+        android:enableOnBackInvokedCallback="false"
         android:icon="@mipmap/ic_launcher"
         android:banner="@drawable/banner"
         android:allowBackup="true"
@@ -134,6 +140,13 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+            <!-- "Play <x> on VitaPlex" said to the Assistant on the phone: the
+                 system's play-from-search request, with the words in
+                 SearchManager.QUERY (VitaPlexActivity.handlePlayFromSearch). -->
+            <intent-filter>
+                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
             <!-- Let Android know that we can handle some USB devices and should receive this event -->
             <intent-filter>
@@ -240,7 +253,7 @@
              GLOBAL_SEARCH so only that app can. -->
         <provider
             android:name="org.VitaPlex.app.SearchSuggestionProvider"
-            android:authorities="org.VitaPlex.app.search"
+            android:authorities="${applicationId}.search"
             android:exported="true"
             android:readPermission="android.permission.GLOBAL_SEARCH" />
 

@@ -12,6 +12,7 @@
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
 #include "utils/async.hpp"
+#include "utils/background_audio.hpp"
 #include "utils/http_client.hpp"  // redactTokensInUrl
 
 namespace vitaplex {
@@ -241,9 +242,15 @@ bool MusicController::loadCurrentHeadless() {
         m_prefetchUrl.clear();
         m_prefetchSession.clear();
     }
+    // A file of it kept from a hand-over to SceShell (utils/background_audio.hpp).
+    const std::string kept = bgaudio::songFile(track->ratingKey);
     if (DownloadsManager::getInstance().getDownloadCopy(track->ratingKey, dl) &&
         dl.state == DownloadState::COMPLETED && !dl.localPath.empty()) {
         url = dl.localPath;
+    } else if (!kept.empty()) {
+        url = kept;
+        brls::Logger::info("MusicController: using the file kept from SceShell for {}",
+                           track->ratingKey);
     } else if (prefetched) {
         // Resolved while the previous track was still playing — the whole point
         // is to keep those two blocking round-trips out of the gap between songs.
@@ -297,6 +304,15 @@ void MusicController::prefetchNextTrack() {
     if (DownloadsManager::getInstance().getDownloadCopy(next->ratingKey, dl) &&
         dl.state == DownloadState::COMPLETED && !dl.localPath.empty()) {
         return;   // plays from disk; nothing to resolve
+    }
+    if (!bgaudio::songFile(next->ratingKey).empty()) {
+        // Kept from SceShell: recorded with no URL, as a failed resolve is.
+        m_prefetchKey = next->ratingKey;
+        m_prefetchUrl.clear();
+        m_prefetchSession.clear();
+        m_prefetchVersion = version;
+        m_prefetchAtMs = 0;
+        return;
     }
 
     const std::string key = next->ratingKey;
@@ -837,8 +853,13 @@ void MusicController::beginRecovery(long long positionMs, const std::string& why
     m_recover.positionMs = positionMs;
     m_recover.startedAt = std::chrono::steady_clock::now();
     m_recover.nextAt = m_recover.startedAt + std::chrono::seconds(kRecoverDelaysSec[0]);
-    brls::Logger::warning("MusicController: lost {} at {}ms ({}); will reload it when the "
-                          "server answers", t->ratingKey, positionMs, why);
+    // The server refused the stream's reconnect, so it is there: the stream
+    // starts again at once, with no wait and no check of the server.
+    m_recover.serverUp = MpvPlayer::getInstance().streamRefused();
+    if (m_recover.serverUp) m_recover.nextAt = m_recover.startedAt;
+    brls::Logger::warning("MusicController: lost {} at {}ms ({}); {}", t->ratingKey, positionMs,
+                          why, m_recover.serverUp ? "the server refused its reconnect: reloading it at once"
+                                                  : "will reload it when the server answers");
 
     m_recoverTimer.start(500);
     publishNowPlaying(1, positionMs);
@@ -978,6 +999,12 @@ void MusicController::recoveryTick() {
         return;
     }
 
+    if (m_recover.serverUp) {
+        m_recover.serverUp = false;
+        m_recover.probes++;
+        recoveryReload();
+        return;
+    }
     m_recover.busy = true;
     m_recover.probes++;
     const uint32_t gen = m_recoverGen;

@@ -17,9 +17,13 @@
 #include "utils/async.hpp"
 #include "platform/paths.hpp"
 #include "platform/platform.hpp"
+#ifdef VITAPLEX_IOS_DOWNLOADS
+#include "app/downloads_ios.hpp"
+#endif
 #include <borealis.hpp>
 #include <fstream>
 #include <algorithm>
+#include <map>
 #include <sstream>
 #include <ctime>
 #include <cstdlib>
@@ -33,6 +37,11 @@
 #include <psp2/io/stat.h>
 #include <psp2/io/dirent.h>
 #include <psp2/kernel/threadmgr.h>
+
+#include <psp2/kernel/processmgr.h>
+
+#include "shell_companion.h"  // the SceShell plugin, which carries downloads on (handOverToShell)
+#include "utils/shell_companion_psv.hpp"
 #endif
 
 namespace vitaplex {
@@ -41,6 +50,7 @@ namespace vitaplex {
 #ifdef __vita__
 static const char* DOWNLOADS_DIR = "ux0:data/VitaPlex/downloads";
 static const char* STATE_FILE = "ux0:data/VitaPlex/downloads/state.json";
+static std::string readWhole(const char* path);
 #endif
 
 // On-disk size of a file in bytes, or 0 if it doesn't exist / can't be read.
@@ -184,10 +194,59 @@ bool DownloadsManager::init() {
     // Load saved state
     loadState();
 
+#ifdef VITAPLEX_IOS_DOWNLOADS
+    // What iOS finished while VitaPlex was away, before the files are
+    // checked; and the hooks that hand downloads to it from now on.
+    iosApplyResults();
+    iosdl::init([this]() { iosHandOver(); }, [this]() { iosComeBack(); },
+                [this]() { iosApplyResults(); });
+#endif
+
+#ifdef __vita__
+    // Downloads the quick menu plugin's status names are handed to it, should
+    // VitaPlex have been ended before it saved them so (handOverToShell):
+    // before validateDownloadedFiles, which counts them to go on with.
+    const std::string status = readWhole(shellcomp::path(SC_DOWNLOADS_STATUS).c_str());
+    for (size_t at = 0; at < status.size();) {
+        size_t end = status.find('\n', at);
+        if (end == std::string::npos) end = status.size();
+        if (status.compare(at, 5, "item=") == 0) {
+            const size_t tab = status.find('\t', at + 5);
+            const std::string key = status.substr(at + 5, (tab < end ? tab : end) - at - 5);
+            for (auto& item : m_downloads)
+                if (item.ratingKey == key && item.state != DownloadState::COMPLETED &&
+                    item.state != DownloadState::CANCELLED)
+                    item.withShell = true;
+        }
+        at = end + 1;
+    }
+#endif
+
     // Validate that completed files actually exist
     validateDownloadedFiles();
 
+#ifdef __vita__
+    // Downloads SceShell has carried on since VitaPlex last closed stop now,
+    // so that VitaPlex can go on with them (takeBackFromShell, as it next
+    // downloads). Only a plugin that is there is asked: after a restart there
+    // is none, and the files are as SceShell left them.
+    bool withShell = false;
+    for (const auto& item : m_downloads) withShell = withShell || item.withShell;
+    if (withShell) {
+        shellcomp::init();
+        m_shellTakeRc = scDownloadsTakeBack();
+        brls::Logger::info("DownloadsManager: SceShell asked for the downloads it carries on "
+                           "({:#x})",
+                           (unsigned)m_shellTakeRc);
+    }
+#endif
+
     m_initialized = true;
+#ifdef VITAPLEX_IOS_DOWNLOADS
+    // Those iOS no longer has (the app was swiped away, which ends them)
+    // go back to VitaPlex's own downloads.
+    iosCheckRunning();
+#endif
     brls::Logger::info("DownloadsManager: Initialized at {} ({} items loaded)",
                        m_downloadsPath, m_downloads.size());
     return true;
@@ -203,7 +262,8 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
                                       const std::string& groupKey,
                                       const std::string& groupTitle,
                                       const std::string& groupThumb,
-                                      const std::string& albumTitle) {
+                                      const std::string& albumTitle,
+                                      const std::string& artist) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     // Check if already in queue
@@ -230,6 +290,7 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
     item.groupTitle = groupTitle;
     item.groupThumb = groupThumb;
     item.albumTitle = albumTitle;
+    item.artist = artist;
 
     // ratingKey and partPath come from the Plex server's JSON response. A
     // malicious or compromised server can return arbitrary strings, so we
@@ -326,6 +387,17 @@ void DownloadsManager::startDownloads() {
         m_runLastTitle.clear();
         m_lastProgressBytes = 0;
         brls::Logger::info("DownloadsManager: Download thread started");
+#ifdef __vita__
+        // A pause asked for before this run began is not one for it.
+        sceIoRemove(shellcomp::path(SC_DOWNLOADS_PAUSE).c_str());
+        takeBackFromShell();
+        // The shell companion plugin loaded into SceShell now, off the UI thread,
+        // so that handing the downloads over as VitaPlex closes does not wait
+        // for it: the load took 6 s there once, with a game starting (log of
+        // 13:52:36), of the 10 s the system gives VitaPlex to close.
+        if (Application::getInstance().getSettings().vitaDownloadsAfterLeaving)
+            shellcomp::open("DownloadsManager: for downloads after leaving");
+#endif
 
         while (m_downloading.load()) {
             std::string nextRatingKey;
@@ -333,10 +405,16 @@ void DownloadsManager::startDownloads() {
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 for (auto& item : m_downloads) {
-                    if (item.state == DownloadState::QUEUED) {
+                    // Not one the system carries on (iOS; on the Vita these
+                    // have been taken back by now).
+                    if (item.state == DownloadState::QUEUED && !item.withShell) {
                         item.state = DownloadState::DOWNLOADING;
                         nextRatingKey = item.ratingKey;
                         brls::Logger::info("DownloadsManager: Found queued item: {}", item.title);
+                        // Saved as begun: VitaPlex closed during it, as starting
+                        // a game closes it, then finds it cut off as it opens
+                        // again, and goes on with it (resumeInterrupted).
+                        saveStateUnlocked();
                         break;
                     }
                 }
@@ -375,6 +453,7 @@ void DownloadsManager::startDownloads() {
 
                         nextItem->state = DownloadState::DOWNLOADING;
                         nextItem->downloadedBytes = 0;
+                        saveState();  // as begun, as above
                         downloadItem(*nextItem);
                     }
                 }
@@ -476,6 +555,8 @@ bool DownloadsManager::deleteDownload(const std::string& ratingKey) {
             if (!item.thumbPath.empty()) {
 #ifdef __vita__
                 sceIoRemove(item.thumbPath.c_str());
+                const std::string small = smallCoverPath(item.thumbPath);
+                if (!small.empty()) sceIoRemove(small.c_str());
 #else
                 std::remove(item.thumbPath.c_str());
 #endif
@@ -577,17 +658,28 @@ void DownloadsManager::updateProgress(const std::string& ratingKey, int64_t view
     }
 }
 
-void DownloadsManager::syncProgressToServer() {
+void DownloadsManager::syncProgressToServer(
+    const std::map<std::string, ServerProgress>* server) {
     std::vector<DownloadItem> itemsToSync;
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         for (auto& item : m_downloads) {
-            if (item.state == DownloadState::COMPLETED && item.viewOffset > 0) {
-                itemsToSync.push_back(item);
+            if (item.state != DownloadState::COMPLETED || item.viewOffset <= 0) continue;
+            if (server) {
+                // Only what is ahead of the server: an older position would
+                // take back progress made on another device, and one on an
+                // item the server has watched (and no position) would mark
+                // it unwatched again.
+                auto it = server->find(item.ratingKey);
+                if (it == server->end()) continue;  // the server not reached for it
+                if (it->second.watched && it->second.viewOffset == 0) continue;
+                if (item.viewOffset <= it->second.viewOffset) continue;
             }
+            itemsToSync.push_back(item);
         }
     }
+    if (itemsToSync.empty()) return;
 
     brls::Logger::info("DownloadsManager: Syncing {} items to server", itemsToSync.size());
 
@@ -607,7 +699,7 @@ void DownloadsManager::syncProgressToServer() {
     saveState();
 }
 
-void DownloadsManager::syncProgressFromServer() {
+void DownloadsManager::syncProgressFromServer(std::map<std::string, ServerProgress>* seen) {
     std::vector<std::string> ratingKeys;
 
     {
@@ -624,32 +716,49 @@ void DownloadsManager::syncProgressFromServer() {
     brls::Logger::info("DownloadsManager: Pulling server progress for {} items", ratingKeys.size());
 
     PlexClient& client = PlexClient::getInstance();
+    int named = 0;
     for (const auto& key : ratingKeys) {
         MediaItem serverItem;
-        if (client.fetchMediaDetails(key, serverItem) && serverItem.viewOffset > 0) {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            for (auto& d : m_downloads) {
-                if (d.ratingKey == key) {
-                    // Use whichever progress is further ahead
-                    if (serverItem.viewOffset > d.viewOffset) {
-                        brls::Logger::info("DownloadsManager: Updated local progress for {} from {}ms to {}ms (from server)",
-                                          d.title, d.viewOffset, serverItem.viewOffset);
-                        d.viewOffset = serverItem.viewOffset;
-                    }
-                    break;
+        if (!client.fetchMediaDetails(key, serverItem)) continue;
+        if (seen) (*seen)[key] = ServerProgress{serverItem.viewOffset, serverItem.watched};
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& d : m_downloads) {
+            if (d.ratingKey == key) {
+                // Use whichever progress is further ahead
+                if (serverItem.viewOffset > d.viewOffset) {
+                    brls::Logger::info("DownloadsManager: Updated local progress for {} from {}ms to {}ms (from server)",
+                                      d.title, d.viewOffset, serverItem.viewOffset);
+                    d.viewOffset = serverItem.viewOffset;
                 }
+                // A track downloaded before its artist was kept gets it,
+                // and its album, from the same answer.
+                if (d.mediaType == "track" && serverItem.mediaType == MediaType::MUSIC_TRACK &&
+                    (d.artist.empty() || d.albumTitle.empty())) {
+                    if (d.artist.empty()) d.artist = serverItem.grandparentTitle;
+                    if (d.albumTitle.empty()) d.albumTitle = serverItem.parentTitle;
+                    named++;
+                }
+                break;
             }
         }
     }
+    if (named > 0)
+        brls::Logger::info("DownloadsManager: {} track(s) given their artist and album from the "
+                           "server", named);
 
     saveState();
 }
 
 void DownloadsManager::syncProgressBidirectional() {
     brls::Logger::info("DownloadsManager: Starting bidirectional progress sync");
-    syncProgressToServer();
-    syncProgressFromServer();
+    // The server's first, so that only progress ahead of it goes back.
+    std::map<std::string, ServerProgress> server;
+    syncProgressFromServer(&server);
+    syncProgressToServer(&server);
     brls::Logger::info("DownloadsManager: Bidirectional sync complete");
+#ifdef __vita__
+    fillSmallCovers();
+#endif
 }
 
 void DownloadsManager::resumeIncompleteDownloads() {
@@ -676,6 +785,50 @@ void DownloadsManager::resumeIncompleteDownloads() {
         brls::Logger::info("DownloadsManager: Resumed {} incomplete downloads", resumed);
         startDownloads();
     }
+}
+
+void DownloadsManager::resumeInterrupted() {
+    int interrupted = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        interrupted = m_interrupted;
+        m_interrupted = 0;
+    }
+    if (interrupted <= 0) return;
+    brls::Logger::info("DownloadsManager: {} download(s) cut off as VitaPlex last closed; going "
+                       "on in 5 s",
+                       interrupted);
+    // The manager is a process-lifetime singleton, so `this` is safe.
+    brls::delay(5000, [this]() { startDownloads(); });
+}
+
+void DownloadsManager::noteAppClosing() {
+    if (!m_downloading.load()) return;
+#ifdef __vita__
+    if (handOverToShell()) return;
+#endif
+    std::string title;
+    int left = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& d : m_downloads) {
+            if (d.state == DownloadState::DOWNLOADING || d.state == DownloadState::TRANSCODING) {
+                if (title.empty()) title = d.title;
+                left++;
+            } else if (d.state == DownloadState::QUEUED) {
+                left++;
+            }
+        }
+        // As it is: the one running stays begun, for resumeInterrupted.
+        saveStateUnlocked();
+    }
+    brls::Logger::info("DownloadsManager: VitaPlex closes with {} download(s) to go; they go on "
+                       "when it opens again",
+                       left);
+    shell::setProgress(0.0, title.empty() ? "Downloads" : title,
+                       left > 1 ? std::to_string(left) + " paused until " APP_DISPLAY_NAME " opens again"
+                                : "Paused until " APP_DISPLAY_NAME " opens again",
+                       false);
 }
 
 bool DownloadsManager::hasIncompleteDownloads() const {
@@ -729,6 +882,8 @@ void DownloadsManager::clearCompleted() {
             if (!item.thumbPath.empty()) {
 #ifdef __vita__
                 sceIoRemove(item.thumbPath.c_str());
+                const std::string small = smallCoverPath(item.thumbPath);
+                if (!small.empty()) sceIoRemove(small.c_str());
 #else
                 std::remove(item.thumbPath.c_str());
 #endif
@@ -848,16 +1003,215 @@ static std::string buildDirectDownloadUrl(const std::string& serverUrl, const st
     return url;
 }
 
+#ifdef __vita__
+// The download notification's question answered Yes, while VitaPlex
+// downloads: the shell companion plugin, which shows the notification, leaves
+// SC_DOWNLOADS_PAUSE (scDownloadPauseAsked). Taken, so that it pauses once.
+static bool pauseAskedFromShell() {
+    if (!scDownloadPauseAsked()) return false;
+    brls::Logger::info("DownloadsManager: paused from the download notification");
+    return true;
+}
+#endif
+
+// How waiting for an item of the download queue to be ready ended
+// (waitForQueueItem).
+enum class QueueWait {
+    Ready,    // the server has its file ready
+    Gone,     // the server no longer has the item, or gave it up
+    Failed,   // nothing that settled it: errors, or an hour of waiting
+    Stopped,  // downloads were paused meanwhile
+};
+static QueueWait waitForQueueItem(const std::string& baseUrl, const std::string& token,
+                                  const std::string& queueId, const std::string& itemId,
+                                  bool remembered, std::atomic<bool>& downloading,
+                                  DownloadItem& item);
+
+// What a download is added to the server's download queue with: the add's
+// query, from "?" and without the token, and its profile
+// (X-Plex-Client-Profile-Extra). On the Vita, VitaPlex's quick menu plugin
+// adds a download not yet in the queue with these once VitaPlex has gone
+// (handOverToShell).
+static void queueAddOf(const DownloadItem& item, std::string& query, std::string& profileExtra) {
+    bool isAudio = (item.mediaType == "track");
+    query = "?keys=/library/metadata/" + item.ratingKey;
+
+    // protocol=http tells the server to produce a single downloadable file
+    // (as opposed to hls/dash streaming segments).
+    //
+    // directPlay=1 and directStream=1: tell the server the client can
+    // play / direct-stream the source if it fits the profile-extra
+    // constraints below. The server uses these as *capabilities*, not
+    // demands — it'll still transcode when the source exceeds our
+    // limits (e.g. 1080p source for the Vita's 544p ceiling), but it
+    // will skip transcoding entirely when the source already matches
+    // (Switch/Android/desktop with an h264 source within their codec
+    // limits). The previous directPlay=0&directStream=0 forced a
+    // server-side transcode on every video download, which is why a
+    // 3.6 GB movie sat in /media 503-loop for minutes even when the
+    // source was already client-compatible.
+    query += "&protocol=http";
+    query += "&directPlay=1&directStream=1&directStreamAudio=1";
+    query += "&location=lan";
+    query += "&audioBoost=100";
+    // Keep the source's surround layout when the user asked for it; otherwise
+    // cap at 2.0 stereo (the default — smaller, universally playable).
+    AppSettings& settings = Application::getInstance().getSettings();
+    if (!settings.downloadKeepOriginalAudio)
+        query += "&audioChannelCount=2";
+    query += "&mediaIndex=0&partIndex=0";
+
+    if (isAudio) {
+        query += "&musicBitrate=320";
+        // Direct play profiles cover the common audio containers — server
+        // ships the file untouched when it matches one of these. Transcode
+        // target stays as the fallback for everything else.
+        profileExtra =
+            "add-direct-play-profile(type=musicProfile"
+                "&container=mp3&audioCodec=mp3)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=mp4&audioCodec=aac)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=mp4&audioCodec=alac)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=flac&audioCodec=flac)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=ogg&audioCodec=vorbis)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=ogg&audioCodec=opus)"
+            // replace=true (override the Generic profile's built-in target) and
+            // both streaming + static contexts, matching the video targets so a
+            // download decision finds a usable target whichever context it uses.
+            "+add-transcode-target(type=musicProfile"
+                "&context=streaming&protocol=http"
+                "&container=mp3&audioCodec=mp3&replace=true)"
+            "+add-transcode-target(type=musicProfile"
+                "&context=static&protocol=http"
+                "&container=mp3&audioCodec=mp3&replace=true)";
+    } else {
+        const auto& vc = platform::getVideoConstraints();
+        // Resolution + video bitrate from the download-quality setting. ORIGINAL
+        // keeps the platform's ceiling (and, with directPlay above, ships an
+        // already-compatible source untouched); a specific tier yields a smaller
+        // file that also encodes faster.
+        // Frame size comes from the shared table so the download and streaming
+        // paths cannot disagree about what a tier means.
+        std::string resolution = Application::resolutionFor(settings.downloadQuality);
+        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : vc.defaultBitrate;
+        switch (settings.downloadQuality) {
+            case VideoQuality::QUALITY_4K:    bitrate = 40000; break;
+            case VideoQuality::QUALITY_1080P: bitrate = 20000; break;
+            case VideoQuality::QUALITY_720P:  bitrate = 4000;  break;
+            case VideoQuality::QUALITY_480P:  bitrate = 2000;  break;
+            case VideoQuality::QUALITY_360P:  bitrate = 1000;  break;
+            case VideoQuality::QUALITY_240P:  bitrate = 500;   break;
+            case VideoQuality::ORIGINAL: default: break;  // keep the platform default
+        }
+        char bitrateStr[64];
+        snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
+        query += bitrateStr;
+        query += "&videoResolution=" + resolution;
+        // subtitles=embedded muxes soft subs into the file (mpv can toggle them);
+        // none strips them (the default). Never =burn — that hardcodes subs and
+        // adds a re-encode pass. subCodec is only advertised on the transcode
+        // target when subs are wanted, so the default (no-subs) profile stays
+        // exactly the one already known to work.
+        const bool wantSubs = settings.downloadIncludeSubtitles;
+        query += wantSubs ? "&subtitles=embedded" : "&subtitles=none";
+        const char* subCodec = wantSubs ? "&subtitleCodec=mov_text" : "";
+        int limW = 0, limH = 0;
+        Application::videoLimitFor(settings.downloadQuality, limW, limH);
+        char dlProfileBuf[1700];
+        snprintf(dlProfileBuf, sizeof(dlProfileBuf),
+            // Direct-play profiles say "ship this file untouched" — keep them
+            // for H.264 (mp4/mkv) so an already-compatible source downloads
+            // as-is. We deliberately do NOT list HEVC: with an HEVC direct-play
+            // profile the server tries to KEEP HEVC for the download (remux),
+            // which it can't resolve for http + multichannel audio (the "Cannot
+            // make a decision" error) and which wouldn't play on the Vita/Switch
+            // anyway. Dropping it forces HEVC down the H.264 transcode path.
+            "add-direct-play-profile(type=videoProfile"
+                "&container=mp4&videoCodec=h264&audioCodec=aac)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mp4&videoCodec=h264&audioCodec=ac3)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mp4&videoCodec=h264&audioCodec=mp3)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mkv&videoCodec=h264&audioCodec=aac)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mkv&videoCodec=h264&audioCodec=ac3)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mkv&videoCodec=h264&audioCodec=eac3)"
+            // Transcode fallback (H.264/AAC, mp4 to match our stored file).
+            // replace=true so it overrides the Generic profile's built-in
+            // target instead of being ignored. We register BOTH a streaming
+            // AND a static target: a download decision can resolve in either
+            // context, and registering only "streaming" left the server
+            // reporting "no transcode profile" for the download decision.
+            "+add-transcode-target(type=videoProfile"
+                "&context=streaming&protocol=http"
+                "&container=mp4&videoCodec=h264"
+                "&audioCodec=aac%s&replace=true)"
+            "+add-transcode-target(type=videoProfile"
+                "&context=static&protocol=http"
+                "&container=mp4&videoCodec=h264"
+                "&audioCodec=aac%s&replace=true)"
+            "+add-limitation(scope=videoCodec&scopeName=h264"
+                "&type=upperBound&name=video.level&value=%d)"
+            "+add-limitation(scope=videoCodec&scopeName=h264"
+                "&type=upperBound&name=video.width&value=%d)"
+            "+add-limitation(scope=videoCodec&scopeName=h264"
+                "&type=upperBound&name=video.height&value=%d)",
+            subCodec, subCodec, vc.maxVideoLevel, limW, limH);
+        profileExtra = dlProfileBuf;
+    }
+}
+
 // Try downloading via the Plex Download Queue API (server-side transcode + file download).
 // This transcodes video to platform-compatible resolution before downloading.
 // Polls the queue status until transcoding is complete before returning the media URL.
 // Returns true if the download URL was obtained, with the URL stored in outUrl.
+// keepItemIds: queue items other downloads not yet whole still use, which the
+// clean-up of stale items leaves. remember: saves the item, called as its
+// queue ids change.
 static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string& token,
                                  const std::string& ratingKey, std::string& outUrl,
-                                 std::atomic<bool>& downloading, DownloadItem& item) {
+                                 std::atomic<bool>& downloading, DownloadItem& item,
+                                 const std::vector<std::string>& keepItemIds,
+                                 const std::function<void()>& remember) {
     brls::Logger::info("DownloadsManager: Trying Download Queue API for {}", ratingKey);
 
     std::string baseUrl = convertToHttpForDownload(serverUrl);
+    auto mediaUrlOf = [&baseUrl, &token](const std::string& queueId, const std::string& itemId) {
+        return baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId +
+               "/media?X-Plex-Token=" + token;
+    };
+
+    // Step 0: the file the server prepared for it before, while the server
+    // still has it, so that a download cut off goes on with that same file
+    // (DownloadItem's queueId). Added again, it would be prepared anew, and a
+    // transcode of another size starts the download over. Only an item the
+    // server no longer has is forgotten; errors that settle nothing leave it
+    // for the next try (downloadItem).
+    if (!item.queueId.empty() && !item.queueItemId.empty()) {
+        brls::Logger::info("DownloadsManager: Asking for queue item {} prepared before",
+                           item.queueItemId);
+        const QueueWait wait = waitForQueueItem(baseUrl, token, item.queueId, item.queueItemId,
+                                                true, downloading, item);
+        if (wait == QueueWait::Ready) {
+            outUrl = mediaUrlOf(item.queueId, item.queueItemId);
+            brls::Logger::info("DownloadsManager: Download Queue media URL ready, as prepared "
+                               "before");
+            return true;
+        }
+        if (wait != QueueWait::Gone) return false;
+        brls::Logger::info("DownloadsManager: The server no longer has queue item {}; preparing "
+                           "it again",
+                           item.queueItemId);
+        item.queueId.clear();
+        item.queueItemId.clear();
+        remember();
+    }
 
     // Step 1: Create/get a download queue
     HttpClient http;
@@ -909,9 +1263,13 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
                 size_t idPos = cleanResp.body.find("\"id\":", searchPos);
                 if (idPos == std::string::npos) break;
                 int64_t oldItemId = extractJsonInt(cleanResp.body.substr(idPos), "id");
-                if (oldItemId > 0) {
-                    char oldIdBuf[32];
-                    snprintf(oldIdBuf, sizeof(oldIdBuf), "%lld", (long long)oldItemId);
+                char oldIdBuf[32];
+                snprintf(oldIdBuf, sizeof(oldIdBuf), "%lld", (long long)oldItemId);
+                if (oldItemId > 0 &&
+                    std::find(keepItemIds.begin(), keepItemIds.end(), oldIdBuf) != keepItemIds.end()) {
+                    brls::Logger::debug("DownloadsManager: Kept queue item {}, another download's",
+                                        oldIdBuf);
+                } else if (oldItemId > 0) {
                     HttpClient delHttp;
                     HttpRequest delReq;
                     delReq.url = baseUrl + "/downloadQueue/" + queueId + "/items/" + oldIdBuf
@@ -930,141 +1288,9 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     // Step 2: Add item to the download queue with transcode parameters.
     // Per API spec (openapi.json), the /add endpoint accepts transcode query params
     // (parameters #2-#27) and profile headers (#28-#35).
-    bool isAudio = (item.mediaType == "track");
-    std::string addUrl = baseUrl + "/downloadQueue/" + queueId + "/add"
-        + "?keys=/library/metadata/" + ratingKey;
-
-    // protocol=http tells the server to produce a single downloadable file
-    // (as opposed to hls/dash streaming segments).
-    //
-    // directPlay=1 and directStream=1: tell the server the client can
-    // play / direct-stream the source if it fits the profile-extra
-    // constraints below. The server uses these as *capabilities*, not
-    // demands — it'll still transcode when the source exceeds our
-    // limits (e.g. 1080p source for the Vita's 544p ceiling), but it
-    // will skip transcoding entirely when the source already matches
-    // (Switch/Android/desktop with an h264 source within their codec
-    // limits). The previous directPlay=0&directStream=0 forced a
-    // server-side transcode on every video download, which is why a
-    // 3.6 GB movie sat in /media 503-loop for minutes even when the
-    // source was already client-compatible.
-    addUrl += "&protocol=http";
-    addUrl += "&directPlay=1&directStream=1&directStreamAudio=1";
-    addUrl += "&location=lan";
-    addUrl += "&audioBoost=100";
-    // Keep the source's surround layout when the user asked for it; otherwise
-    // cap at 2.0 stereo (the default — smaller, universally playable).
-    AppSettings& settings = Application::getInstance().getSettings();
-    if (!settings.downloadKeepOriginalAudio)
-        addUrl += "&audioChannelCount=2";
-    addUrl += "&mediaIndex=0&partIndex=0";
-
-    std::string profileExtra;
-    if (isAudio) {
-        addUrl += "&musicBitrate=320";
-        // Direct play profiles cover the common audio containers — server
-        // ships the file untouched when it matches one of these. Transcode
-        // target stays as the fallback for everything else.
-        profileExtra =
-            "add-direct-play-profile(type=musicProfile"
-                "&container=mp3&audioCodec=mp3)"
-            "+add-direct-play-profile(type=musicProfile"
-                "&container=mp4&audioCodec=aac)"
-            "+add-direct-play-profile(type=musicProfile"
-                "&container=mp4&audioCodec=alac)"
-            "+add-direct-play-profile(type=musicProfile"
-                "&container=flac&audioCodec=flac)"
-            "+add-direct-play-profile(type=musicProfile"
-                "&container=ogg&audioCodec=vorbis)"
-            "+add-direct-play-profile(type=musicProfile"
-                "&container=ogg&audioCodec=opus)"
-            // replace=true (override the Generic profile's built-in target) and
-            // both streaming + static contexts, matching the video targets so a
-            // download decision finds a usable target whichever context it uses.
-            "+add-transcode-target(type=musicProfile"
-                "&context=streaming&protocol=http"
-                "&container=mp3&audioCodec=mp3&replace=true)"
-            "+add-transcode-target(type=musicProfile"
-                "&context=static&protocol=http"
-                "&container=mp3&audioCodec=mp3&replace=true)";
-    } else {
-        const auto& vc = platform::getVideoConstraints();
-        // Resolution + video bitrate from the download-quality setting. ORIGINAL
-        // keeps the platform's ceiling (and, with directPlay above, ships an
-        // already-compatible source untouched); a specific tier yields a smaller
-        // file that also encodes faster.
-        // Frame size comes from the shared table so the download and streaming
-        // paths cannot disagree about what a tier means.
-        std::string resolution = Application::resolutionFor(settings.downloadQuality);
-        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : vc.defaultBitrate;
-        switch (settings.downloadQuality) {
-            case VideoQuality::QUALITY_4K:    bitrate = 40000; break;
-            case VideoQuality::QUALITY_1080P: bitrate = 20000; break;
-            case VideoQuality::QUALITY_720P:  bitrate = 4000;  break;
-            case VideoQuality::QUALITY_480P:  bitrate = 2000;  break;
-            case VideoQuality::QUALITY_360P:  bitrate = 1000;  break;
-            case VideoQuality::QUALITY_240P:  bitrate = 500;   break;
-            case VideoQuality::ORIGINAL: default: break;  // keep the platform default
-        }
-        char bitrateStr[64];
-        snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
-        addUrl += bitrateStr;
-        addUrl += "&videoResolution=" + resolution;
-        // subtitles=embedded muxes soft subs into the file (mpv can toggle them);
-        // none strips them (the default). Never =burn — that hardcodes subs and
-        // adds a re-encode pass. subCodec is only advertised on the transcode
-        // target when subs are wanted, so the default (no-subs) profile stays
-        // exactly the one already known to work.
-        const bool wantSubs = settings.downloadIncludeSubtitles;
-        addUrl += wantSubs ? "&subtitles=embedded" : "&subtitles=none";
-        const char* subCodec = wantSubs ? "&subtitleCodec=mov_text" : "";
-        int limW = 0, limH = 0;
-        Application::videoLimitFor(settings.downloadQuality, limW, limH);
-        char dlProfileBuf[1700];
-        snprintf(dlProfileBuf, sizeof(dlProfileBuf),
-            // Direct-play profiles say "ship this file untouched" — keep them
-            // for H.264 (mp4/mkv) so an already-compatible source downloads
-            // as-is. We deliberately do NOT list HEVC: with an HEVC direct-play
-            // profile the server tries to KEEP HEVC for the download (remux),
-            // which it can't resolve for http + multichannel audio (the "Cannot
-            // make a decision" error) and which wouldn't play on the Vita/Switch
-            // anyway. Dropping it forces HEVC down the H.264 transcode path.
-            "add-direct-play-profile(type=videoProfile"
-                "&container=mp4&videoCodec=h264&audioCodec=aac)"
-            "+add-direct-play-profile(type=videoProfile"
-                "&container=mp4&videoCodec=h264&audioCodec=ac3)"
-            "+add-direct-play-profile(type=videoProfile"
-                "&container=mp4&videoCodec=h264&audioCodec=mp3)"
-            "+add-direct-play-profile(type=videoProfile"
-                "&container=mkv&videoCodec=h264&audioCodec=aac)"
-            "+add-direct-play-profile(type=videoProfile"
-                "&container=mkv&videoCodec=h264&audioCodec=ac3)"
-            "+add-direct-play-profile(type=videoProfile"
-                "&container=mkv&videoCodec=h264&audioCodec=eac3)"
-            // Transcode fallback (H.264/AAC, mp4 to match our stored file).
-            // replace=true so it overrides the Generic profile's built-in
-            // target instead of being ignored. We register BOTH a streaming
-            // AND a static target: a download decision can resolve in either
-            // context, and registering only "streaming" left the server
-            // reporting "no transcode profile" for the download decision.
-            "+add-transcode-target(type=videoProfile"
-                "&context=streaming&protocol=http"
-                "&container=mp4&videoCodec=h264"
-                "&audioCodec=aac%s&replace=true)"
-            "+add-transcode-target(type=videoProfile"
-                "&context=static&protocol=http"
-                "&container=mp4&videoCodec=h264"
-                "&audioCodec=aac%s&replace=true)"
-            "+add-limitation(scope=videoCodec&scopeName=h264"
-                "&type=upperBound&name=video.level&value=%d)"
-            "+add-limitation(scope=videoCodec&scopeName=h264"
-                "&type=upperBound&name=video.width&value=%d)"
-            "+add-limitation(scope=videoCodec&scopeName=h264"
-                "&type=upperBound&name=video.height&value=%d)",
-            subCodec, subCodec, vc.maxVideoLevel, limW, limH);
-        profileExtra = dlProfileBuf;
-    }
-
+    std::string query, profileExtra;
+    queueAddOf(item, query, profileExtra);
+    std::string addUrl = baseUrl + "/downloadQueue/" + queueId + "/add" + query;
     addUrl += "&X-Plex-Token=" + token;
 
     HttpRequest addReq;
@@ -1101,6 +1327,11 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     }
 
     brls::Logger::info("DownloadsManager: Download queue item ID: {}", itemId);
+    // Kept at once, so that VitaPlex closed while the server prepares it
+    // finds that same item as it opens again (Step 0).
+    item.queueId = queueId;
+    item.queueItemId = itemId;
+    remember();
 
     // /decision intentionally not called. The openapi spec defines
     // GET /downloadQueue/{q}/item/{i}/decision as a read-only "grab
@@ -1115,27 +1346,55 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     // Retry-After per the spec.
 
     // Step 4: Wait for the queue item to finish transcoding.
-    //
-    // Switched from polling /media (HEAD) to polling /items/{itemId}
-    // (GET) — same liveness signal, but /items returns JSON with the
-    // queue item's status enum (deciding/waiting/processing/available
-    // /error/expired) AND a TranscodeSession.progress (0-100) percent,
-    // so we get a real number for the UI and don't repeatedly ask the
-    // server to spin up a media stream just to check whether it's done.
-    //
-    // Polling cadence stretches over time so a long transcode doesn't
-    // turn into thousands of log lines: 5s base, capped at 30s after a
-    // few minutes. Plex's Retry-After is almost always -1 (unknown),
-    // so a fixed schedule is more predictable than honoring it. Status
-    // changes log at INFO; the per-poll details are DEBUG.
+    const QueueWait wait =
+        waitForQueueItem(baseUrl, token, queueId, itemId, false, downloading, item);
+    if (wait == QueueWait::Stopped) {
+        // The item stays remembered: the server goes on preparing it.
+        brls::Logger::info("DownloadsManager: Download cancelled during transcode wait");
+        return false;
+    }
+    if (wait != QueueWait::Ready) {
+        // Nothing of it to keep: the fall-backs fetch it another way.
+        item.queueId.clear();
+        item.queueItemId.clear();
+        remember();
+        brls::Logger::warning("DownloadsManager: Download Queue API failed, will fall back to streaming transcode");
+        return false;
+    }
+
+    // Step 5: The media URL is ready - return it for the caller to download via GET
+    outUrl = mediaUrlOf(queueId, itemId);
+
+    brls::Logger::info("DownloadsManager: Download Queue media URL ready");
+    return true;
+}
+
+// Waits for item itemId of download queue queueId to be ready, its file
+// prepared by the server. remembered: the item was added by an earlier try,
+// so a 404 means the server no longer has it.
+//
+// Switched from polling /media (HEAD) to polling /items/{itemId}
+// (GET) — same liveness signal, but /items returns JSON with the
+// queue item's status enum (deciding/waiting/processing/available
+// /error/expired) AND a TranscodeSession.progress (0-100) percent,
+// so we get a real number for the UI and don't repeatedly ask the
+// server to spin up a media stream just to check whether it's done.
+//
+// Polling cadence stretches over time so a long transcode doesn't
+// turn into thousands of log lines: 5s base, capped at 30s after a
+// few minutes. Plex's Retry-After is almost always -1 (unknown),
+// so a fixed schedule is more predictable than honoring it. Status
+// changes log at INFO; the per-poll details are DEBUG.
+static QueueWait waitForQueueItem(const std::string& baseUrl, const std::string& token,
+                                  const std::string& queueId, const std::string& itemId,
+                                  bool remembered, std::atomic<bool>& downloading,
+                                  DownloadItem& item) {
     item.state = DownloadState::TRANSCODING;
     item.transcodeElapsedSeconds = 0;
     item.transcodePollAttempt = 0;
     item.transcodeProgressPercent = 0;
     std::string itemUrl = baseUrl + "/downloadQueue/" + queueId
         + "/items/" + itemId + "?X-Plex-Token=" + token;
-    std::string mediaUrl = baseUrl + "/downloadQueue/" + queueId
-        + "/item/" + itemId + "/media?X-Plex-Token=" + token;
 
     auto pollInterval = [](int elapsedSec) {
         if (elapsedSec < 30)  return 5;   // First 30s: 5s
@@ -1145,7 +1404,6 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     };
 
     const int maxElapsedSeconds = 60 * 60;  // 1 hour absolute cap
-    bool mediaReady = false;
     std::string lastStatus;
     int consecutiveErrors = 0;
     auto transcodeStart = std::chrono::steady_clock::now();
@@ -1161,7 +1419,7 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
             brls::Logger::error(
                 "DownloadsManager: Transcode timeout after {}s, giving up",
                 elapsedSec);
-            break;
+            return QueueWait::Failed;
         }
 
         HttpClient itemHttp;
@@ -1172,6 +1430,11 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         itemReq.timeout = 15;
         HttpResponse itemResp = itemHttp.request(itemReq);
 
+        if (remembered && itemResp.statusCode == 404) {
+            brls::Logger::info("DownloadsManager: Queue item {} is no longer on the server",
+                               itemId);
+            return QueueWait::Gone;
+        }
         if (itemResp.statusCode != 200) {
             brls::Logger::warning(
                 "DownloadsManager: /items poll HTTP {} (attempt {}, elapsed {}s)",
@@ -1179,7 +1442,7 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
             if (++consecutiveErrors >= 5) {
                 brls::Logger::error(
                     "DownloadsManager: 5 consecutive /items errors, giving up");
-                break;
+                return QueueWait::Failed;
             }
             int wait = pollInterval(elapsedSec);
 #ifdef __vita__
@@ -1221,19 +1484,24 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         }
 
         if (status == "available") {
-            mediaReady = true;
             brls::Logger::info(
                 "DownloadsManager: Media ready after {}s ({} polls)",
                 elapsedSec, attempt + 1);
-            break;
+            return QueueWait::Ready;
         }
         if (status == "error" || status == "expired") {
             brls::Logger::error(
                 "DownloadsManager: Queue item ended in status='{}', giving up",
                 status);
-            break;
+            return QueueWait::Gone;
         }
         // deciding / waiting / processing — keep polling.
+#ifdef __vita__
+        if (pauseAskedFromShell()) {
+            DownloadsManager::getInstance().pauseDownloads();
+            return QueueWait::Stopped;
+        }
+#endif
 
         int wait = pollInterval(elapsedSec);
 #ifdef __vita__
@@ -1242,22 +1510,7 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         std::this_thread::sleep_for(std::chrono::seconds(wait));
 #endif
     }
-
-    if (!downloading.load()) {
-        brls::Logger::info("DownloadsManager: Download cancelled during transcode wait");
-        return false;
-    }
-
-    if (!mediaReady) {
-        brls::Logger::warning("DownloadsManager: Download Queue API failed, will fall back to streaming transcode");
-        return false;
-    }
-
-    // Step 5: The media URL is ready - return it for the caller to download via GET
-    outUrl = mediaUrl;
-
-    brls::Logger::info("DownloadsManager: Download Queue media URL ready");
-    return true;
+    return QueueWait::Stopped;
 }
 
 void DownloadsManager::reportShellProgress(const DownloadItem& item) {
@@ -1267,6 +1520,12 @@ void DownloadsManager::reportShellProgress(const DownloadItem& item) {
     if (nowMs - m_lastLauncherMs < 1000) return;
     const int64_t elapsedMs = nowMs - m_lastLauncherMs;
     m_lastLauncherMs = nowMs;
+#ifdef __vita__
+    if (pauseAskedFromShell()) {
+        pauseDownloads();
+        return;
+    }
+#endif
 
     // Negative means "working, size unknown" — an HLS download before its
     // segment count settles. Better an indeterminate bar than a 0% that looks
@@ -1390,10 +1649,34 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         Application::getInstance().getSettings().downloadQuality == VideoQuality::ORIGINAL &&
         !item.partPath.empty();
 
+    // The queue items other downloads not yet whole still use, which the
+    // queue's clean-up of stale ones must leave.
+    std::vector<std::string> keepItemIds;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& d : m_downloads) {
+            if (&d != &item && !d.queueItemId.empty() && d.state != DownloadState::COMPLETED &&
+                d.state != DownloadState::CANCELLED)
+                keepItemIds.push_back(d.queueItemId);
+        }
+    }
     if (!preferDirect &&
-        tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading, item)) {
+        tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading, item,
+                            keepItemIds, [this]() { saveState(); })) {
         urlReady = true;
         brls::Logger::info("DownloadsManager: Download Queue API ready for {}", item.title);
+    } else if (!preferDirect && !item.queueItemId.empty()) {
+        // The file the server prepared is still remembered: this try was
+        // paused, or met errors that settle nothing. Tried again later, as
+        // fetching it another way would start the download over. One the
+        // user cancelled meanwhile stays cancelled.
+        if (item.state != DownloadState::CANCELLED)
+            item.state = m_downloading.load() ? DownloadState::FAILED : DownloadState::PAUSED;
+        brls::Logger::warning("DownloadsManager: {} not reached through queue item {}; tried "
+                              "again later",
+                              item.title, item.queueItemId);
+        saveState();
+        return;
     } else if (!item.partPath.empty()) {
         url = buildDirectDownloadUrl(serverUrl, token, item.partPath);
         if (!url.empty()) {
@@ -1928,6 +2211,10 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
 
             // Decide append-vs-truncate the instant the final status is known, before any body byte is delivered.
             auto onStart = [&](int statusCode, int64_t fullSize) {
+                // Stopped as the answer came, as VitaPlex closing stops it: the
+                // file is left as it is, for SceShell to go on with
+                // (handOverToShell), never opened anew.
+                if (!m_downloading.load()) return;
                 if (statusCode == 416) {
                     // Range past end of file — it's already fully downloaded.
                     alreadyComplete = true;
@@ -1944,7 +2231,12 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                                           fullSize, item.totalBytes, item.title);
                     resume = false;
                 }
-                if (fullSize > 0) item.totalBytes = fullSize;
+                if (fullSize > 0 && fullSize != item.totalBytes) {
+                    item.totalBytes = fullSize;
+                    // Saved now, so that the check above has the file's size
+                    // when the download goes on after VitaPlex has closed.
+                    saveState();
+                }
                 item.downloadedBytes = resume ? resumeOffset : 0;
                 if (!out.open(item.localPath, /*append=*/resume)) {
                     openFailed = true;
@@ -1967,6 +2259,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                 [&](const char* data, size_t size) {
                     if (alreadyComplete) return false;   // 416: ignore any error body
                     if (openFailed) return false;
+                    if (!m_downloading.load()) return false;  // stopped: as onStart
                     // Safety net: if the status path never opened a file, start fresh.
                     if (!out.isOpen()) {
                         item.downloadedBytes = 0;
@@ -2014,6 +2307,10 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         brls::Logger::info("DownloadsManager: Download of {} was cancelled", item.title);
     } else if (success && m_downloading.load()) {
         item.state = DownloadState::COMPLETED;
+        // Whole: the server's prepared file is not wanted again, and the
+        // queue's next clean-up removes it.
+        item.queueId.clear();
+        item.queueItemId.clear();
         brls::Logger::info("DownloadsManager: Completed download of {}", item.title);
         // Remember it for the summary the worker posts once the queue drains.
         // Notifying here instead would mean one per item, and an album is
@@ -2101,6 +2398,9 @@ void DownloadsManager::downloadCoverArt(DownloadItem& item) {
 
     if (success) {
         brls::Logger::info("DownloadsManager: Cover art saved for {}", item.title);
+#ifdef __vita__
+        if (item.mediaType == "track") downloadSmallCover(item);
+#endif
     } else {
         brls::Logger::warning("DownloadsManager: Failed to download cover art for {}", item.title);
         // Clean up failed file
@@ -2112,6 +2412,78 @@ void DownloadsManager::downloadCoverArt(DownloadItem& item) {
         item.thumbPath.clear();
     }
 }
+
+#ifdef __vita__
+std::string DownloadsManager::smallCoverPath(const std::string& thumbPath) {
+    static const std::string kCover = "_cover.jpg";
+    if (thumbPath.size() <= kCover.size() ||
+        thumbPath.compare(thumbPath.size() - kCover.size(), kCover.size(), kCover) != 0)
+        return {};
+    return thumbPath.substr(0, thumbPath.size() - kCover.size()) + "_cover64.png";
+}
+
+bool DownloadsManager::downloadSmallCover(const DownloadItem& item) {
+    const std::string path = smallCoverPath(item.thumbPath);
+    if (path.empty()) return false;
+    return fetchCoverPng(item, SC_ART_SIZE, path);
+}
+
+bool DownloadsManager::fetchCoverPng(const DownloadItem& item, int size, const std::string& path) {
+    if (item.thumbUrl.empty()) return false;
+    PlexClient& client = PlexClient::getInstance();
+    const std::string serverUrl = client.getServerUrl();
+    const std::string token = client.getAuthToken();
+    if (serverUrl.empty() || token.empty()) return false;
+    // As the plugin asks for the covers it fetches itself (its fetchCover).
+    const std::string url = convertToHttpForDownload(
+        serverUrl + "/photo/:/transcode?url=" + HttpClient::urlEncode(item.thumbUrl) +
+        "&width=" + std::to_string(size) + "&height=" + std::to_string(size) +
+        "&minSize=1&upscale=1&format=png&X-Plex-Token=" + token);
+    std::string png;
+    HttpClient http;
+    const bool fetched = http.downloadFile(url, [&](const char* data, size_t size) {
+        png.append(data, size);
+        return png.size() <= 256 * 1024;
+    });
+    static const char kSignature[8] = {'\x89', 'P', 'N', 'G', '\r', '\n', '\x1A', '\n'};
+    if (!fetched || png.size() < 8 || png.compare(0, 8, kSignature, 8) != 0) {
+        brls::Logger::warning("DownloadsManager: No small cover for {}", item.title);
+        return false;
+    }
+    const std::string part = path + ".part";
+    SceUID fd = sceIoOpen(part.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+    if (fd < 0) return false;
+    const bool wrote = sceIoWrite(fd, png.data(), png.size()) == (int)png.size();
+    sceIoClose(fd);
+    sceIoRemove(path.c_str());
+    if (!wrote || sceIoRename(part.c_str(), path.c_str()) < 0) {
+        sceIoRemove(part.c_str());
+        return false;
+    }
+    return true;
+}
+
+void DownloadsManager::fillSmallCovers() {
+    std::vector<DownloadItem> tracks;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& item : m_downloads) {
+            if (item.state != DownloadState::COMPLETED || item.mediaType != "track" ||
+                item.thumbUrl.empty())
+                continue;
+            const std::string path = smallCoverPath(item.thumbPath);
+            SceIoStat st;
+            if (!path.empty() && sceIoGetstat(path.c_str(), &st) < 0) tracks.push_back(item);
+        }
+    }
+    if (tracks.empty()) return;
+    int made = 0;
+    for (const auto& item : tracks) made += downloadSmallCover(item) ? 1 : 0;
+    brls::Logger::info("DownloadsManager: {} of {} track(s) given the small cover the quick menu "
+                       "shows",
+                       made, tracks.size());
+}
+#endif
 
 bool DownloadsManager::reportTimeline(const DownloadItem& item, const std::string& state) {
     PlexClient& client = PlexClient::getInstance();
@@ -2127,22 +2499,30 @@ bool DownloadsManager::reportTimeline(const DownloadItem& item, const std::strin
     url << serverUrl << "/:/timeline"
         << "?ratingKey=" << item.ratingKey
         << "&key=/library/metadata/" << item.ratingKey
-        << "&identifier=com.plexapp.plugins.library"
         << "&time=" << item.viewOffset
         << "&state=" << state
         << "&duration=" << item.duration
         << "&offline=1"
         << "&X-Plex-Token=" << token;
 
+    // Without the client's identifier the server answers 400, as
+    // PlexClient::reportTimeline sends it.
     HttpClient http;
-    std::string response;
-    if (http.get(url.str(), response)) {
-        brls::Logger::debug("DownloadsManager: Reported timeline for {} ({}ms)",
-                           item.title, item.viewOffset);
+    HttpRequest req;
+    req.url = url.str();
+    req.method = "POST";   // openapi.json: /:/timeline is POST only
+    req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+    req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    req.timeout = 15;
+    HttpResponse resp = http.request(req);
+    if (resp.statusCode == 200) {
+        brls::Logger::info("DownloadsManager: Reported timeline for {} ({}ms)", item.title,
+                           item.viewOffset);
         return true;
     }
 
-    brls::Logger::error("DownloadsManager: Failed to report timeline for {}", item.title);
+    brls::Logger::error("DownloadsManager: Failed to report timeline for {}: {} {}", item.title,
+                        resp.statusCode, resp.body.substr(0, 120));
     return false;
 }
 
@@ -2153,12 +2533,27 @@ void DownloadsManager::validateDownloadedFiles() {
     // run continues via HTTP Range instead of starting over. This stays
     // synchronous: the download worker must see QUEUED, not a stale
     // DOWNLOADING, when it first scans the queue — and it only touches
-    // the rare interrupted item, so it costs nothing at startup.
+    // the rare interrupted item, so it costs nothing at startup. Counted for
+    // resumeInterrupted, which starts them again.
+    // Those handed to SceShell as it closed are as good as cut off: whatever
+    // VitaPlex saved of them on its way out, they go on (takeBackFromShell).
+    int interrupted = 0;
     for (auto& item : m_downloads) {
-        if (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING) {
+#ifdef VITAPLEX_IOS_DOWNLOADS
+        if (item.withShell) continue;  // iOS has it (iosCheckRunning)
+#endif
+        if (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING ||
+            (item.withShell && (item.state == DownloadState::PAUSED ||
+                                item.state == DownloadState::FAILED ||
+                                item.state == DownloadState::QUEUED))) {
             item.state = DownloadState::QUEUED;
             item.downloadedBytes = partFileSize(item.localPath);
+            interrupted++;
         }
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_interrupted = interrupted;
     }
 
     // The COMPLETED-items existence sweep opens one file per item — with
@@ -2210,6 +2605,422 @@ void DownloadsManager::validateDownloadedFiles() {
     });
 }
 
+#ifdef __vita__
+static std::string readWhole(const char* path) {
+    std::string text;
+    const SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
+    if (fd < 0) return text;
+    char buf[4096];
+    int got;
+    while ((got = sceIoRead(fd, buf, sizeof(buf))) > 0) text.append(buf, got);
+    sceIoClose(fd);
+    return text;
+}
+
+// The value of a "key=value" line, "" when there is none.
+static std::string noteValue(const std::string& text, const std::string& key) {
+    const std::string pat = key + "=";
+    for (size_t at = 0; at < text.size();) {
+        size_t end = text.find('\n', at);
+        if (end == std::string::npos) end = text.size();
+        if (text.compare(at, pat.size(), pat) == 0)
+            return text.substr(at + pat.size(), end - at - pat.size());
+        at = end + 1;
+    }
+    return "";
+}
+
+bool DownloadsManager::handOverToShell() {
+    if (!Application::getInstance().getSettings().vitaDownloadsAfterLeaving) return false;
+    PlexClient& client = PlexClient::getInstance();
+    const std::string server = convertToHttpForDownload(client.getServerUrl());
+    const std::string token = client.getAuthToken();
+    if (server.empty()) return false;
+
+    // As the server is asked by downloadItem: under VitaPlex's own names, with
+    // the file the server prepared when there is one, else added to the
+    // queue as tryDownloadQueueApi adds it. An HLS transcode, which VitaPlex
+    // falls back to when the queue fails, fails there too, and is left for
+    // VitaPlex. The names and the token are the list's header lines, sent
+    // with every request (the plugin's PROTOCOL.md §5.2): the download queue
+    // is the client's, so the plugin asks it under VitaPlex's id.
+    const auto& vc = platform::getVideoConstraints();
+    std::string headers = std::string("X-Plex-Client-Identifier: ") + PLEX_CLIENT_NAME +
+                          "\r\nX-Plex-Product: " + PLEX_CLIENT_NAME;
+    if (vc.plexPlatform && vc.plexPlatform[0])
+        headers += std::string("\r\nX-Plex-Platform: ") + vc.plexPlatform;
+    if (vc.plexDevice && vc.plexDevice[0])
+        headers += std::string("\r\nX-Plex-Device: ") + vc.plexDevice;
+    if (!token.empty()) headers += "\r\nX-Plex-Token: " + token;
+    // The items' fields, kept while scWriteDownloads reads them.
+    struct Fields {
+        std::string key, path, title, kind, a1, a2, a3;
+        uint64_t size = 0;
+    };
+    std::vector<Fields> fields;
+    std::vector<std::string> keys;
+    std::string firstTitle;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& item : m_downloads) {
+            if (keys.size() >= SC_MAX_DOWNLOADS) break;
+            if (item.state != DownloadState::QUEUED && item.state != DownloadState::DOWNLOADING &&
+                item.state != DownloadState::TRANSCODING)
+                continue;
+            if (item.localPath.empty()) continue;
+            Fields f;
+            f.key = item.ratingKey;
+            f.path = item.localPath;
+            f.size = item.totalBytes > 0 ? (uint64_t)item.totalBytes : 0;
+            f.title = item.title;
+            f.a1 = server;
+            if (!item.queueId.empty() && !item.queueItemId.empty()) {
+                f.kind = "plexqueue";
+                f.a2 = item.queueId;
+                f.a3 = item.queueItemId;
+            } else {
+                f.kind = "plexadd";
+                queueAddOf(item, f.a2, f.a3);
+            }
+            fields.push_back(std::move(f));
+            keys.push_back(item.ratingKey);
+            if (firstTitle.empty()) firstTitle = item.title;
+        }
+    }
+    if (keys.empty()) return false;
+    std::vector<ScDownload> list(fields.size());
+    for (size_t i = 0; i < fields.size(); i++) {
+        ScDownload& d = list[i];
+        std::memset(&d, 0, sizeof(d));
+        d.id = fields[i].key.c_str();
+        d.file = fields[i].path.c_str();
+        d.size = fields[i].size;
+        d.title = fields[i].title.c_str();
+        d.kind = fields[i].kind.c_str();
+        d.args[0] = fields[i].a1.c_str();
+        d.args[1] = fields[i].a2.c_str();
+        d.args[2] = fields[i].a3.c_str();
+    }
+    shellcomp::init();
+    if (scWriteDownloads(1, headers.c_str(), list.data(), (uint32_t)list.size()) < 0) {
+        brls::Logger::error("DownloadsManager: the downloads for SceShell not written to {}",
+                            shellcomp::path(SC_DOWNLOADS));
+        return false;
+    }
+
+    // Saved as handed over before the plugin is asked: VitaPlex may be ended
+    // at any moment from here, as the system ends it 10 s after asking it to
+    // quit (log of 16:55:06, where it was ended before this was saved), and
+    // one that opens again must know to take the files back before it writes
+    // to them. Undone if the plugin does not take them.
+    auto markHandedOver = [this, &keys](bool handed) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& item : m_downloads) {
+            if (std::find(keys.begin(), keys.end(), item.ratingKey) == keys.end()) continue;
+            item.withShell = handed;
+            // Begun, paused as it stopped, or not begun: to go on with.
+            if (handed && item.state != DownloadState::COMPLETED &&
+                item.state != DownloadState::CANCELLED)
+                item.state = DownloadState::QUEUED;
+        }
+        saveStateUnlocked();
+    };
+    markHandedOver(true);
+
+    shellcomp::open("DownloadsManager: SceShell");
+    const int rc = scDownloadsStart();
+    if (rc < 0) {
+        brls::Logger::warning("DownloadsManager: the shell companion plugin did not take the "
+                              "downloads ({:#x}); they go on when VitaPlex opens again",
+                              (unsigned)rc);
+        sceIoRemove(shellcomp::path(SC_DOWNLOADS).c_str());
+        markHandedOver(false);
+        return false;
+    }
+
+    // VitaPlex's own download stops, its file closed after the piece it is
+    // writing, without waiting for it: SceShell touches no file before
+    // VitaPlex has gone, and a download stopped as its answer comes leaves
+    // its file as it is (downloadItem's onStart). Waiting cost 1.5 s of the
+    // 10 s (log of 16:55:10). What the download thread saves of them as it
+    // stops is undone as VitaPlex opens (validateDownloadedFiles).
+    m_downloading.store(false);
+    brls::Logger::info("DownloadsManager: VitaPlex closes; SceShell carries {} download(s) on",
+                       keys.size());
+    // The plugin's notification is SceShell's to go on with; VitaPlex's own,
+    // when the plugin could not show it, ends here.
+    if (!shell::progressInShell())
+        shell::setProgress(0.0, firstTitle, "Going on in the background", false);
+    return true;
+}
+
+void DownloadsManager::takeBackFromShell() {
+    int handed = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& item : m_downloads)
+            if (item.withShell) handed++;
+    }
+    if (handed == 0) return;
+
+    // Nothing here writes to those files before SceShell has stopped
+    // (SC_CMD_DL_TAKE_BACK, sent as VitaPlex opened): its status says
+    // "running=0", or it has not been written in 40 s, longer than any one
+    // request of SceShell's can take (5 s to resolve, 5 to connect, 10 to
+    // send and 10 to receive), as it is written every 2 s while it runs: what
+    // a status left from before the Vita restarted looks like.
+    const std::string statusPath = shellcomp::path(SC_DOWNLOADS_STATUS);
+    std::string status = readWhole(statusPath.c_str());
+    if (m_shellTakeRc >= 0) {
+        std::string lastWritten = noteValue(status, "written");
+        int still = 0;
+        for (int waited = 0; !status.empty() && noteValue(status, "running") != "0";
+             waited += 250) {
+            if (waited >= 120000 || still >= 40000) {
+                brls::Logger::warning("DownloadsManager: SceShell's downloads did not say they "
+                                      "stopped ({} s); going on with them",
+                                      waited / 1000);
+                break;
+            }
+            sceKernelDelayThread(250 * 1000);
+            status = readWhole(statusPath.c_str());
+            const std::string w = noteValue(status, "written");
+            still = w == lastWritten ? still + 250 : 0;
+            lastWritten = w;
+        }
+    }
+
+    // Its items: "item=<key>\t<state>\t<bytes>\t<total>\t<queue>\t<item>".
+    struct Shell {
+        std::string state, queueId, queueItemId;
+        int64_t total = 0;
+    };
+    std::map<std::string, Shell> shell;
+    for (size_t at = 0; at < status.size();) {
+        size_t end = status.find('\n', at);
+        if (end == std::string::npos) end = status.size();
+        if (status.compare(at, 5, "item=") == 0) {
+            std::vector<std::string> f;
+            std::stringstream line(status.substr(at + 5, end - at - 5));
+            std::string field;
+            while (std::getline(line, field, '\t')) f.push_back(field);
+            if (f.size() >= 4) {
+                Shell& s = shell[f[0]];
+                s.state = f[1];
+                s.total = std::atoll(f[3].c_str());
+                if (f.size() >= 6) {
+                    s.queueId = f[4];
+                    s.queueItemId = f[5];
+                }
+            }
+        }
+        at = end + 1;
+    }
+
+    // Paused from the notification as SceShell carried them on: left paused,
+    // not gone on with as VitaPlex opens. Waiting for power (SC_PAUSED_BATTERY)
+    // is not that: VitaPlex goes on with them.
+    const bool paused = noteValue(status, "paused") == "1";
+    int done = 0, going = 0;
+    std::vector<std::string> covers;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& item : m_downloads) {
+            if (!item.withShell) continue;
+            item.withShell = false;
+            if (item.state == DownloadState::CANCELLED || item.state == DownloadState::COMPLETED)
+                continue;
+            const auto it = shell.find(item.ratingKey);
+            const int64_t onDisk = partFileSize(item.localPath);
+            if (it != shell.end() && it->second.state == "done") {
+                item.state = DownloadState::COMPLETED;
+                item.totalBytes = item.downloadedBytes = onDisk;
+                item.queueId.clear();
+                item.queueItemId.clear();
+                if (!item.thumbUrl.empty() && !item.thumbPath.empty())
+                    covers.push_back(item.ratingKey);
+                done++;
+                continue;
+            }
+            if (it != shell.end()) {
+                if (it->second.state == "gone") {
+                    item.queueId.clear();
+                    item.queueItemId.clear();
+                } else if (!it->second.queueId.empty() && !it->second.queueItemId.empty()) {
+                    item.queueId = it->second.queueId;
+                    item.queueItemId = it->second.queueItemId;
+                }
+                if (it->second.total > 0) item.totalBytes = it->second.total;
+            }
+            item.state = paused ? DownloadState::PAUSED : DownloadState::QUEUED;
+            item.downloadedBytes = onDisk;
+            going++;
+        }
+        saveStateUnlocked();
+    }
+    sceIoRemove(shellcomp::path(SC_DOWNLOADS).c_str());
+    sceIoRemove(statusPath.c_str());
+    brls::Logger::info("DownloadsManager: taken back from SceShell: {} done there, {} to go on "
+                       "with here{}",
+                       done, going, paused ? ", paused from the notification" : "");
+    for (const auto& key : covers) {
+        DownloadItem* item = findItemByKey(key);
+        if (item) downloadCoverArt(*item);
+    }
+}
+#endif
+
+#ifdef VITAPLEX_IOS_DOWNLOADS
+void DownloadsManager::iosHandOver() {
+    // What is under way or waiting, before the download thread is stopped
+    // (stopping marks the running one paused).
+    std::vector<std::string> wanted;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& item : m_downloads)
+            if (!item.withShell && (item.state == DownloadState::QUEUED ||
+                                    item.state == DownloadState::DOWNLOADING ||
+                                    item.state == DownloadState::TRANSCODING))
+                wanted.push_back(item.ratingKey);
+    }
+    if (wanted.empty()) return;
+
+    m_downloading.store(false);
+    waitForDownloadThread(3000);
+
+    PlexClient& client = PlexClient::getInstance();
+    const std::string server = client.getServerUrl();
+    const std::string token = client.getAuthToken();
+    const bool preferDirect =
+        platform::getVideoConstraints().supportsHevc &&
+        Application::getInstance().getSettings().downloadQuality == VideoQuality::ORIGINAL;
+    const std::string base = convertToHttpForDownload(server);
+
+    std::vector<iosdl::Task> tasks;
+    m_iosPausedKeys.clear();
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& item : m_downloads) {
+            if (std::find(wanted.begin(), wanted.end(), item.ratingKey) == wanted.end()) continue;
+            if (item.state == DownloadState::CANCELLED || item.state == DownloadState::COMPLETED)
+                continue;
+            // The same file downloadItem fetches: the one the server prepared
+            // in its download queue, else the original when that is what is
+            // wanted. A transcode not yet asked for has no file to name.
+            std::string url;
+            if (!server.empty() && !item.queueId.empty() && !item.queueItemId.empty())
+                url = base + "/downloadQueue/" + item.queueId + "/item/" + item.queueItemId +
+                      "/media?X-Plex-Token=" + token;
+            else if (!server.empty() && preferDirect && !item.partPath.empty())
+                url = buildDirectDownloadUrl(server, token, item.partPath);
+            if (url.empty() || item.localPath.empty()) {
+                item.state = DownloadState::PAUSED;
+                m_iosPausedKeys.push_back(item.ratingKey);
+                continue;
+            }
+            iosdl::Task t;
+            t.key = item.ratingKey;
+            t.url = url;
+            t.path = item.localPath;
+            t.offset = std::max<int64_t>(0, partFileSize(item.localPath));
+            tasks.push_back(t);
+            item.withShell = true;
+            item.state = DownloadState::QUEUED;
+            item.downloadedBytes = t.offset;
+        }
+        saveStateUnlocked();
+    }
+    const int started = iosdl::start(tasks);
+    brls::Logger::info("DownloadsManager: to the background: iOS carries on {} download(s), {} "
+                       "wait for VitaPlex",
+                       started, m_iosPausedKeys.size());
+}
+
+void DownloadsManager::iosComeBack() {
+    iosApplyResults();
+    iosCheckRunning();
+    bool any = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& item : m_downloads)
+            if (item.state == DownloadState::PAUSED &&
+                std::find(m_iosPausedKeys.begin(), m_iosPausedKeys.end(), item.ratingKey) !=
+                    m_iosPausedKeys.end()) {
+                item.state = DownloadState::QUEUED;
+                any = true;
+            }
+        m_iosPausedKeys.clear();
+        if (any) saveStateUnlocked();
+    }
+    if (any) startDownloads();
+}
+
+void DownloadsManager::iosApplyResults() {
+    const std::vector<iosdl::Result> results = iosdl::takeFinished();
+    if (results.empty()) return;
+    std::vector<std::string> covers;
+    bool retry = false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& r : results) {
+            for (auto& item : m_downloads) {
+                if (item.ratingKey != r.key || item.state == DownloadState::CANCELLED ||
+                    item.state == DownloadState::COMPLETED)
+                    continue;
+                item.withShell = false;
+                if (r.ok) {
+                    item.state = DownloadState::COMPLETED;
+                    item.totalBytes = item.downloadedBytes = r.size;
+                    item.queueId.clear();
+                    item.queueItemId.clear();
+                    if (!item.thumbUrl.empty() && !item.thumbPath.empty())
+                        covers.push_back(item.ratingKey);
+                    brls::Logger::info("DownloadsManager: {} finished by iOS", item.title);
+                } else {
+                    item.state = DownloadState::QUEUED;
+                    item.downloadedBytes = std::max<int64_t>(0, partFileSize(item.localPath));
+                    retry = true;
+                }
+            }
+        }
+        saveStateUnlocked();
+    }
+    if (!covers.empty()) {
+        asyncRun([this, covers]() {
+            for (const auto& key : covers)
+                if (DownloadItem* item = findItemByKey(key)) downloadCoverArt(*item);
+        });
+    }
+    if (retry && m_initialized) startDownloads();
+}
+
+void DownloadsManager::iosCheckRunning() {
+    iosdl::runningKeys([this](std::vector<std::string> running) {
+        iosApplyResults();
+        bool any = false;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            for (auto& item : m_downloads) {
+                if (!item.withShell) continue;
+                if (std::find(running.begin(), running.end(), item.ratingKey) != running.end())
+                    continue;
+                item.withShell = false;
+                if (item.state != DownloadState::COMPLETED && item.state != DownloadState::CANCELLED) {
+                    item.state = DownloadState::QUEUED;
+                    item.downloadedBytes = std::max<int64_t>(0, partFileSize(item.localPath));
+                    any = true;
+                }
+            }
+            if (any) saveStateUnlocked();
+        }
+        if (any) {
+            brls::Logger::info("DownloadsManager: iOS no longer has some downloads; VitaPlex goes on");
+            startDownloads();
+        }
+    });
+}
+#endif
+
 void DownloadsManager::saveState() {
     std::lock_guard<std::mutex> lock(m_mutex);
     saveStateUnlocked();
@@ -2248,6 +3059,10 @@ void DownloadsManager::saveStateUnlocked() {
            << "\"groupTitle\":\"" << escapeJson(item.groupTitle) << "\",\n"
            << "\"groupThumb\":\"" << escapeJson(item.groupThumb) << "\",\n"
            << "\"albumTitle\":\"" << escapeJson(item.albumTitle) << "\",\n"
+           << "\"artist\":\"" << escapeJson(item.artist) << "\",\n"
+           << "\"queueId\":\"" << escapeJson(item.queueId) << "\",\n"
+           << "\"queueItemId\":\"" << escapeJson(item.queueItemId) << "\",\n"
+           << "\"withShell\":" << (item.withShell ? 1 : 0) << ",\n"
            << "\"groupTotalItems\":" << item.groupTotalItems << "\n"
            << "}";
     }
@@ -2255,11 +3070,25 @@ void DownloadsManager::saveStateUnlocked() {
     ss << "]\n}";
 
 #ifdef __vita__
-    SceUID fd = sceIoOpen(STATE_FILE, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+    // Written beside it and moved in once whole: a process ended part-way
+    // through a write in place, as VitaPlex on the Vita is 2 s after the system asks
+    // it to quit, would leave the list cut short. The old one goes only once
+    // the new one is whole, and loadState takes the new one if the move was
+    // cut short in turn.
+    const std::string part = std::string(STATE_FILE) + ".part";
+    SceUID fd = sceIoOpen(part.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
     if (fd >= 0) {
         std::string data = ss.str();
-        sceIoWrite(fd, data.c_str(), data.size());
+        const int written = sceIoWrite(fd, data.c_str(), data.size());
         sceIoClose(fd);
+        if (written == (int)data.size()) {
+            sceIoRemove(STATE_FILE);
+            sceIoRename(part.c_str(), STATE_FILE);
+        } else {
+            sceIoRemove(part.c_str());
+            brls::Logger::error("DownloadsManager: state not saved ({} of {} bytes written)",
+                                written, data.size());
+        }
     }
 #else
     const std::string statePath = m_downloadsPath + "/state.json";
@@ -2278,6 +3107,8 @@ void DownloadsManager::loadState() {
 
 #ifdef __vita__
     SceUID fd = sceIoOpen(STATE_FILE, SCE_O_RDONLY, 0);
+    // Saved whole beside it, but not yet moved in (saveStateUnlocked).
+    if (fd < 0) fd = sceIoOpen((std::string(STATE_FILE) + ".part").c_str(), SCE_O_RDONLY, 0);
     if (fd >= 0) {
         char buffer[4096];
         int read;
@@ -2352,6 +3183,10 @@ void DownloadsManager::loadState() {
         item.groupTitle = extractJsonString(objStr, "groupTitle");
         item.groupThumb = extractJsonString(objStr, "groupThumb");
         item.albumTitle = extractJsonString(objStr, "albumTitle");
+        item.artist = extractJsonString(objStr, "artist");
+        item.queueId = extractJsonString(objStr, "queueId");
+        item.queueItemId = extractJsonString(objStr, "queueItemId");
+        item.withShell = extractJsonInt(objStr, "withShell") == 1;
         item.groupTotalItems = static_cast<int>(extractJsonInt(objStr, "groupTotalItems"));
 
         if (!item.ratingKey.empty()) {

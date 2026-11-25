@@ -18,6 +18,9 @@
 
 #pragma once
 
+#include <functional>
+#include <unordered_map>
+#include <utility>
 #include <borealis/core/activity.hpp>
 #include <borealis/core/audio.hpp>
 #include <borealis/core/font.hpp>
@@ -205,6 +208,15 @@ class Application
 
     inline static float windowScale;
 
+    // VitaPlex patch: the edges of the window the UI keeps clear of (the
+    // iPhone notch / Dynamic Island, the home indicator, rounded corners), in
+    // window units. setWindowSize asks safeAreaInsetsProvider when one is set
+    // and lays the UI out in what is left; drawing is offset by the left/top
+    // inset and touch input mapped back the same way. Zero where unset.
+    inline static float safeInsetLeft = 0, safeInsetTop = 0, safeInsetRight = 0, safeInsetBottom = 0;
+    inline static std::function<void(int width, int height, float* left, float* top, float* right,
+        float* bottom)> safeAreaInsetsProvider;
+
     /**
      * Sets whether BUTTON_START will globally be used to close the application.
      */
@@ -388,6 +400,73 @@ class Application
     static void addToWatchedKeys(const BrlsKeyCombination key);
 
     static void removeWatchedKeys(const BrlsKeyCombination key);
+
+    // VitaPlex patch: where each main-loop iteration's time went, in µs,
+    // handed to frameTimingsCallback after the iteration (before any
+    // frame-limit sleep). Nothing is measured while no callback is set.
+    struct FrameTimings
+    {
+        Time poll     = 0;  // platform->mainLoopIteration(): events, input polling
+        Time input    = 0;  // processInput()
+        Time anim     = 0;  // highlight animation + Ticking::updateTickings()
+        Time layout   = 0;  // the layout left pending, done before drawing
+        Time begin    = 0;  // videoContext->beginFrame() + clear
+        Time views    = 0;  // the activities' views drawn, highlight, notifications
+        Time nvgEnd   = 0;  // nvgEndFrame(): nanovg's draw calls flushed to the GPU
+        Time end      = 0;  // videoContext->endFrame(): GPU finish + swap (vsync wait)
+        Time sync     = 0;  // Threading::performSyncTasks() (brls::sync / delay)
+        Time runLoop  = 0;  // runLoopEvent subscribers
+        Time deletion = 0;  // deletion pool
+        Time start    = 0;  // when the iteration began (getCPUTimeUsec)
+        Time total    = 0;  // the whole iteration
+        // Within input: focus changes (giveFocus), by part.
+        Time focusLost   = 0;  // the old focus's onFocusLost
+        Time focusEvent  = 0;  // globalFocusChangeEvent subscribers
+        Time focusGained = 0;  // the new focus's onFocusGained
+        Time focusHints  = 0;  // globalHintsUpdateEvent (the hints bar)
+        int focusChanges = 0;
+        size_t tickings   = 0;  // running tickings after updateTickings()
+        size_t activities = 0;
+        bool drawn        = false;
+    };
+    inline static std::function<void(const FrameTimings&)> frameTimingsCallback;
+
+    // VitaPlex patch (patches/brls_view.cpp): while set, View::frame adds
+    // each view's own drawing time (µs, children excluded) and count by
+    // type name (typeid) to viewDrawSamples. The app sets it for a frame
+    // now and then, and reads and clears the samples after it.
+    inline static bool sampleViewDraws = false;
+
+    // VitaPlex patch (patches/brls_view.cpp): layout on demand. borealis laid
+    // the whole tree out on every invalidate() (each setText, addView, change
+    // to or from GONE): 4-8 passes a focus move, 55 building a tab. On the UI
+    // thread an invalidate() now only notes its root (deferLayout); the roots
+    // are laid out once, when anything reads a layout value (View's getX/Y/
+    // Width/Height flush first) or before the frame is drawn (flushLayout).
+    // Off the UI thread it lays out at once, as before.
+    inline static bool layoutPending = false;
+
+    // VitaPlex patch: for the app's frame log. brls::sync tasks that took
+    // kSlowSyncTaskUs or more (patches/brls_thread.cpp), by the type name of
+    // their function; and views deleted, by type, with their own time
+    // (children excluded), through timedDelete (deletion pool, ~Box). Both
+    // filled on the UI thread; the app drains them.
+    static constexpr Time kSlowSyncTaskUs = 15000;
+    inline static std::vector<std::pair<std::string, Time>> slowSyncTasks;
+    static void noteSlowSyncTask(const char* typeName, Time us);
+    inline static std::unordered_map<const char*, std::pair<Time, int>> deleteSamples;
+    static void timedDelete(View* view);
+    static void deferLayout(View* view);
+    static void flushLayout(View* reader = nullptr);
+
+    // VitaPlex patch: for the app's frame log, per frame: the views whose
+    // change started an invalidate() (by type), and what made a pending
+    // layout run (the type of the view reading a layout value, or "draw").
+    inline static std::unordered_map<const char*, int> layoutCauses;
+    inline static std::unordered_map<const char*, int> layoutReaders;
+    static void forgetLayout(View* view);
+    static bool isMainThread();
+    inline static std::unordered_map<const char*, std::pair<Time, int>> viewDrawSamples;
 
   private:
     inline static bool inited               = false;

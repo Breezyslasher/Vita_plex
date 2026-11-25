@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 #include <deque>
@@ -74,9 +75,40 @@ struct DownloadItem {
     std::string groupKey;       // ratingKey of the parent (playlist/album/artist/show)
     std::string groupTitle;     // Display title of the group
     std::string groupThumb;     // Thumbnail URL of the group (for cover art)
-    std::string albumTitle;     // Album title (for tracks in an artist group)
+    std::string albumTitle;     // Album title (for tracks)
+    // A track's artist (its grandparentTitle, as the player shows it), kept
+    // since parentTitle names the artist, the album or the playlist by how
+    // the track was downloaded. Empty on older downloads until the progress
+    // sync fills it, with albumTitle, from the server.
+    std::string artist;
     int groupTotalItems = 0;    // Total items originally in the group (stable Y for X/Y display)
+    // The file the server prepared for it in Plex's download queue, kept so
+    // that a download cut off, as VitaPlex closing for a game cuts one off,
+    // goes on with that same file. Added again, the server would prepare it
+    // anew, minutes for a transcode, and one of another size starts the
+    // download over. Empty when there is none.
+    std::string queueId;
+    std::string queueItemId;
+    // Vita: handed to the shell companion plugin as VitaPlex closed, which
+    // carries it on from inside SceShell (handOverToShell); taken back, with
+    // what SceShell made of it, before VitaPlex downloads anything again.
+    bool withShell = false;
 };
+
+// A downloaded track's artist and album, as the download keeps them. An
+// older one, until the progress sync fills them in: its parent title is the
+// artist for a track downloaded on its own or with its artist's, and the
+// album for an album's; a playlist's is the playlist's name, neither.
+inline std::string downloadArtist(const DownloadItem& d) {
+    if (!d.artist.empty()) return d.artist;
+    return d.groupType == DownloadGroupType::NONE || d.groupType == DownloadGroupType::ARTIST
+               ? d.parentTitle
+               : std::string();
+}
+inline std::string downloadAlbum(const DownloadItem& d) {
+    if (!d.albumTitle.empty()) return d.albumTitle;
+    return d.groupType == DownloadGroupType::ALBUM ? d.parentTitle : std::string();
+}
 
 // Progress callback: (downloadedBytes, totalBytes)
 using DownloadProgressCallback = std::function<void(int64_t, int64_t)>;
@@ -99,7 +131,8 @@ public:
                        const std::string& groupKey = "",
                        const std::string& groupTitle = "",
                        const std::string& groupThumb = "",
-                       const std::string& albumTitle = "");
+                       const std::string& albumTitle = "",
+                       const std::string& artist = "");
 
     // Get all downloads belonging to a specific group
     std::vector<DownloadItem> getDownloadsByGroup(DownloadGroupType type, const std::string& groupKey) const;
@@ -134,13 +167,22 @@ public:
     // Update watch progress for downloaded media
     void updateProgress(const std::string& ratingKey, int64_t viewOffset);
 
-    // Sync all offline progress to server (call when online)
-    void syncProgressToServer();
+    // Server progress as syncProgressFromServer found it: offset in ms, and
+    // whether the server has the item watched. By rating key.
+    struct ServerProgress {
+        int64_t viewOffset = 0;
+        bool watched = false;
+    };
 
-    // Pull server progress for downloaded items (call when online)
-    void syncProgressFromServer();
+    // Sync offline progress to server (call when online). Given what the
+    // server has, only progress ahead of it is sent.
+    void syncProgressToServer(const std::map<std::string, ServerProgress>* server = nullptr);
 
-    // Bidirectional sync: push local then pull server progress
+    // Pull server progress for downloaded items (call when online), noting
+    // what the server has in `seen`.
+    void syncProgressFromServer(std::map<std::string, ServerProgress>* seen = nullptr);
+
+    // Bidirectional sync: pull server progress, then push what is ahead of it
     void syncProgressBidirectional();
 
     // Resume incomplete downloads (queues PAUSED/FAILED items)
@@ -154,6 +196,18 @@ public:
 
     // Wait for the download thread to fully exit (call after pauseDownloads)
     void waitForDownloadThread(int timeoutMs = 2000);
+
+    // Downloads cut off as VitaPlex last closed, mid-way, started again: once
+    // content is available, a few seconds on, so that the first screen's
+    // requests go first. Downloads the user paused stay paused.
+    void resumeInterrupted();
+
+    // As VitaPlex closes, on the UI thread: a download running is left to go
+    // on when it opens again (resumeInterrupted), and its notification says
+    // so instead of showing a bar that no longer moves. On the Vita, with the
+    // setting on, the downloads go to the shell companion plugin instead,
+    // which carries them on from inside SceShell (handOverToShell).
+    void noteAppClosing();
 
     // Check if downloads are currently running
     bool isDownloading() const { return m_downloading.load(); }
@@ -171,6 +225,14 @@ public:
     // Get downloads directory path
     std::string getDownloadsPath() const;
 
+#ifdef __vita__
+    // Beside a download's cover (thumbPath): the same as the PNG of
+    // SC_ART_SIZE that the shell companion plugin shows in SceShell, which
+    // can make none of the JPEG (sc_protocol.h); the server
+    // makes it as the track is downloaded. "" for a cover of another name.
+    static std::string smallCoverPath(const std::string& thumbPath);
+#endif
+
 private:
     DownloadsManager() = default;
     ~DownloadsManager() = default;
@@ -182,9 +244,47 @@ private:
 
     // Download cover art for a music track
     void downloadCoverArt(DownloadItem& item);
+#ifdef __vita__
+    // The small PNG beside it (smallCoverPath), made by the server; true
+    // when it is on the card. And those of the tracks downloaded before it
+    // was made, once.
+    bool downloadSmallCover(const DownloadItem& item);
+    // The item's cover from the server's photo transcoder as a PNG of at most
+    // size square, written whole to path. true when it is there.
+    bool fetchCoverPng(const DownloadItem& item, int size, const std::string& path);
+    void fillSmallCovers();
+#endif
 
     // Report timeline to server
     bool reportTimeline(const DownloadItem& item, const std::string& state);
+
+#ifdef __vita__
+    // The downloads under way listed for the shell companion plugin
+    // (scWriteDownloads, scDownloadsStart), which carries them on from inside
+    // SceShell once VitaPlex has gone. On the UI thread as VitaPlex closes;
+    // true when the plugin has them.
+    bool handOverToShell();
+    // What SceShell made of the downloads handed to it, once it has stopped:
+    // on the download thread, before it downloads anything.
+    void takeBackFromShell();
+    // What asking the plugin for them back gave as VitaPlex opened: 0 when it
+    // was asked, the pipe's absence when no plugin was there to ask.
+    int m_shellTakeRc = -1;
+#endif
+
+#ifdef VITAPLEX_IOS_DOWNLOADS
+    // iPhone / iPad: downloads carried on by iOS's background URLSession
+    // while the app is away (downloads_ios.mm). Handed over as the app goes
+    // to the background (withShell set, as on the Vita: "with the system"),
+    // taken back as iOS reports each one, or when it has none of them left.
+    void iosHandOver();
+    void iosComeBack();
+    void iosApplyResults();
+    void iosCheckRunning();
+    // Stopped for the background with no file URL iOS could fetch (a
+    // transcode still to be prepared): carried on here on return.
+    std::vector<std::string> m_iosPausedKeys;
+#endif
 
     // Validate that downloaded files actually exist on disk
     void validateDownloadedFiles();
@@ -225,6 +325,9 @@ private:
     std::atomic<bool> m_downloading{false};
     std::atomic<bool> m_downloadThreadActive{false};
     bool m_initialized = false;
+    // Downloads loaded as begun, cut off as VitaPlex last closed
+    // (validateDownloadedFiles), for resumeInterrupted. Under m_mutex.
+    int m_interrupted = 0;
     DownloadProgressCallback m_progressCallback;
     std::string m_downloadsPath;
 };

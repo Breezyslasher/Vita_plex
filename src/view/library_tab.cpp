@@ -486,7 +486,7 @@ void LibraryTab::onItemSelected(const MediaItem& item) {
 
     // For tracks, play directly instead of showing detail view
     if (item.mediaType == MediaType::MUSIC_TRACK) {
-        Application::getInstance().pushPlayerActivity(item.ratingKey);
+        Application::getInstance().pushTrackPlayerActivity(item.ratingKey);
         return;
     }
 

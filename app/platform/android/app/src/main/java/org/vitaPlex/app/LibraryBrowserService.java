@@ -65,7 +65,9 @@ public final class LibraryBrowserService extends MediaBrowserServiceCompat {
     private static native void nativeInit(String filesDir);
     private static native void nativeLoadChildren(String parentId, int token);
     private static native void nativePlayFromMediaId(String mediaId);
-    private static native void nativePlayFromSearch(String query);
+    private static native void nativePlayFromSearch(String query, String focus, String title,
+                                                    String artist, String album, String playlist,
+                                                    String genre);
 
     /**
      * Bring the native side up in this process.
@@ -279,14 +281,40 @@ public final class LibraryBrowserService extends MediaBrowserServiceCompat {
      * library. An empty query is Assistant's bare "play music"; native answers
      * it by resuming whatever is queued.
      */
-    static void playFromSearch(String query) {
+    static void playFromSearch(String query, android.os.Bundle extras) {
         ensureAppRunning();
         try {
             if (!ensureNative(sAppContext)) return;
-            nativePlayFromSearch(query != null ? query : "");
+            nativePlayFromSearch(query != null ? query : "", focusOf(extras),
+                    extra(extras, android.provider.MediaStore.EXTRA_MEDIA_TITLE),
+                    extra(extras, android.provider.MediaStore.EXTRA_MEDIA_ARTIST),
+                    extra(extras, android.provider.MediaStore.EXTRA_MEDIA_ALBUM),
+                    extra(extras, "android.intent.extra.playlist"),
+                    extra(extras, android.provider.MediaStore.EXTRA_MEDIA_GENRE));
         } catch (Throwable t) {
             Log.w(TAG, "nativePlayFromSearch unavailable", t);
         }
+    }
+
+    private static String extra(android.os.Bundle extras, String key) {
+        if (extras == null) return "";
+        String v = extras.getString(key);
+        return v != null ? v.trim() : "";
+    }
+
+    /**
+     * What the Assistant took the request to be (EXTRA_MEDIA_FOCUS), as one of
+     * "artist", "album", "track", "playlist", "genre", or "" when it did not
+     * say or could not tell ("vnd.android.cursor.item/*").
+     */
+    private static String focusOf(android.os.Bundle extras) {
+        String f = extra(extras, android.provider.MediaStore.EXTRA_MEDIA_FOCUS);
+        if (f.endsWith("/artist")) return "artist";
+        if (f.endsWith("/album")) return "album";
+        if (f.endsWith("/audio")) return "track";
+        if (f.endsWith("/playlist")) return "playlist";
+        if (f.endsWith("/genre")) return "genre";
+        return "";
     }
 
     /**

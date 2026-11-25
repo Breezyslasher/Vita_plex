@@ -40,7 +40,7 @@ public final class NetworkMonitor {
     private static final String TAG = "VitaPlexNet";
 
     // Implemented in src/platform/platform_android.cpp.
-    private static native void nativeLog(String line);
+    static native void nativeLog(String line);   // also the activity's key log
 
     private static boolean sStarted;
     // onCapabilitiesChanged fires for signal strength and other details too;

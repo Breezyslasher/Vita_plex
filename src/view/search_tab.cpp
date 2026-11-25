@@ -316,7 +316,12 @@ void SearchTab::openIme() {
         s_imeTarget = this;
         SDL_AddEventWatch(&searchTextWatch, this);   // twice would double every keystroke
     }
+    // Search has no keyboard of its own: Android's is wanted here whatever
+    // the input (main.cpp turns it off for remotes, for EditTextDialog).
+    SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "1");
     SDL_StartTextInput();
+    SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD,
+                brls::Application::getInputType() == brls::InputType::TOUCH ? "1" : "0");
     return;
 #else
     auto* ime = brls::Application::getImeManager();

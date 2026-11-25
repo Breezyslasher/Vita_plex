@@ -2,6 +2,8 @@
  * VitaPlex - Plex API Client implementation
  */
 
+#include <mutex>
+#include <chrono>
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
 #include "utils/http_client.hpp"
@@ -51,6 +53,14 @@ static std::string redactBodyForLog(const std::string& body) {
         }
     }
     return out;
+}
+
+// The Subtitle Size setting, for a transcode. Subtitles the server burns into
+// the video are part of the picture, out of reach of mpv's sub-scale, so the
+// server sizes them itself: a percentage of their own size.
+static std::string subtitleSizeParam(const AppSettings& settings) {
+    const float pct = Application::subtitleScale(settings.subtitleSize) * 100.0f;
+    return "&subtitleSize=" + std::to_string((int)(pct + 0.5f));
 }
 
 // Encode one code point as UTF-8. Shared by the JSON and lyrics decoders,
@@ -243,6 +253,11 @@ std::string PlexClient::buildApiUrl(const std::string& endpoint) {
         } else {
             url += "?X-Plex-Token=" + m_authToken;
         }
+    } else if (endpoint.find('?') == std::string::npos) {
+        // No token (a local server that asks for none): still end with a
+        // query, since several callers add "&name=value" to what this returns
+        // ("/all&type=8" was the path that went out without it).
+        url += "?";
     }
 
     return url;
@@ -972,6 +987,9 @@ static std::string plexDirectFallbackUrl(const std::string& url) {
     return "http://" + ip + ":" + port;
 }
 
+// How long connectToServer waits to reach each address it tries.
+static constexpr int kProbeConnectSecs = 10;
+
 bool PlexClient::connectToServer(const std::string& url) {
     // Use connection timeout from settings (default 3 minutes for slow connections)
     int timeout = Application::getInstance().getSettings().connectionTimeout;
@@ -1010,6 +1028,11 @@ bool PlexClient::connectToServer(const std::string& url, int timeoutSeconds) {
         req.method = "GET";
         req.headers["Accept"] = "application/json";
         req.timeout = timeoutSeconds;
+        // Reaching the server is quick or not at all: the setting's time is
+        // for one that answers slowly. Left at what it implied (60 s at the
+        // default 180), a server that was off held the start-up, which runs
+        // before the first frame, for minutes, the LAN fallback after it.
+        req.connectTimeout = kProbeConnectSecs;
 
         HttpResponse resp = client.request(req);
         if (resp.statusCode == 200) {
@@ -1434,6 +1457,20 @@ bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaIt
     return true;
 }
 
+// The last item's metadata fetchMediaDetails had, for resolveTranscodeUrl to
+// reuse: opening the player fetched the same /library/metadata/<key> twice
+// in a row on the UI thread (the details, then the transcode URL's part key).
+// Only the part and its type are read from it there, which do not change, so
+// a few seconds' reuse is safe; fetchMediaDetails itself always fetches (it
+// carries the resume point).
+namespace {
+std::mutex s_lastMetadataMutex;
+std::string s_lastMetadataKey;
+std::string s_lastMetadataBody;
+std::chrono::steady_clock::time_point s_lastMetadataAt;
+constexpr std::chrono::seconds kMetadataReuse{5};
+}  // namespace
+
 bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item) {
     HttpClient client;
     std::string url = buildApiUrl("/library/metadata/" + ratingKey);
@@ -1448,6 +1485,12 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
     if (resp.statusCode != 200) {
         if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_lastMetadataMutex);
+        s_lastMetadataKey = ratingKey;
+        s_lastMetadataBody = resp.body;
+        s_lastMetadataAt = std::chrono::steady_clock::now();
     }
 
     item.ratingKey = extractJsonValue(resp.body, "ratingKey");
@@ -1815,6 +1858,8 @@ bool PlexClient::fetchExtras(const std::string& ratingKey, std::vector<MediaItem
         item.mediaType = parseMediaType(item.type);
         item.duration = extractJsonInt(obj, "duration");
         item.subtype = extractJsonValue(obj, "subtype");
+        item.extraType = extractJsonInt(obj, "extraType");
+        item.year = extractJsonInt(obj, "year");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
             items.push_back(item);
@@ -1824,6 +1869,121 @@ bool PlexClient::fetchExtras(const std::string& ratingKey, std::vector<MediaItem
     }
 
     brls::Logger::info("Found {} extras", items.size());
+    return true;
+}
+
+namespace {
+// The end of the JSON object or array opening at `open` (one past its closing
+// bracket), brackets inside strings left alone; npos if it does not close.
+size_t jsonSpanEnd(const std::string& json, size_t open) {
+    int depth = 0;
+    bool inString = false;
+    for (size_t i = open; i < json.size(); i++) {
+        const char c = json[i];
+        if (inString) {
+            if (c == '\\') i++;
+            else if (c == '"') inString = false;
+            continue;
+        }
+        if (c == '"') inString = true;
+        else if (c == '{' || c == '[') depth++;
+        else if (c == '}' || c == ']') {
+            if (--depth == 0) return i + 1;
+        }
+    }
+    return std::string::npos;
+}
+
+// The objects of the array that follows `"<key>":` at or after `from`, each
+// as [start, end); none when the key is not there.
+std::vector<std::pair<size_t, size_t>> jsonArrayObjects(const std::string& json,
+                                                        const std::string& key, size_t from,
+                                                        size_t limit) {
+    std::vector<std::pair<size_t, size_t>> out;
+    const size_t keyPos = json.find("\"" + key + "\"", from);
+    if (keyPos == std::string::npos || keyPos >= limit) return out;
+    const size_t open = json.find('[', keyPos);
+    if (open == std::string::npos || open >= limit) return out;
+    const size_t close = jsonSpanEnd(json, open);
+    if (close == std::string::npos) return out;
+    for (size_t i = open + 1; i < close;) {
+        const size_t obj = json.find('{', i);
+        if (obj == std::string::npos || obj >= close) break;
+        const size_t end = jsonSpanEnd(json, obj);
+        if (end == std::string::npos) break;
+        out.push_back({obj, end});
+        i = end;
+    }
+    return out;
+}
+}  // namespace
+
+const std::vector<PlexClient::ReleaseCategory>& PlexClient::artistReleaseCategories() {
+    // One query per value: Plex's comma / IN form is unreliable here.
+    static const std::vector<ReleaseCategory> kCategories = {
+        {"Singles & EPs", {"album.format=Single", "album.format=EP"}},
+        {"Compilations",  {"album.subformat=Compilation"}},
+        {"Soundtracks",   {"album.subformat=Soundtrack"}},
+        {"Live",          {"album.subformat=Live"}},
+        {"Remixes",       {"album.subformat=Remix"}},
+        {"Demos",         {"album.subformat=Demo"}},
+        {"DJ Mixes",      {"album.subformat=DJ-mix"}},
+        {"Mixtapes",      {"album.subformat=Mixtape/Street"}},
+        {"Spoken Word",   {"album.subformat=Spokenword"}},
+        {"Interviews",    {"album.subformat=Interview"}},
+        {"Audiobooks",    {"album.subformat=Audiobook"}},
+    };
+    return kCategories;
+}
+
+bool PlexClient::fetchExtrasForItems(const std::vector<std::string>& ratingKeys,
+                                     std::map<std::string, std::vector<MediaItem>>& extrasByItem) {
+    extrasByItem.clear();
+    if (ratingKeys.empty()) return true;
+    std::string ids;
+    for (const auto& key : ratingKeys) {
+        if (!ids.empty()) ids += ",";
+        ids += key;
+    }
+    brls::Logger::debug("fetchExtrasForItems: {} item(s)", ratingKeys.size());
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = buildApiUrl("/library/metadata/" + ids + "?includeExtras=1");
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+    if (resp.statusCode != 200) {
+        brls::Logger::error("Failed to fetch extras of {} item(s): {}", ratingKeys.size(),
+                            resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
+
+    const std::string& body = resp.body;
+    for (const auto& span : jsonArrayObjects(body, "Metadata", 0, body.size())) {
+        const std::string owner = extractJsonValueRange(body, span.first, span.second, "ratingKey");
+        if (owner.empty()) continue;
+        std::vector<MediaItem>& extras = extrasByItem[owner];
+        const size_t extrasPos = body.find("\"Extras\"", span.first);
+        if (extrasPos == std::string::npos || extrasPos >= span.second) continue;
+        for (const auto& e : jsonArrayObjects(body, "Metadata", extrasPos, span.second)) {
+            const std::string obj = body.substr(e.first, e.second - e.first);
+            MediaItem item;
+            item.ratingKey = extractJsonValue(obj, "ratingKey");
+            item.key = extractJsonValue(obj, "key");
+            item.title = extractJsonValue(obj, "title");
+            item.summary = extractJsonValue(obj, "summary");
+            item.thumb = extractJsonValue(obj, "thumb");
+            item.type = extractJsonValue(obj, "type");
+            item.mediaType = parseMediaType(item.type);
+            item.duration = extractJsonInt(obj, "duration");
+            item.subtype = extractJsonValue(obj, "subtype");
+            item.extraType = extractJsonInt(obj, "extraType");
+            item.year = extractJsonInt(obj, "year");
+            if (!item.ratingKey.empty() && !item.title.empty()) extras.push_back(std::move(item));
+        }
+    }
     return true;
 }
 
@@ -2479,6 +2639,7 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
         item.art = extractJsonValue(obj, "art");
         item.type = extractJsonValue(obj, "type");
         item.mediaType = parseMediaType(item.type);
+        item.librarySectionKey = extractJsonValue(obj, "librarySectionID");   // so a hidden library's can be left out
         item.year = extractJsonInt(obj, "year");
         item.duration = extractJsonInt(obj, "duration");
         item.index = extractJsonInt(obj, "index");             // episode / track number
@@ -3622,7 +3783,10 @@ bool PlexClient::searchSubtitles(const std::string& ratingKey, const std::string
         sub.language = extractJsonValue(obj, "language");
         sub.languageCode = extractJsonValue(obj, "languageCode");
         sub.provider = extractJsonValue(obj, "provider");
+        // "score" comes as a string ("7"), which extractJsonInt reads as 0.
         sub.score = extractJsonInt(obj, "score");
+        if (sub.score == 0) sub.score = std::atoi(extractJsonValue(obj, "score").c_str());
+        sub.release = extractJsonValue(obj, "title");
         sub.hearingImpaired = extractJsonBool(obj, "hearingImpaired");
         sub.forced = extractJsonBool(obj, "forced");
 
@@ -3636,13 +3800,17 @@ bool PlexClient::searchSubtitles(const std::string& ratingKey, const std::string
 
         if (!sub.key.empty()) {
             results.push_back(sub);
-            brls::Logger::debug("searchSubtitles: {} - {} [{}]",
-                               sub.displayTitle, sub.language, sub.provider);
+            brls::Logger::debug("searchSubtitles: {} - {} [{}] score {} for {}",
+                               sub.displayTitle, sub.language, sub.provider, sub.score, sub.release);
         }
 
         objPos = objEnd;
     }
 
+    // Best match first: the provider's score rates how well the file fits
+    // this video (a file for another release runs early or late).
+    std::stable_sort(results.begin(), results.end(),
+                     [](const SubtitleResult& a, const SubtitleResult& b) { return a.score > b.score; });
     brls::Logger::info("searchSubtitles: Found {} results for ratingKey {}", results.size(), ratingKey);
     return true;
 }
@@ -3718,15 +3886,27 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
                                      int offsetMs, std::string& outSessionId) {
     brls::Logger::debug("getTranscodeUrl: ratingKey={}, offsetMs={}", ratingKey, offsetMs);
 
-    // Fetch media details to get the Part key and determine if audio or video
+    // Fetch media details to get the Part key and determine if audio or video,
+    // unless fetchMediaDetails has just fetched them (s_lastMetadata*).
     HttpClient client;
-    std::string apiUrl = buildApiUrl("/library/metadata/" + ratingKey);
-
-    HttpRequest req;
-    req.url = apiUrl;
-    req.method = "GET";
-    req.headers["Accept"] = "application/json";
-    HttpResponse resp = client.request(req);
+    HttpResponse resp;
+    {
+        std::lock_guard<std::mutex> lock(s_lastMetadataMutex);
+        if (s_lastMetadataKey == ratingKey &&
+            std::chrono::steady_clock::now() - s_lastMetadataAt < kMetadataReuse) {
+            resp.statusCode = 200;
+            resp.body = s_lastMetadataBody;
+            brls::Logger::debug("getTranscodeUrl: metadata just fetched, reused");
+        }
+    }
+    if (resp.statusCode != 200) {
+        std::string apiUrl = buildApiUrl("/library/metadata/" + ratingKey);
+        HttpRequest req;
+        req.url = apiUrl;
+        req.method = "GET";
+        req.headers["Accept"] = "application/json";
+        resp = client.request(req);
+    }
 
     if (resp.statusCode != 200) {
         brls::Logger::error("getTranscodeUrl: Failed to fetch metadata: {}", resp.statusCode);
@@ -3780,8 +3960,18 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     queryParams += "path=" + encodedPath;
     queryParams += "&mediaIndex=0&partIndex=0";
 
-    // directPlay/directStream based on settings
-    if (settings.directPlay && !settings.forceTranscode) {
+    // directPlay/directStream based on settings. Once: the Vita and PS4 used
+    // to append a second directPlay=0 for audio after a directPlay=1 here,
+    // and which of two a server reads is not defined (openapi.json: one
+    // integer, 0 or 1).
+#if defined(__vita__) || defined(__PS4__)
+    const bool noDirectPlay = isAudio;   // see the audio branch below
+#else
+    const bool noDirectPlay = false;
+#endif
+    if (noDirectPlay && !settings.forceTranscode) {
+        queryParams += "&directPlay=0&directStream=1";
+    } else if (settings.directPlay && !settings.forceTranscode) {
         queryParams += "&directPlay=1&directStream=1";
     } else if (settings.forceTranscode) {
         queryParams += "&directPlay=0&directStream=0";
@@ -3805,8 +3995,8 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
         // desktop, and the audio profile we send says only "I can take an mp3
         // transcode" — it declares no direct-play capability for the server to
         // judge. Asking for direct play here invites a FLAC or ALAC the port
-        // cannot open, so tell the server not to offer it and take the mp3.
-        queryParams += "&directPlay=0";
+        // cannot open, so the server is told not to offer it and takes the mp3
+        // (noDirectPlay, above).
 #endif
     } else {
         // Video: HLS (HTTP Live Streaming) with TS segments.
@@ -3827,11 +4017,14 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
         queryParams += buf;
         queryParams += "&videoQuality=100";
 
-        // Subtitle handling based on settings
-        if (!settings.showSubtitles) {
+        // Subtitle handling based on settings. none too while the player
+        // shows a sidecar subtitle itself (setPlayerShowsSubtitle): it stays
+        // selected on the server, which must not burn it in as well.
+        if (!settings.showSubtitles || m_playerShowsSubtitle) {
             queryParams += "&subtitles=none";
         } else {
             queryParams += "&subtitles=auto";
+            queryParams += subtitleSizeParam(settings);
         }
     }
 
@@ -3899,7 +4092,9 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     // Per official API: X-Plex-Client-Identifier is REQUIRED, in=header
     {
         const auto& vc = platform::getVideoConstraints();
-        decisionReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_NAME;
+        // The same identifier as the timeline and play queue calls, so the
+        // server sees one client and not two.
+        decisionReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
         decisionReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
         decisionReq.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
         decisionReq.headers["X-Plex-Platform"] = vc.plexPlatform;
@@ -3912,6 +4107,29 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
 
     brls::Logger::info("getTranscodeUrl: Decision response: {} body: {}",
                       decisionResp.statusCode, redactBodyForLog(decisionResp.body.substr(0, 500)));
+
+    // What the server will do with each subtitle stream (the body above is cut
+    // at 500 bytes, before the streams). A TV log had a found subtitle drawn
+    // into the transcoded picture although subtitles=none was asked for, so
+    // the player's own copy showed on top of it.
+    m_lastTranscodeBurnsSubtitle = false;
+    for (size_t at = decisionResp.body.find("\"streamType\":3"); at != std::string::npos;
+         at = decisionResp.body.find("\"streamType\":3", at + 1)) {
+        const size_t open = decisionResp.body.rfind('{', at);
+        const size_t close = decisionResp.body.find('}', at);
+        if (open == std::string::npos || close == std::string::npos) break;
+        const std::string obj = decisionResp.body.substr(open, close - open + 1);
+        const std::string decision = extractJsonValue(obj, "decision");
+        const std::string location = extractJsonValue(obj, "location");
+        const std::string burn = extractJsonValue(obj, "burn");
+        const bool burns = decision == "burn" || burn == "1" || burn == "true" ||
+                           location == "segments-video";
+        if (burns) m_lastTranscodeBurnsSubtitle = true;
+        brls::Logger::info("getTranscodeUrl: subtitle stream {} selected={} decision={} location={} "
+                           "burn={} codec={}",
+                           extractJsonValue(obj, "id"), extractJsonValue(obj, "selected"), decision,
+                           location, burn, extractJsonValue(obj, "codec"));
+    }
 
     if (decisionResp.statusCode != 200) {
         brls::Logger::warning("getTranscodeUrl: Decision returned {}, trying start anyway",
@@ -3945,7 +4163,7 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     std::string startQuery = queryParams;
     {
         const auto& vc = platform::getVideoConstraints();
-        startQuery += "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_NAME);
+        startQuery += "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_ID);
         startQuery += "&X-Plex-Product=" + std::string(PLEX_CLIENT_NAME);
         startQuery += "&X-Plex-Version=" + std::string(PLEX_CLIENT_VERSION);
         startQuery += "&X-Plex-Platform=" + HttpClient::urlEncode(vc.plexPlatform);
@@ -4040,15 +4258,35 @@ bool PlexClient::reportLiveTimeline(const std::string& liveSessionUuid, int play
 
 bool PlexClient::markAsWatched(const std::string& ratingKey) {
     HttpClient client;
-    std::string url = buildApiUrl("/:/scrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");
-    HttpResponse resp = client.get(url);
+    // openapi.json: PUT "Mark an item as played".
+    HttpRequest req;
+    req.url = buildApiUrl("/:/scrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");
+    req.method = "PUT";
+    HttpResponse resp = client.request(req);
     return resp.statusCode == 200;
+}
+
+bool PlexClient::removeFromContinueWatching(const std::string& ratingKey) {
+    if (ratingKey.empty()) return false;
+    // PUT /actions/removeFromContinueWatching?ratingKey=: what Plex's own
+    // apps send for "Remove from Continue Watching". openapi.json does not
+    // list it. It hides the item from the hub; its watch progress is kept.
+    HttpClient client;
+    HttpRequest req;
+    req.url = buildApiUrl("/actions/removeFromContinueWatching?ratingKey=" + ratingKey);
+    req.method = "PUT";
+    HttpResponse resp = client.request(req);
+    brls::Logger::info("removeFromContinueWatching {}: HTTP {}", ratingKey, resp.statusCode);
+    return resp.statusCode >= 200 && resp.statusCode < 300;
 }
 
 bool PlexClient::markAsUnwatched(const std::string& ratingKey) {
     HttpClient client;
-    std::string url = buildApiUrl("/:/unscrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");
-    HttpResponse resp = client.get(url);
+    // openapi.json: PUT "Mark an item as unplayed".
+    HttpRequest req;
+    req.url = buildApiUrl("/:/unscrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");
+    req.method = "PUT";
+    HttpResponse resp = client.request(req);
     return resp.statusCode == 200;
 }
 
@@ -4079,6 +4317,10 @@ bool PlexClient::probeLiveTV() {
 }
 
 void PlexClient::checkLiveTVAvailability() {
+    const unsigned seen = m_liveTvChecks.load();
+    std::lock_guard<std::mutex> liveTvLock(m_liveTvMutex);
+    if (m_liveTvChecks.load() != seen) return;  // checked meanwhile, by the thread waited for
+
     // Official Plex API: GET /livetv/dvrs Returns DVR list with key, lineup, uuid, Device array, and ChannelMapping
     HttpClient client;
     std::string url = buildApiUrl("/livetv/dvrs");
@@ -4200,6 +4442,7 @@ void PlexClient::checkLiveTVAvailability() {
                         m_lineupUri.empty() ? "(none)" : "set",
                         m_channelMappings.size(),
                         m_epgProviderKey.empty() ? "(none)" : m_epgProviderKey);
+    m_liveTvChecks++;
 }
 
 bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
@@ -4246,9 +4489,16 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
     // identifiers (lineup key vs lineupIdentifier), so channel.key alone left
     // duplicates of 4.1 / 4.2 / 4.3, 22.3 / 22.4, etc.
     std::set<std::string> seenChannelKeys;
+    // A copy, as another thread may check Live TV again meanwhile and refill
+    // the mappings (m_liveTvMutex).
+    std::vector<ChannelMapping> mappings;
+    {
+        std::lock_guard<std::mutex> liveTvLock(m_liveTvMutex);
+        mappings = m_channelMappings;
+    }
     auto commitChannel = [&](LiveTVChannel& channel, const std::string& identifier) {
         const ChannelMapping* matchedMapping = nullptr;
-        for (const auto& mapping : m_channelMappings) {
+        for (const auto& mapping : mappings) {
             if (!channel.key.empty() && channel.key == mapping.channelKey) {
                 matchedMapping = &mapping;
                 break;
@@ -4265,7 +4515,7 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
 
         // If we have no ChannelMapping data at all (some EPG providers don't),
         // fall back to the old behaviour so the EPG isn't empty.
-        if (!matchedMapping && !m_channelMappings.empty()) return;
+        if (!matchedMapping && !mappings.empty()) return;
         if (channel.callSign.empty() && channel.title.empty()) return;
 
         std::string dedupeKey = matchedMapping
@@ -5643,7 +5893,8 @@ bool PlexClient::buildLiveSessionStreamUrl(const std::string& liveSessionId, std
     snprintf(buf, sizeof(buf), "&videoResolution=%s",
              Application::resolutionFor(settings.videoQuality)); q += buf;
     q += "&videoQuality=100";
-    q += settings.showSubtitles ? "&subtitles=auto" : "&subtitles=none";
+    if (settings.showSubtitles) q += "&subtitles=auto" + subtitleSizeParam(settings);
+    else                        q += "&subtitles=none";
     q += "&session=" + sessionId;
     q += "&X-Plex-Token=" + m_authToken;
 
@@ -6366,11 +6617,15 @@ bool PlexClient::removeFromPlayQueue(int playQueueID, int playQueueItemID) {
 }
 
 bool PlexClient::movePlayQueueItem(int playQueueID, int playQueueItemID, int afterItemID) {
-    std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID) +
-                                  "/items/" + std::to_string(playQueueItemID) + "/move");
+    // "after" goes in the endpoint so buildApiUrl joins the token with '&'.
+    // Appended to its result, it made the token "<token>?after=N", and the
+    // server refused every such move with 401.
+    std::string endpoint = "/playQueues/" + std::to_string(playQueueID) + "/items/" +
+                           std::to_string(playQueueItemID) + "/move";
     if (afterItemID > 0) {
-        url += "?after=" + std::to_string(afterItemID);
+        endpoint += "?after=" + std::to_string(afterItemID);
     }
+    std::string url = buildApiUrl(endpoint);
 
     HttpClient client;
     std::string response;

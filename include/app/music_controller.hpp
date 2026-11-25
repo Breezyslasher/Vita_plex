@@ -100,6 +100,9 @@ public:
     // Called when a new track is loaded — the next stream starts at the top
     // again. PlayerActivity's own load path calls this too.
     void resetStreamStartOffset() { m_streamStartOffsetMs = 0; }
+    // A track loaded as a transcode started part-way in: a queue VitaPlex
+    // takes back from SceShell goes on where its song had got to.
+    void setStreamStartOffset(long long ms) { m_streamStartOffsetMs = ms > 0 ? ms : 0; }
     void stopPlayback();                       // Stop key: halt mpv + clear session
     // Jump straight to a row of the published queue (absolute queue index), as picked in the OS up-next list.
     void playQueueIndex(int index);
@@ -234,6 +237,7 @@ private:
         bool toldUser = false;          // "lost connection" has been shown
         bool busy = false;              // a check or a URL resolve is in flight
         bool reloading = false;         // a reload is loading; waiting to see it play
+        bool serverUp = false;          // the server answered as the stream broke: reload unchecked
         std::chrono::steady_clock::time_point startedAt{}, nextAt{}, reloadAt{};
     };
     Recovery m_recover;

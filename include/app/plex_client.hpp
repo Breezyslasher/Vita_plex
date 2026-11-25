@@ -6,10 +6,13 @@
 #pragma once
 
 #include <string>
+#include <map>
 #include <string_view>
 #include <vector>
 #include <functional>
+#include <atomic>
 #include <memory>
+#include <mutex>
 #include <cstdint>
 
 namespace vitaplex {
@@ -92,6 +95,25 @@ struct MediaItem {
 
     // Album subtype (album, single, ep, compilation, soundtrack, live, etc.)
     std::string subtype;
+
+    // An extra's kind, as /extras gives it: 1 trailer, 2 deleted scene,
+    // 3 interview, 4 music video, 5 behind the scenes, 6 scene or featurette
+    // ...; 0 when the server gave none.
+    int extraType = 0;
+    // Whether this extra of an artist is a music video: extraType 4. An
+    // artist's other extras (interviews, behind the scenes ...) are clips
+    // too, so a clip counts only when the server gave no extraType.
+    bool isMusicVideoExtra() const {
+        if (extraType == 4) return true;
+        if (subtype.size() == 10) {
+            static const char* const kName = "musicvideo";
+            bool same = true;
+            for (size_t i = 0; i < 10 && same; i++)
+                same = (subtype[i] | 0x20) == kName[i];
+            if (same) return true;
+        }
+        return extraType == 0 && mediaType == MediaType::CLIP;
+    }
 
     // Stream info
     std::string streamUrl;
@@ -356,6 +378,10 @@ struct PlexStream {
  */
 class PlexClient {
 public:
+    // The player shows the selected subtitle itself (a sidecar file, by
+    // sub-add): video transcodes then ask for subtitles=none.
+    void setPlayerShowsSubtitle(bool on) { m_playerShowsSubtitle = on; }
+
     static PlexClient& getInstance();
 
     // Authentication
@@ -419,6 +445,17 @@ public:
     // EMPTY filter to get every release type the artist owns (regular albums plus
     // all typed releases) in a single query. Needs the artist's library section
     // id and numeric id (the artist ratingKey).
+    // An artist's releases other than its albums, the way the official
+    // client splits them: Plex follows MusicBrainz, so Single / EP are primary
+    // types (album.format) and the rest secondary ones (album.subformat). Each
+    // category is one fetchArtistAlbumsByFilter per filter, OR'd together.
+    // Shared by the artist page and Android's media browser (Android Auto).
+    struct ReleaseCategory {
+        const char* label;
+        std::vector<const char*> filters;
+    };
+    static const std::vector<ReleaseCategory>& artistReleaseCategories();
+
     bool fetchArtistAlbumsByFilter(const std::string& sectionKey,
                                    const std::string& artistRatingKey,
                                    const std::string& filter,
@@ -426,6 +463,13 @@ public:
 
     // Extras (trailers, deleted scenes, featurettes, etc.)
     bool fetchExtras(const std::string& ratingKey, std::vector<MediaItem>& items);
+    // The extras of several items in one request
+    // (/library/metadata/<a>,<b>,...?includeExtras=1): for each ratingKey
+    // that came back, its extras, as fetchExtras gives them. Not every server
+    // is known to answer so: a caller checks it against fetchExtras once
+    // before it relies on it. false when the request failed.
+    bool fetchExtrasForItems(const std::vector<std::string>& ratingKeys,
+                             std::map<std::string, std::vector<MediaItem>>& extrasByItem);
     // Related / recommended items — the server's "Related" hubs, flattened
     // into a single de-duplicated list of playable movies/shows.
     bool fetchRelated(const std::string& ratingKey, std::vector<MediaItem>& items);
@@ -552,9 +596,12 @@ public:
         std::string languageCode; // Language code (e.g., "eng")
         std::string provider;     // e.g., "opensubtitles"
         int score = 0;            // Provider match score (0-100)
+        std::string release;      // The release the file was made for (its "title")
         bool hearingImpaired = false; // SDH
         bool forced = false;          // Forced (signs/songs)
     };
+    // Take an item off the server's Continue Watching (its progress stays).
+    bool removeFromContinueWatching(const std::string& ratingKey);
     bool searchSubtitles(const std::string& ratingKey, const std::string& language,
                          std::vector<SubtitleResult>& results);
     bool selectSearchedSubtitle(const std::string& ratingKey, int partId,
@@ -699,7 +746,13 @@ public:
     // "track"/"episode"/"movie" string turned into a MediaType.
     MediaType parseMediaTypePublic(const std::string& typeStr) { return parseMediaType(typeStr); }
 
+    // The last video transcode decision put a subtitle into the picture.
+    bool lastTranscodeBurnsSubtitle() const { return m_lastTranscodeBurnsSubtitle; }
+
 private:
+    bool m_playerShowsSubtitle = false;
+    bool m_lastTranscodeBurnsSubtitle = false;
+
     PlexClient() = default;
     ~PlexClient() = default;
 
@@ -754,6 +807,14 @@ private:
     std::string m_lineupUri;  // Lineup URI from DVR (e.g., "lineup://tv.plex.providers.epg.onconnect/...")
     std::vector<ChannelMapping> m_channelMappings;  // Channel mappings from DVR response
     std::string m_epgProviderKey;  // EPG provider key for grid queries (extracted from lineup URI)
+    // checkLiveTVAvailability one thread at a time, and the mappings it fills
+    // read under the same lock. The home screen's loads call it from more
+    // than one thread at once, and two of them clearing and refilling
+    // m_channelMappings freed the same strings twice (build 2066's crash, in
+    // _free_r under ~ChannelMapping). A thread that waited behind another's
+    // check takes its answer instead of asking again (m_liveTvChecks).
+    std::mutex m_liveTvMutex;
+    std::atomic<unsigned> m_liveTvChecks{0};
 };
 
 } // namespace vitaplex

@@ -118,6 +118,12 @@ public:
     static void showMovieContextMenuStatic(const MediaItem& movie);
     static void showShowContextMenuStatic(const MediaItem& show);
     static void showEpisodeContextMenu(const MediaItem& episode);
+    // A clip's menu (a music video, an extra): play it, or queue it.
+    static void showClipContextMenu(const MediaItem& clip);
+    // The video queue's rows for a video's menu (app/video_queue.hpp):
+    // "Play Next" and "Add to Queue" for the video, and, with videos
+    // waiting, "Play Queue" and "Clear Queue".
+    static void addVideoQueueRows(std::vector<OptionRow>& rows, const MediaItem& video);
     static void showSeasonContextMenuStatic(const MediaItem& season);
     static void showArtistContextMenuStatic(const MediaItem& artist);
     static void showAlbumContextMenuStatic(const MediaItem& album);
@@ -141,6 +147,11 @@ public:
     // sheet when `anchor` is null or the screen is too narrow. Every show*
     // context menu funnels its rows through here. Static because several callers
     // are static members.
+    // Rows the caller of showContextMenuFor adds to the menu it opens (the
+    // Home rail's "Remove from Continue Watching"), put just above Cancel.
+    // Set right before the call; the next popover takes and clears them.
+    static std::vector<OptionRow> s_extraMenuRows;
+
     static void showOptionsPopover(brls::View* anchor,
                                    const std::string& contextLine,
                                    const std::string& title,

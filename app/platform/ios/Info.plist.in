@@ -26,13 +26,31 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-	<key>UIApplicationSceneManifest</key>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>vitaplex</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Plex servers on the network are reached over plain HTTP (the
+	     downloads, which iOS carries on in the background through
+	     URLSession, use http://<ip>:<port> as VitaPlex's own do). -->
+	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>UIApplicationSupportsMultipleScenes</key>
-		<false/>
-		<key>UISceneConfigurations</key>
-		<dict/>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
 	</dict>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

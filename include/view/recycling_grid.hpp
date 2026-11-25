@@ -9,6 +9,7 @@
 #include <borealis.hpp>
 #include "app/plex_client.hpp"
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -21,6 +22,10 @@ class RecyclingGrid : public brls::ScrollingFrame {
 public:
     RecyclingGrid();
     ~RecyclingGrid() override;
+
+    // The grid holds landscape cells (clips, episodes) rather than posters:
+    // fewer columns, so that a row of them fits. Before setDataSource.
+    void setLandscapeCells(bool landscape);
 
     void setDataSource(const std::vector<MediaItem>& items);
     // Append additional items (called when next page arrives from server)
@@ -39,6 +44,11 @@ public:
     void scrollToItemIndex(size_t index, bool animated = true);
     size_t itemCount() const { return m_items.size(); }
 
+    // The next time focus enters the grid (LEFT off the A-Z rail), it lands on
+    // item `index` instead of the cell last focused. Cleared once any cell
+    // gains focus.
+    void setPendingFocusIndex(size_t index) { m_pendingFocusIndex = index; }
+
     // Opt-in: where focus goes when RIGHT is pressed at the grid's right edge
     // (e.g. the A-Z jump rail). Default null = standard navigation; only used
     // when the target is visible.
@@ -46,6 +56,8 @@ public:
 
     // Override to detect when user tries to scroll past the bottom
     brls::View* getNextFocus(brls::FocusDirection direction, brls::View* currentView) override;
+    brls::View* getDefaultFocus() override;
+    void onChildFocusGained(brls::View* directChild, brls::View* focusedView) override;
 
     // Override to visibility-cull off-screen rows. Cover painting itself
     // lives in MediaItemCell::draw() so non-grid containers (the home
@@ -61,6 +73,17 @@ private:
     void onItemClicked(int index);
     void addCellForItem(brls::Box*& currentRow, int& itemsInRow, size_t index);
 
+    // The cells are made a few rows at a time: a library page made in one go
+    // held the UI thread ~0.4-0.5 s. buildCells makes them up to item
+    // `upTo` (exclusive) at once; scheduleBuild makes the rest a couple of
+    // rows a frame.
+    void buildCells(size_t upTo);
+    void scheduleBuild();
+    brls::Box* m_buildRow = nullptr;  // the row the next cell goes in
+    int m_buildInRow = 0;             // cells already in it
+    uint64_t m_buildGeneration = 0;   // a rebuild stops the older build
+    bool m_buildScheduled = false;
+
     std::vector<MediaItem> m_items;
     std::function<void(const MediaItem&)> m_onItemSelected;
     std::function<void(const MediaItem&)> m_onItemStartAction;
@@ -75,6 +98,7 @@ private:
     std::vector<MediaItemCell*> m_cells;
 
     int m_columns = 6;
+    bool m_landscapeCells = false;
     int m_visibleRows = 3;
     size_t m_renderedCount = 0;
 
@@ -83,6 +107,9 @@ private:
 
     // Opt-in RIGHT-edge focus escape (e.g. the A-Z jump rail). See setter.
     brls::View* m_rightFocusEscape = nullptr;
+
+    static constexpr size_t kNoPendingFocus = (size_t)-1;
+    size_t m_pendingFocusIndex = kNoPendingFocus;
 
     // Lifetime guard for the orientation-change listener — the listener
     // is global and lives forever, but the grid can be destroyed while

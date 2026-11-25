@@ -32,8 +32,20 @@
 #define VITA_PLEX_VERSION_NUM 200
 
 // Plex client identification
-#define PLEX_CLIENT_ID "vita-plex-client-001"
-#define PLEX_CLIENT_NAME "VitaPlex"
+// X-Plex-Client-Identifier, "Unique per client" (openapi.json): made once
+// per install and kept in the data folder (src/app/client_id.cpp). It was one
+// fixed string for every device, so a server took all of them for one client.
+namespace vitaplex { const std::string& plexClientId(); }
+#define PLEX_CLIENT_ID (::vitaplex::plexClientId())
+// The app's name where a user reads it: VitaStream in the Google Play build
+// (VITAPLEX_STORE_BUILD, Android's "play" flavour), whose listing cannot use
+// Plex's trademark, else VitaPlex. Also the product name the Plex server shows.
+#ifdef VITAPLEX_STORE_BUILD
+#define APP_DISPLAY_NAME "VitaStream"
+#else
+#define APP_DISPLAY_NAME "VitaPlex"
+#endif
+#define PLEX_CLIENT_NAME APP_DISPLAY_NAME
 #define PLEX_CLIENT_VERSION VITA_PLEX_VERSION
 
 // NOTE: per-platform Plex transcode identification and limits
@@ -145,6 +157,10 @@ struct AppSettings {
     bool resumePlayback = true;
     bool showSubtitles = true;
     SubtitleSize subtitleSize = SubtitleSize::MEDIUM;
+    // How text subtitles look (the player's subtitle panel): 0 the system's
+    // caption style or mpv's own, 1 white on a dark box, 2 yellow, 3 white
+    // with a heavy outline. MpvPlayer::applySubtitleStyle.
+    int subtitleStyle = 0;
     int seekInterval = 10;  // seconds
     int controlsAutoHideSeconds = 5;  // Auto-hide player controls after inactivity (0 = never)
     bool autoSkipIntro = false;       // Automatically skip intro markers
@@ -155,11 +171,6 @@ struct AppSettings {
     // window. 0 = Auto (phone gets Mobile, everything else Classic),
     // 1 = Classic (today's player everywhere), 2 = Mobile (big art everywhere).
     int playerLayout = 0;
-    // Same three choices for the video player, kept separate because the two
-    // layouts answer different questions: the music one is a portrait Now
-    // Playing screen, the video one a landscape OSD over the picture. Wanting
-    // one is no reason to be given the other.
-    int videoPlayerLayout = 0;
     // ISO 639-1 / -2 code prefilled into the subtitle search dialog and
     // used as the default when the user opens "Search online for
     // subtitles…". Empty falls back to "en". User-editable from the
@@ -224,10 +235,27 @@ struct AppSettings {
     // song on a handheld is where that shows.
     bool lyricsWordByWord = true;
     bool backgroundMusic = true;       // Allow leaving player without stopping music
-    // Vita only, and an experiment: hold the system's background-music port
-    // while music plays, so leaving the app itself need not stop it. See
-    // utils/background_audio.hpp. Off until it is known to work on hardware.
-    bool vitaBackgroundAudio = false;
+    bool backgroundVideo = false;      // Back from a video leaves its sound playing (app/video_background.hpp)
+    // Vita only: what music playing does as the user leaves the app
+    // (bgaudio::OutsideMusic). 0 stops it; 1 plays on in the app through the
+    // system's background-music port, handed to SceShell, through the
+    // package's quick menu plugin, when the system closes the app for a game;
+    // 2 hands it to SceShell at once. See utils/background_audio.hpp.
+    int vitaOutsideMusic = 1;
+    // Vita only: downloads under way as VitaPlex closes, as starting a game
+    // closes it, go on from inside SceShell through the package's quick menu
+    // plugin, with their notification, until VitaPlex opens again
+    // (DownloadsManager::handOverToShell). Off: they wait for VitaPlex.
+    bool vitaDownloadsAfterLeaving = true;
+    // Vita only: as SceShell plays the queue on, a song it cannot fetch, the
+    // server not answering, is passed over for the next song on the memory
+    // card, and with none it waits paused for the quick menu's play or for
+    // VitaPlex (bgaudio::setOfflineSkip). Off: such songs are passed over,
+    // and three in a row stop the music.
+    bool vitaOfflineSkip = true;
+    // Vita only: the song and its buttons in the quick menu's Music row,
+    // through VitaPlex's quick menu plugin (bgaudio::setQuickMenuControls).
+    bool vitaQuickMenuControls = true;
     // Turn shuffle on whenever a new music queue starts. Mainly for remote
     // controllers: the framework MediaSession this app uses has no
     // onSetShuffleMode callback, so clients like Android Auto head units and
@@ -296,6 +324,8 @@ public:
     void pushLoginActivity();
     void pushMainActivity();
     void pushPlayerActivity(const std::string& mediaKey, bool isLocalFile = false);
+    // A music track on its own (PlayerActivity::createForTrack).
+    void pushTrackPlayerActivity(const std::string& mediaKey, bool isLocalFile = false);
     void pushLiveTVPlayerActivity(const std::string& streamUrl, const std::string& channelTitle,
                                   const std::string& liveSessionUuid = "");
 
@@ -354,6 +384,10 @@ public:
     static std::string getQualityString(VideoQuality quality);
     static std::string getThemeString(AppTheme theme);
     static std::string getSubtitleSizeString(SubtitleSize size);
+    // The Subtitle Size setting as a factor on the default size (Medium is 1),
+    // times the platform's own caption size where it has one. mpv takes it as
+    // sub-scale; the server, for subtitles it burns in, as a percentage.
+    static float subtitleScale(SubtitleSize size);
 
     // Quality tiers in ladder order (best first) for the settings pickers, filtered to what this platform can decode.
     static std::vector<VideoQuality> qualityLadder();

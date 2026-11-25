@@ -10,6 +10,7 @@
  */
 
 #include "platform/platform.hpp"
+#include "utils/log_file_writer.hpp"
 
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/modulemgr.h>
@@ -25,6 +26,7 @@
 #include <psp2/io/fcntl.h>
 
 #include <borealis.hpp>
+#include "utils/background_audio.hpp"
 #include "utils/http_client.hpp"
 
 #include <chrono>
@@ -188,9 +190,9 @@ const ImageConstraints& getImageConstraints() {
 
         /* imageCacheSize           */  20,
 
-        /* libraryPageSize          */  60,
-        /* playlistTrackPageSize    */  50,
-        /* musicCarouselLimit       */  40,
+        /* libraryPageSize          */  6000,
+        /* playlistTrackPageSize    */  5000,
+        /* musicCarouselLimit       */  4000,
 
         /* posterRequestWidth       */ 220,  // ~2x poster display, Vita VRAM budget
         /* posterRequestHeight      */ 330,
@@ -271,7 +273,10 @@ void openLogFile() {
     rotateLogForNewRun();
     g_logFile = std::fopen(getLogPath().c_str(), "w");
     if (!g_logFile) return;
-    setvbuf(g_logFile, NULL, _IOLBF, 0);
+    // Written by a thread of its own (utils/log_file_writer.hpp): a line
+    // written by the thread logging it cost that thread a write to storage.
+    // Error lines are still written and flushed before the logger returns.
+    ::vitaplex::logfile::start(g_logFile);
 
     // Subscribe to log events to write to file (since brls::Logger::setLogOutput
     // doesn't work on Vita — it writes to sceClibPrintf which is invisible).
@@ -298,15 +303,18 @@ void openLogFile() {
             // Redacted at the sink, as on desktop and Android: one call site
             // that forgets to redact would otherwise put an X-Plex-Token in
             // a log that gets pasted into a bug report.
-            fprintf(g_logFile, "%02d:%02d:%02d.%03d [%s] %s\n",
+            ::vitaplex::logfile::write(
+                fmt::format("{:02d}:{:02d}:{:02d}.{:03d} [{}] {}\n",
                     time_tm.tm_hour, time_tm.tm_min, time_tm.tm_sec,
-                    (int)ms, levelStr, ::vitaplex::redactTokensInUrl(log).c_str());
+                    (int)ms, levelStr, ::vitaplex::redactTokensInUrl(log)),
+                level == brls::LogLevel::LOG_ERROR);
         });
     brls::Logger::info("Log file initialized");
 }
 
 void closeLogFile() {
     if (g_logFile) {
+        ::vitaplex::logfile::stop();
         std::fclose(g_logFile);
         g_logFile = nullptr;
     }
@@ -372,9 +380,7 @@ bool needsHardExit() {
 }
 
 [[noreturn]] void hardExit(int code) {
-    sceKernelExitProcess(code);
-    // sceKernelExitProcess is [[noreturn]] but the toolchain doesn't know.
-    while (true) {}
+    bgaudio::exitProcess(code);
 }
 
 }  // namespace platform
