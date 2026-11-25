@@ -486,6 +486,12 @@ public:
 
     // Search
     bool search(const std::string& query, std::vector<MediaItem>& results);
+    // GET /hubs/search/voice: titles matched by edit distance, for misheard
+    // spoken requests that /hubs/search finds nothing for. Much slower, so a
+    // last try. type is Plex's (8 artist, 9 album, 10 track, 15 playlist; 0
+    // for any); distances[i] is results[i]'s distance (-1 when not given).
+    bool voiceSearch(const std::string& query, int type, int limit,
+                     std::vector<MediaItem>& results, std::vector<int>& distances);
 
     // Collections, Genres
     bool fetchCollections(const std::string& sectionKey, std::vector<MediaItem>& collections);
@@ -764,6 +770,10 @@ private:
     std::string extractJsonValue(const std::string& json, const std::string& key);
     int extractJsonInt(const std::string& json, const std::string& key);
     float extractJsonFloat(const std::string& json, const std::string& key);
+    // The items of a /hubs/search or /hubs/search/voice answer; with
+    // distances, each item's "distance" too.
+    void parseSearchItems(const std::string& body, std::vector<MediaItem>& results,
+                          std::vector<int>* distances);
     bool extractJsonBool(const std::string& json, const std::string& key);
 
     // In-place extraction: works on a range [start, end) of a string without creating a substring.

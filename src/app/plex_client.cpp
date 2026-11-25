@@ -2607,13 +2607,22 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
         return false;
     }
 
+    parseSearchItems(resp.body, results, nullptr);
+
+    brls::Logger::info("Found {} search results for '{}'", results.size(), query);
+    return true;
+}
+
+void PlexClient::parseSearchItems(const std::string& body, std::vector<MediaItem>& results,
+                                  std::vector<int>* distances) {
     results.clear();
+    if (distances) distances->clear();
 
     // Parse search results by looking for objects with ratingKey
     size_t pos = 0;
-    while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
+    while ((pos = body.find("\"ratingKey\"", pos)) != std::string::npos) {
         // Go back to find start of this object
-        size_t objStart = resp.body.rfind('{', pos);
+        size_t objStart = body.rfind('{', pos);
         if (objStart == std::string::npos) {
             pos++;
             continue;
@@ -2622,13 +2631,13 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
         // Find end of object
         int braceCount = 1;
         size_t objEnd = objStart + 1;
-        while (braceCount > 0 && objEnd < resp.body.length()) {
-            if (resp.body[objEnd] == '{') braceCount++;
-            else if (resp.body[objEnd] == '}') braceCount--;
+        while (braceCount > 0 && objEnd < body.length()) {
+            if (body[objEnd] == '{') braceCount++;
+            else if (body[objEnd] == '}') braceCount--;
             objEnd++;
         }
 
-        std::string obj = resp.body.substr(objStart, objEnd - objStart);
+        std::string obj = body.substr(objStart, objEnd - objStart);
 
         MediaItem item;
         item.ratingKey = extractJsonValue(obj, "ratingKey");
@@ -2654,12 +2663,35 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
             results.push_back(item);
+            if (distances)
+                distances->push_back(obj.find("\"distance\"") != std::string::npos
+                                         ? extractJsonInt(obj, "distance") : -1);
         }
 
         pos = objEnd;
     }
 
-    brls::Logger::info("Found {} search results for '{}'", results.size(), query);
+}
+
+bool PlexClient::voiceSearch(const std::string& query, int type, int limit,
+                             std::vector<MediaItem>& results, std::vector<int>& distances) {
+    std::string url = buildApiUrl("/hubs/search/voice?query=" + HttpClient::urlEncode(query) +
+                                  "&limit=" + std::to_string(limit));
+    if (type > 0) url += "&type=" + std::to_string(type);
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+    if (resp.statusCode != 200) {
+        brls::Logger::error("Voice search failed: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
+    parseSearchItems(resp.body, results, &distances);
+    brls::Logger::info("Voice search: {} result(s) for '{}' (type {})", results.size(), query, type);
     return true;
 }
 
