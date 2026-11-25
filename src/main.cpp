@@ -17,7 +17,7 @@
 #include <borealis.hpp>
 #include <nanovg.h>
 #ifdef __ANDROID__
-#include <SDL2/SDL.h>   // the screen-keyboard hint
+#include <SDL2/SDL_hints.h>   // the screen-keyboard hint (not SDL.h: its SDL_main.h renames main)
 #endif
 #ifdef USE_LIBROMFS
 #include <romfs/romfs.hpp>
