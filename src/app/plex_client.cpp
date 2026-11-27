@@ -4168,18 +4168,19 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
         return resp;
     };
 
-    // Direct play allowed and a start position: Plex answers 400 Bad Request
-    // to directPlay=1 together with offset (an Android TV log: every resume,
-    // and every restart from a position, of a direct-playable file; the same
-    // request without the offset was 200, and directPlay=0 with one was too).
-    // So the server is asked first without the offset. A direct play goes to
-    // the original file, which the player seeks to the position itself
-    // (below); anything else is a transcode, asked for from the offset with
-    // directPlay=0, which is what it is.
+    // Direct play allowed: the server is asked for it first, without the
+    // start position (a direct play is the original file, which the player
+    // seeks to the position itself, below). An Android TV log had Plex answer
+    // 400 Bad Request to directPlay=1 whenever it could not direct play the
+    // file: a movie it had to convert, and a direct-playable one once a
+    // subtitle it would have to burn in was selected. Taking that 400 as a
+    // start anyway had the server refuse the start too, or 404 every
+    // segment. So when direct play is not what the server can do, it is
+    // asked again as what it is, a transcode (directPlay=0), from the
+    // position, and that is started.
     const bool askedDirect = queryParams.find("&directPlay=1") != std::string::npos;
-    const bool directWithOffset = askedDirect && !offsetParam.empty();
     std::string decisionParams = queryParams;
-    if (directWithOffset) {
+    if (askedDirect && !offsetParam.empty()) {
         const size_t at = decisionParams.find(offsetParam);
         if (at != std::string::npos) decisionParams.erase(at, offsetParam.size());
     }
@@ -4207,12 +4208,12 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
         return true;
     }
 
-    if (directWithOffset) {
-        // Not a direct play: a transcode from the position.
+    if (askedDirect) {
+        // Not a direct play: asked for again as a transcode, from the position.
         const size_t at = queryParams.find("&directPlay=1");
         if (at != std::string::npos) queryParams.replace(at, 13, "&directPlay=0");
-        brls::Logger::info("getTranscodeUrl: not a direct play; transcoding from {:.1f}s",
-                           offsetMs / 1000.0);
+        brls::Logger::info("getTranscodeUrl: not a direct play ({}); asking for a transcode "
+                           "from {:.1f}s", decisionResp.statusCode, offsetMs / 1000.0);
         decisionResp = askDecision(queryParams);
     }
     if (decisionResp.statusCode != 200) {

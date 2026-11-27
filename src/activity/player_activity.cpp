@@ -2411,6 +2411,21 @@ void PlayerActivity::updateProgress() {
     if (m_isQueueMode && player.hasError()) {
         MusicController::getInstance().onPlaybackFailed();
     }
+    // A video that could not be played said nothing: the screen stayed
+    // empty with the player stopped (an Android TV log, after the server
+    // refused a transcode). Said once per failure, with the controls up so
+    // Back and the subtitle and audio choices are in reach.
+    if (!m_isQueueMode && player.hasError()) {
+        if (!m_errorShown) {
+            m_errorShown = true;
+            brls::Logger::error("PlayerActivity: the video could not be played: {}",
+                                player.getErrorMessage());
+            brls::Application::notify("This video could not be played");
+            showControls();
+        }
+    } else {
+        m_errorShown = false;
+    }
 
     // Handle pending seek when playback becomes ready
     if (m_pendingSeek > 0.0 && player.isPlaying()) {
