@@ -115,6 +115,19 @@ void Application::run() {
             // frame. The manager locks its list around each change.
             DownloadsManager::getInstance().init();
             asyncRun([]() { DownloadsManager::getInstance().syncProgressBidirectional(); });
+            // The server's addresses, for the next start to try the home
+            // network ones first (pickStartupServerUrl). Only sign-in and a
+            // home user switch asked plex.tv for them, so a sign-in from
+            // before never had them. Asked with the account token: the one
+            // in use can be a server's own, which plex.tv does not take.
+            if (isLoggedIn()) {
+                const std::string token =
+                    !m_masterAuthToken.empty() ? m_masterAuthToken : m_authToken;
+                asyncRun([token]() {
+                    std::vector<PlexServer> servers;
+                    PlexClient::getInstance().fetchServers(servers, nullptr, token);
+                });
+            }
             // Push Main first regardless — if the user backs out of the
             // picker (or never has one, because no Plex Home), they land
             // on the app as the last-used user. Then overlay the picker

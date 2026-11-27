@@ -787,12 +787,14 @@ void PlexClient::handleUnauthorized() {
     });
 }
 
-bool PlexClient::fetchServers(std::vector<PlexServer>& servers, bool* offline) {
+bool PlexClient::fetchServers(std::vector<PlexServer>& servers, bool* offline,
+                              const std::string& token) {
     brls::Logger::info("Fetching user's servers from plex.tv");
 
     if (offline) *offline = false;
 
-    if (m_authToken.empty()) {
+    const std::string askToken = token.empty() ? m_authToken : token;
+    if (askToken.empty()) {
         brls::Logger::error("No auth token - please login first");
         return false;
     }
@@ -802,7 +804,7 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers, bool* offline) {
     req.url = "https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=0";
     req.method = "GET";
     req.headers["Accept"] = "application/json";
-    req.headers["X-Plex-Token"] = m_authToken;
+    req.headers["X-Plex-Token"] = askToken;
     req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
 
     HttpResponse resp = client.request(req);
