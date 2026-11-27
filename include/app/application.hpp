@@ -58,6 +58,8 @@ namespace vitaplex { const std::string& plexClientId(); }
 
 namespace vitaplex {
 
+struct ServerConnection;   // app/plex_client.hpp
+
 // Theme options
 enum class AppTheme {
     SYSTEM = 0,  // Follow system setting
@@ -335,6 +337,13 @@ public:
     void setAuthToken(const std::string& token) { m_authToken = token; }
     const std::string& getServerUrl() const { return m_serverUrl; }
     void setServerUrl(const std::string& url) { m_serverUrl = url; }
+    // Every address of the server, home network ones marked, for the next
+    // start to choose from (pickStartupServerUrl). Saved with the settings.
+    void setServerAddresses(const std::vector<ServerConnection>& connections);
+    // The address to connect to at start: a home network one that answers
+    // within a few seconds, else the saved one, else a remote one that
+    // answers. The saved one alone when no addresses are known.
+    std::string pickStartupServerUrl();
 
     // Plex Home user state. The master token is the account-level token
     // returned by /users/signin or /pins/{id}; it's what fetchHomeUsers
@@ -414,6 +423,8 @@ private:
     std::string m_currentHomeUserUuid;
     std::string m_currentHomeUserTitle;
     std::string m_serverUrl;
+    // "L:<uri> R:<uri> X:<uri> ...": local, remote, relay (setServerAddresses).
+    std::string m_serverAddresses;
     std::string m_username;
     AppSettings m_settings;
 };

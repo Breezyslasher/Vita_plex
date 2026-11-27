@@ -926,6 +926,26 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers, bool* offline) {
     }
 
     brls::Logger::info("Found {} servers", servers.size());
+
+    // The server in use: its addresses, for the next start to try the home
+    // network ones first (Application::pickStartupServerUrl). Set here too,
+    // and not only at sign-in, so a sign-in from before has them as well.
+    if (!m_serverUrl.empty()) {
+        auto lower = [](std::string v) {
+            for (auto& ch : v) ch = (char)tolower((unsigned char)ch);
+            return v;
+        };
+        const std::string current = lower(m_serverUrl);
+        for (const auto& srv : servers) {
+            bool ours = false;
+            for (const auto& c : srv.connections)
+                if (lower(c.uri) == current) ours = true;
+            if (!ours) continue;
+            const std::vector<ServerConnection> conns = srv.connections;
+            brls::sync([conns]() { Application::getInstance().setServerAddresses(conns); });
+            break;
+        }
+    }
     return !servers.empty();
 }
 

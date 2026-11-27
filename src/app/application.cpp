@@ -21,7 +21,12 @@
 #include <filesystem>
 #include <cmath>
 #include <memory>
+#include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include "utils/http_client.hpp"
 #include "platform/paths.hpp"
 #include "platform/platform.hpp"
 #include "utils/async.hpp"
@@ -99,8 +104,9 @@ void Application::run() {
                            isLoggedIn() ? "" : " (local server, no account)");
         // Verify connection and go to main
         PlexClient::getInstance().setAuthToken(m_authToken);
-        // Use connectToServer to properly initialize (including Live TV check)
-        if (PlexClient::getInstance().connectToServer(m_serverUrl)) {
+        // Use connectToServer to properly initialize (including Live TV check).
+        // The address: a home network one first when the server has one.
+        if (PlexClient::getInstance().connectToServer(pickStartupServerUrl())) {
             brls::Logger::info("Restored session and connected to server");
             // Bidirectional sync: push local offline progress, pull server
             // progress. Off the UI thread: one request a download held the
@@ -136,6 +142,89 @@ void Application::run() {
         // For the hang report (utils/hang_watch.hpp).
         hang::uiBeat();
     }
+}
+
+void Application::setServerAddresses(const std::vector<ServerConnection>& connections) {
+    std::string list;
+    for (const auto& c : connections) {
+        if (c.uri.empty() || c.uri.find(' ') != std::string::npos) continue;
+        if (!list.empty()) list += ' ';
+        list += (c.local ? "L:" : c.relay ? "X:" : "R:") + c.uri;
+    }
+    if (!list.empty()) m_serverAddresses = list;
+}
+
+namespace {
+
+// The first of urls to answer /identity within timeoutSec, asked all at once;
+// empty when none does.
+std::string firstToAnswer(const std::vector<std::string>& urls, int timeoutSec) {
+    if (urls.empty()) return {};
+    struct State {
+        std::mutex m;
+        std::condition_variable cv;
+        std::string winner;
+        size_t done = 0;
+    };
+    auto st = std::make_shared<State>();
+    for (const auto& u : urls) {
+        platform::launchThread([st, u, timeoutSec]() {
+            HttpClient http;
+            HttpRequest req;
+            req.method = "GET";
+            req.timeout = timeoutSec;
+            req.headers["Accept"] = "application/json";
+            req.url = u + "/identity";
+            const HttpResponse resp = http.request(req);
+            std::lock_guard<std::mutex> lk(st->m);
+            if (resp.statusCode == 200 && st->winner.empty()) st->winner = u;
+            st->done++;
+            st->cv.notify_all();
+        });
+    }
+    std::unique_lock<std::mutex> lk(st->m);
+    st->cv.wait_for(lk, std::chrono::seconds(timeoutSec + 1),
+                    [&]() { return !st->winner.empty() || st->done >= urls.size(); });
+    return st->winner;
+}
+
+}  // namespace
+
+std::string Application::pickStartupServerUrl() {
+    std::vector<std::string> local, remote, relay;
+    size_t at = 0;
+    while (at < m_serverAddresses.size()) {
+        size_t end = m_serverAddresses.find(' ', at);
+        if (end == std::string::npos) end = m_serverAddresses.size();
+        const std::string tok = m_serverAddresses.substr(at, end - at);
+        at = end + 1;
+        if (tok.size() < 3 || tok[1] != ':') continue;
+        const std::string uri = tok.substr(2);
+        if (tok[0] == 'L') local.push_back(uri);
+        else if (tok[0] == 'R') remote.push_back(uri);
+        else if (tok[0] == 'X') relay.push_back(uri);
+    }
+    if (local.empty() && remote.empty() && relay.empty()) return m_serverUrl;
+
+    // Home network first: from inside the home a server's public address
+    // also answers, but through the router and back (an Android TV log:
+    // a direct play stuttering on its own network).
+    std::string url = firstToAnswer(local, 3);
+    if (!url.empty()) {
+        brls::Logger::info("Server: home network address {}", url);
+        return url;
+    }
+    const bool savedIsLocal =
+        std::find(local.begin(), local.end(), m_serverUrl) != local.end();
+    if (!m_serverUrl.empty() && !savedIsLocal) {
+        brls::Logger::info("Server: no home network address answered; the saved one");
+        return m_serverUrl;
+    }
+    // Saved at home, started away: a remote address, then a relay.
+    url = firstToAnswer(remote, 8);
+    if (url.empty()) url = firstToAnswer(relay, 12);
+    brls::Logger::info("Server: away from home; {}", url.empty() ? "nothing answered" : url);
+    return url.empty() ? m_serverUrl : url;
 }
 
 void Application::shutdown() {
@@ -486,6 +575,7 @@ bool Application::loadSettings() {
     // Authentication
     m_authToken = extractString("authToken");
     m_serverUrl = extractString("serverUrl");
+    m_serverAddresses = extractString("serverAddresses");
     m_username  = extractString("username");
 
     // Plex Home user state. masterAuthToken falls back to authToken when
@@ -748,6 +838,7 @@ bool Application::saveSettings() {
     json += "  \"currentHomeUserUuid\": \"" + esc(m_currentHomeUserUuid) + "\",\n";
     json += "  \"currentHomeUserTitle\": \"" + esc(m_currentHomeUserTitle) + "\",\n";
     json += "  \"serverUrl\": \"" + esc(m_serverUrl) + "\",\n";
+    json += "  \"serverAddresses\": \"" + esc(m_serverAddresses) + "\",\n";
     json += "  \"username\": \"" + esc(m_username) + "\",\n";
     json += "  \"theme\": " + std::to_string(static_cast<int>(m_settings.theme)) + ",\n";
     json += "  \"debugLogging\": " + b(m_settings.debugLogging) + ",\n";

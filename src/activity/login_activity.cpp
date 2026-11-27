@@ -17,6 +17,7 @@
 #include <thread>
 #include <atomic>
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <cmath>
@@ -1144,6 +1145,17 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
         std::mutex winnerMutex;
         std::condition_variable winnerCv;
         std::string winnerUri;
+        // The first home-network address to answer. Whichever address answered
+        // first used to win, and a server's public address can beat its local
+        // one from inside the home (an Android TV log: every request went out
+        // through the router and back, the picture stuttering), and it was then
+        // saved and used on every start. A local one that answers soon after
+        // is taken instead.
+        std::atomic<bool> localFound{false};
+        std::string localUri;
+        bool anyLocal = false;
+        for (const auto& c : server.connections)
+            if (c.local) anyLocal = true;
         std::vector<std::thread> workers;
         workers.reserve(totalConnections);
 
@@ -1176,7 +1188,7 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
                 // Recheck the cancel flag and the "already found a
                 // winner" flag — we may have queued behind a long line
                 // and the answer arrived while we were waiting.
-                if (*cancelled || found.load()) {
+                if (*cancelled || (found.load() && (!conn.local || localFound.load()))) {
                     sem.release();
                     if (!found.load())
                         setProbe(i, ProbeIcon::State::Fail, "skipped", kDim);
@@ -1199,6 +1211,10 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
                 sem.release();
 
                 bool won = false;
+                if (resp.statusCode == 200 && conn.local && !localFound.exchange(true)) {
+                    std::lock_guard<std::mutex> lk(winnerMutex);
+                    localUri = conn.uri;
+                }
                 if (resp.statusCode == 200 && !found.exchange(true)) {
                     {
                         std::lock_guard<std::mutex> lk(winnerMutex);
@@ -1236,6 +1252,13 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
             winnerCv.wait(lk, [&]() {
                 return found.load() || completed.load() >= (int)totalConnections || *cancelled;
             });
+            // A remote address answered first: a moment more for a local one.
+            if (found.load() && anyLocal && !localFound.load() && !*cancelled) {
+                winnerCv.wait_for(lk, std::chrono::milliseconds(1500), [&]() {
+                    return localFound.load() || completed.load() >= (int)totalConnections ||
+                           *cancelled;
+                });
+            }
         }
 
         for (auto& t : workers) {
@@ -1246,9 +1269,10 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
             std::string uri;
             {
                 std::lock_guard<std::mutex> lk(winnerMutex);
-                uri = winnerUri;
+                uri = localFound.load() ? localUri : winnerUri;
             }
-            brls::Logger::info("Fastest server URL selected: {}", uri);
+            brls::Logger::info("Server URL selected: {}{}", uri,
+                               localFound.load() ? " (home network)" : "");
             if (client.connectToServer(uri, 15)) {
                 brls::sync([this, ui, server]() {
                     if (!ui->alive) return;
@@ -1260,6 +1284,9 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
                     // launch back to the login screen.
                     Application::getInstance().getSettings().localServerMode =
                         Application::getInstance().getAuthToken().empty();
+                    // Every address of the server, for the next start to pick
+                    // from (Application::pickStartupServerUrl).
+                    Application::getInstance().setServerAddresses(server.connections);
                     Application::getInstance().saveSettings();
                     if (statusLabel) statusLabel->setText("Connected to " + server.name);
                     brls::delay(500, [this]() {
