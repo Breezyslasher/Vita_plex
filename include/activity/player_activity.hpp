@@ -461,6 +461,10 @@ private:
     bool m_isDirectFile = false;   // Playing direct file path (debug)
     // True when the server chose direct play: mpv owns the timeline, so baseOffset is 0 and seeks are local.
     bool m_directPlay = false;
+    // A direct play's subtitle has been matched to the server's choice
+    // (alignDirectPlaySubtitle), once per file.
+    bool m_subsAligned = false;
+    void alignDirectPlaySubtitle();
     bool m_isQueueMode = false;    // Playing from queue
     bool m_isResuming = false;     // Resuming existing playback (don't restart track)
     // lyrics support removed

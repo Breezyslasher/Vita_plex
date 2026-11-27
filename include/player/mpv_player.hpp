@@ -142,6 +142,7 @@ public:
         bool selected = false;   // Currently selected
         bool isDefault = false;
         bool albumArt = false;   // a cover picture in the file, not a video
+        bool external = false;   // added from a file of its own, not in the stream
     };
 
     // Tracks

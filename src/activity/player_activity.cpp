@@ -2113,6 +2113,7 @@ void PlayerActivity::loadMedia() {
         if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {
             // Direct play: the server returned the original file, so mpv owns the timeline and seeks are local, not restarts.
             m_directPlay = (url.find("/transcode/universal/start") == std::string::npos);
+            m_subsAligned = false;
             m_serverBurnsSub = !m_directPlay && PlexClient::getInstance().lastTranscodeBurnsSubtitle();
             if (m_serverBurnsSub && !m_sideloadUrls.empty())
                 brls::Logger::warning("PlayerActivity: the server draws the subtitle into the picture; "
@@ -2168,6 +2169,55 @@ void PlayerActivity::loadMedia() {
 
     brls::Logger::debug("PlayerActivity: loadMedia exiting");
     m_loadingMedia = false;
+}
+
+// In a direct play mpv opens the original file and picks a subtitle by its
+// own rules: the first one flagged default. A Hunger Games file came up in
+// Arabic that way (its first subtitle, flagged default), with subtitles off
+// in the app and none chosen on the server. The server's choice (the stream
+// selected for the part) is what applies, as it does in a transcode:
+// nothing selected, or subtitles off in the settings, is no subtitle; an
+// embedded one selected is the same one in the file, matched by its place
+// among the file's subtitles (both list them in the file's order). A
+// sidecar the player loaded itself (setSideloadedSubtitle) is left alone.
+void PlayerActivity::alignDirectPlaySubtitle() {
+    if (!m_sideloadUrls.empty()) return;
+    MpvPlayer& player = MpvPlayer::getInstance();
+
+    int wantPlace = -1;   // among the file's own subtitles
+    if (Application::getInstance().getSettings().showSubtitles && m_streamsLoaded) {
+        int place = 0;
+        for (const auto& ps : m_plexStreams) {
+            if (ps.streamType != 3 || ps.external) continue;
+            if (ps.selected) {
+                wantPlace = place;
+                break;
+            }
+            place++;
+        }
+    }
+
+    std::vector<MpvPlayer::TrackInfo> subs;
+    for (const auto& t : player.getTrackList("sub"))
+        if (!t.external) subs.push_back(t);
+    const MpvPlayer::TrackInfo* current = nullptr;
+    for (const auto& t : subs)
+        if (t.selected) current = &t;
+
+    if (wantPlace < 0 || wantPlace >= (int)subs.size()) {
+        if (current) {
+            brls::Logger::info("PlayerActivity: direct play: no subtitle chosen; mpv had picked {} "
+                               "({}), turned off", current->id, current->lang);
+            player.disableSubtitles();
+        }
+        return;
+    }
+    const auto& want = subs[(size_t)wantPlace];
+    if (current && current->id == want.id) return;
+    brls::Logger::info("PlayerActivity: direct play: subtitle {} ({}) as chosen on the server{}",
+                       want.id, want.lang,
+                       current ? ", not mpv's " + current->lang : std::string());
+    player.setSubtitleTrack(want.id);
 }
 
 void PlayerActivity::syncHiddenFocus() {
@@ -2425,6 +2475,12 @@ void PlayerActivity::updateProgress() {
         }
     } else {
         m_errorShown = false;
+    }
+
+    // A direct play's subtitle: the server's choice, not mpv's own.
+    if (m_directPlay && !m_subsAligned && player.isPlaying()) {
+        m_subsAligned = true;
+        alignDirectPlaySubtitle();
     }
 
     // Handle pending seek when playback becomes ready
@@ -4663,6 +4719,7 @@ void PlayerActivity::setSideloadedSubtitle(const PlexStream& ps) {
 // time the whole file again.
 void PlayerActivity::loadServerStream(const std::string& url, int offsetMs) {
     m_directPlay = url.find("/transcode/universal/start") == std::string::npos;
+    m_subsAligned = false;
     if (m_directPlay) {
         m_transcodeBaseOffsetMs = 0;
         if (offsetMs > 0) m_pendingSeek = offsetMs / 1000.0;
