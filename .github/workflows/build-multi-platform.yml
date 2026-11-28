@@ -1817,11 +1817,14 @@ jobs:
           # Caches the msys2 base + installed packages between runs.
           cache: true
           release: ${{ contains(matrix.sys, 'arm64') }}
+          # No glfw here: the next step installs switchfin's glfw-3.5.0-1
+          # (pacman -U) over it anyway, and MSYS2's own package left the
+          # MINGW64 repo (2026-11-27: "target not found:
+          # mingw-w64-x86_64-glfw"), failing the x64 row before checkout.
           install: >-
             mingw-w64-${{ matrix.env }}-ninja
             mingw-w64-${{ matrix.env }}-cc
             mingw-w64-${{ matrix.env }}-cmake
-            mingw-w64-${{ matrix.env }}-glfw
       - uses: actions/checkout@v4
         with:
           submodules: recursive
