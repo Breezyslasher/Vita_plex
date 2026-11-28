@@ -35,6 +35,7 @@ void MusicQueue::clear() {
     m_currentIndex = -1;
     m_shufflePosition = -1;
     m_playQueueID = 0;  // Clear server sync
+    m_sourcePlaylistId.clear();
     notifyQueueChanged();
 }
 

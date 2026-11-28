@@ -221,6 +221,8 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     vitaplex::bgaudio::init(app.getSettings().vitaOutsideMusic);
     vitaplex::bgaudio::setOfflineSkip(app.getSettings().vitaOfflineSkip);
     vitaplex::bgaudio::setQuickMenuControls(app.getSettings().vitaQuickMenuControls);
+    vitaplex::bgaudio::setPs4ShellMusic(app.getSettings().ps4ShellMusic);
+    vitaplex::bgaudio::setPs4ShellGroup(app.getSettings().ps4ShellGroup);
 
     // Run application (blocking)
     app.run();

@@ -114,8 +114,19 @@ ShellPlace takeBackNow();
 
 #else
 
+// available() is the Vita's (its settings); the PS4's is ps4Available(), below.
 inline bool available() { return false; }
+#if defined(__PS4__) && defined(VITAPLEX_PS4_SHELL_COMPANION)
+// PS4: loads Shell Companion's module into the shell (once a boot), and
+// takes back a queue the PS4's Music was playing for VitaPlex, opening the
+// player on it (utils/background_audio_ps4.cpp).
+void init(int outsideMusic);
+// The player of that queue, ready: the shell's player stops and says where.
+ShellPlace takeBackNow();
+#else
 inline void init(int) {}
+inline ShellPlace takeBackNow() { return ShellPlace(); }
+#endif
 inline void setOutsideMusic(int) {}
 inline int outsideMusic() { return 0; }
 inline bool keepPlaying() { return false; }
@@ -129,8 +140,27 @@ inline void quickMenuNowPlaying(const std::string&, const std::string&, const st
                                 const std::string&, bool) {}
 inline void quickMenuNowPlayingCleared() {}
 inline std::string songFile(const std::string&) { return std::string(); }
-inline ShellPlace takeBackNow() { return ShellPlace(); }
 
+#endif
+
+// PS4: music after VitaPlex closes, through Shell Companion's module in
+// SceShellUI (lib: third_party/shell_companion, fetched at build time; the
+// guide is docs/ps4-shell-companion.md). A music queue playing as VitaPlex
+// quits is handed to the shell's player and goes on in the quick menu's
+// Music section; opening VitaPlex takes it back (init, takeBackNow).
+#if defined(__PS4__) && defined(VITAPLEX_PS4_SHELL_COMPANION)
+bool ps4Available();
+// As VitaPlex quits (Application::shutdown), before its player stops.
+void handOverOnExit();
+// The settings: whether the queue is handed over, and how the Music section
+// groups it (0 albums, 1 the playlist it was played from).
+void setPs4ShellMusic(bool on);
+void setPs4ShellGroup(int group);
+#else
+inline bool ps4Available() { return false; }
+inline void handOverOnExit() {}
+inline void setPs4ShellMusic(bool) {}
+inline void setPs4ShellGroup(int) {}
 #endif
 
 }  // namespace bgaudio

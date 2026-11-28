@@ -228,6 +228,10 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         }
     }
 
+    // Which playlist this queue is (the PS4's Music groups a handed-over
+    // queue by it, if so set).
+    MusicQueue::getInstance().setSourcePlaylistId(playlistId);
+
     // Hand transport to MusicController while this player lives; on leave it takes over headlessly.
     MusicController::getInstance().attachForeground({
         [activity]() { activity->playNext(); },

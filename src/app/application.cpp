@@ -4,6 +4,7 @@
 
 #include "utils/frame_profiler.hpp"
 #include "app/application.hpp"
+#include "utils/background_audio.hpp"
 #include "utils/hang_watch.hpp"
 #include "app/video_background.hpp"
 #include "app/plex_client.hpp"
@@ -241,6 +242,9 @@ std::string Application::pickStartupServerUrl() {
 }
 
 void Application::shutdown() {
+    // PS4: a music queue playing goes on in the shell's player, first, while
+    // the player still has it. No-op elsewhere.
+    bgaudio::handOverOnExit();
     // A video playing on with its player left: stopped, its place saved.
     VideoBackground::getInstance().stop();
     DownloadsManager::getInstance().noteAppClosing();
@@ -746,6 +750,11 @@ bool Application::loadSettings() {
     m_settings.vitaOfflineSkip = extractBool("vitaOfflineSkip", true);
     m_settings.vitaDownloadsAfterLeaving = extractBool("vitaDownloadsAfterLeaving", true);
     m_settings.vitaQuickMenuControls = extractBool("vitaQuickMenuControls", true);
+    m_settings.ps4ShellMusic = extractBool("ps4ShellMusic", true);
+    if (content.find("\"ps4ShellGroup\":") != std::string::npos) {
+        const int group = extractInt("ps4ShellGroup");
+        if (group == 0 || group == 1) m_settings.ps4ShellGroup = group;
+    }
     m_settings.musicShuffleDefault = extractBool("musicShuffleDefault", false);
 
     // Live TV / DVR settings
@@ -901,6 +910,8 @@ bool Application::saveSettings() {
     json += "  \"backgroundVideo\": " + b(m_settings.backgroundVideo) + ",\n";
     json += "  \"vitaOutsideMusic\": " + std::to_string(m_settings.vitaOutsideMusic) + ",\n";
     json += "  \"vitaOfflineSkip\": " + b(m_settings.vitaOfflineSkip) + ",\n";
+    json += "  \"ps4ShellMusic\": " + b(m_settings.ps4ShellMusic) + ",\n";
+    json += "  \"ps4ShellGroup\": " + std::to_string(m_settings.ps4ShellGroup) + ",\n";
     json += "  \"vitaDownloadsAfterLeaving\": " + b(m_settings.vitaDownloadsAfterLeaving) + ",\n";
     json += "  \"vitaQuickMenuControls\": " + b(m_settings.vitaQuickMenuControls) + ",\n";
     json += "  \"musicShuffleDefault\": " + b(m_settings.musicShuffleDefault) + ",\n";

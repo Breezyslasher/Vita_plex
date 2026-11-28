@@ -258,6 +258,14 @@ struct AppSettings {
     // Vita only: the song and its buttons in the quick menu's Music row,
     // through VitaPlex's quick menu plugin (bgaudio::setQuickMenuControls).
     bool vitaQuickMenuControls = true;
+    // PS4 only: a music queue playing as VitaPlex closes goes on in the
+    // PS4's own Music (quick menu) through Shell Companion's module, and is
+    // taken back as VitaPlex opens (utils/background_audio_ps4.cpp).
+    bool ps4ShellMusic = true;
+    // PS4 only: how the Music section groups that queue's songs into tiles:
+    // 0 by album, 1 by the playlist it was played from (an album's or
+    // another queue's songs keep their albums).
+    int ps4ShellGroup = 0;
     // Turn shuffle on whenever a new music queue starts. Mainly for remote
     // controllers: the framework MediaSession this app uses has no
     // onSetShuffleMode callback, so clients like Android Auto head units and

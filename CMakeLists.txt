@@ -1132,6 +1132,26 @@ int main() {
     set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_saved_try_type}")
 
     target_sources(${PROJECT_NAME} PRIVATE src/utils/shell_integration_ps4.cpp)
+
+    # Music after VitaPlex closes, through Shell Companion's PS4 module
+    # (utils/background_audio_ps4.cpp). Its client library and module are
+    # fetched by scripts/fetch_shell_companion_ps4.sh; without them the build
+    # goes on without the feature.
+    set(SC_PS4_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/shell_companion)
+    if(EXISTS ${SC_PS4_DIR}/ps4/client/shell_companion.c AND EXISTS ${SC_PS4_DIR}/sc_companion.prx)
+        file(READ ${SC_PS4_DIR}/VERSION _sc_ps4_version)
+        string(STRIP "${_sc_ps4_version}" _sc_ps4_version)
+        message(STATUS "Shell Companion PS4 ${_sc_ps4_version}: music after closing enabled")
+        target_sources(${PROJECT_NAME} PRIVATE
+            src/utils/background_audio_ps4.cpp
+            ${SC_PS4_DIR}/ps4/client/shell_companion.c)
+        target_include_directories(${PROJECT_NAME} PRIVATE ${SC_PS4_DIR}/ps4/client)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_PS4_SHELL_COMPANION=1)
+        set(VITAPLEX_SC_PS4_PRX ${SC_PS4_DIR}/sc_companion.prx)
+    else()
+        message(STATUS "Shell Companion PS4 not fetched (scripts/fetch_shell_companion_ps4.sh): "
+                       "no music after closing")
+    endif()
     if(VITAPLEX_HAVE_PS4_NOTIFY)
         message(STATUS "PS4 download notifications enabled")
         target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_HAVE_PS4_NOTIFY=1)
@@ -1710,6 +1730,14 @@ elseif(PLATFORM_PS4)
         COMMAND "${CMAKE_COMMAND}" -E copy_directory ${BOREALIS_DIR}/resources/img ${CMAKE_BINARY_DIR}/ps4/resources/img
     )
     add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}.data)
+    # Shell Companion's module goes at the package root, next to eboot.bin:
+    # scOpen takes it from /mnt/sandbox/pfsmnt/VPLX00002-app0/.
+    if(VITAPLEX_SC_PS4_PRX)
+        add_custom_command(TARGET ${PROJECT_NAME}.data POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy ${VITAPLEX_SC_PS4_PRX} ${CMAKE_BINARY_DIR}/ps4/sc_companion.prx
+            COMMAND "${CMAKE_COMMAND}" -E copy ${SC_PS4_DIR}/ps4/client/LICENSE
+                ${CMAKE_BINARY_DIR}/ps4/sc_companion-LICENSE.txt)
+    endif()
 
     # ── PS4 updater helper (self-update) ────────────────────────────────
     # A second, tiny PS4 app with its own title id (VPLX00003). VitaPlex

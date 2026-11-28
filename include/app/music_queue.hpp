@@ -81,6 +81,10 @@ public:
 
     // Current state
     int getCurrentIndex() const { return m_currentIndex; }
+    // The playlist the queue was started from (its ratingKey), "" when it was
+    // not one. Cleared with the queue; set by PlayerActivity::createWithQueue.
+    const std::string& getSourcePlaylistId() const { return m_sourcePlaylistId; }
+    void setSourcePlaylistId(const std::string& id) { m_sourcePlaylistId = id; }
     const QueueItem* getCurrentTrack() const;
     // Record a rating written elsewhere (the OS "like" heart), so the next
     // publish reflects it without waiting for the server round trip.
@@ -148,6 +152,7 @@ public:
     void setFromPlayQueue(const PlexClient::PlayQueueContainer& pq, bool isShuffled);
 
 private:
+    std::string m_sourcePlaylistId;   // getSourcePlaylistId()
     MusicQueue();
     ~MusicQueue() = default;
 

@@ -25,3 +25,6 @@ cmake-build-*/
 *.psp2dmp*
 psp2core-*
 *.log
+
+# Shell Companion PS4, fetched at build time (scripts/fetch_shell_companion_ps4.sh)
+third_party/shell_companion/

@@ -1589,6 +1589,14 @@ jobs:
             [ -s "$f" ] || fetch "$BASE_URL/ps4-openorbis-${pkg}-any.pkg.tar.gz" "$f"
           done
           pacman --noconfirm -U portlib-cache/*.pkg.tar.gz
+      - name: Fetch Shell Companion (PS4)
+        # Music after VitaPlex closes; the build goes on without it if the
+        # release cannot be had.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          sh scripts/fetch_shell_companion_ps4.sh || \
+            echo "::warning::Shell Companion PS4 could not be fetched; building without music after closing"
       - name: Build
         env:
           OPENORBIS: /opt/pacbrew/ps4/openorbis

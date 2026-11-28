@@ -1212,6 +1212,45 @@ brls::Box* SettingsTab::createMusicSection() {
         box->addView(quickMenuInfo);
     }
 
+    // PS4: the music queue goes on in the system's Music section (quick menu)
+    // once VitaPlex is closed, through Shell Companion's module; see
+    // utils/background_audio_ps4.cpp.
+    if (bgaudio::ps4Available()) {
+        auto* ps4Music = new brls::BooleanCell();
+        ps4Music->init("Music After Closing VitaPlex", settings.ps4ShellMusic,
+            [](bool value) {
+                Application& app = Application::getInstance();
+                app.getSettings().ps4ShellMusic = value;
+                app.saveSettings();
+                bgaudio::setPs4ShellMusic(value);
+            });
+        box->addView(ps4Music);
+
+        box->addView(makePickerCell("Group in PS4 Music",
+            {"Albums", "Playlist"},
+            settings.ps4ShellGroup,
+            [](int index) {
+                Application& app = Application::getInstance();
+                app.getSettings().ps4ShellGroup = index;
+                app.saveSettings();
+                bgaudio::setPs4ShellGroup(index);
+            }));
+
+        auto* ps4Info = new brls::Label();
+        ps4Info->setText("When VitaPlex is closed with music playing, the queue plays on in the "
+                         "Music section of the quick menu (hold PS), from where it had got to, "
+                         "streamed from the server as MP3s; \"+\" (R3) there rates the song. "
+                         "Albums: a tile for each album. Playlist: one tile named after the "
+                         "playlist the queue was played from (a queue that is not a playlist "
+                         "keeps its albums). Opening VitaPlex takes the music back. Needs "
+                         "GoldHEN; uses the Shell Companion module, which stays loaded until "
+                         "the PS4 restarts.");
+        ps4Info->setFontSize(14);
+        ps4Info->setMarginLeft(16);
+        ps4Info->setMarginTop(8);
+        box->addView(ps4Info);
+    }
+
     return box;
 }
 
