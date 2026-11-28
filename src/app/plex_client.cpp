@@ -787,12 +787,14 @@ void PlexClient::handleUnauthorized() {
     });
 }
 
-bool PlexClient::fetchServers(std::vector<PlexServer>& servers, bool* offline) {
+bool PlexClient::fetchServers(std::vector<PlexServer>& servers, bool* offline,
+                              const std::string& token) {
     brls::Logger::info("Fetching user's servers from plex.tv");
 
     if (offline) *offline = false;
 
-    if (m_authToken.empty()) {
+    const std::string askToken = token.empty() ? m_authToken : token;
+    if (askToken.empty()) {
         brls::Logger::error("No auth token - please login first");
         return false;
     }
@@ -802,7 +804,7 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers, bool* offline) {
     req.url = "https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=0";
     req.method = "GET";
     req.headers["Accept"] = "application/json";
-    req.headers["X-Plex-Token"] = m_authToken;
+    req.headers["X-Plex-Token"] = askToken;
     req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
 
     HttpResponse resp = client.request(req);
@@ -926,6 +928,26 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers, bool* offline) {
     }
 
     brls::Logger::info("Found {} servers", servers.size());
+
+    // The server in use: its addresses, for the next start to try the home
+    // network ones first (Application::pickStartupServerUrl). Set here too,
+    // and not only at sign-in, so a sign-in from before has them as well.
+    if (!m_serverUrl.empty()) {
+        auto lower = [](std::string v) {
+            for (auto& ch : v) ch = (char)tolower((unsigned char)ch);
+            return v;
+        };
+        const std::string current = lower(m_serverUrl);
+        for (const auto& srv : servers) {
+            bool ours = false;
+            for (const auto& c : srv.connections)
+                if (lower(c.uri) == current) ours = true;
+            if (!ours) continue;
+            const std::vector<ServerConnection> conns = srv.connections;
+            brls::sync([conns]() { Application::getInstance().setServerAddresses(conns); });
+            break;
+        }
+    }
     return !servers.empty();
 }
 
@@ -2607,13 +2629,22 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
         return false;
     }
 
+    parseSearchItems(resp.body, results, nullptr);
+
+    brls::Logger::info("Found {} search results for '{}'", results.size(), query);
+    return true;
+}
+
+void PlexClient::parseSearchItems(const std::string& body, std::vector<MediaItem>& results,
+                                  std::vector<int>* distances) {
     results.clear();
+    if (distances) distances->clear();
 
     // Parse search results by looking for objects with ratingKey
     size_t pos = 0;
-    while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
+    while ((pos = body.find("\"ratingKey\"", pos)) != std::string::npos) {
         // Go back to find start of this object
-        size_t objStart = resp.body.rfind('{', pos);
+        size_t objStart = body.rfind('{', pos);
         if (objStart == std::string::npos) {
             pos++;
             continue;
@@ -2622,13 +2653,13 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
         // Find end of object
         int braceCount = 1;
         size_t objEnd = objStart + 1;
-        while (braceCount > 0 && objEnd < resp.body.length()) {
-            if (resp.body[objEnd] == '{') braceCount++;
-            else if (resp.body[objEnd] == '}') braceCount--;
+        while (braceCount > 0 && objEnd < body.length()) {
+            if (body[objEnd] == '{') braceCount++;
+            else if (body[objEnd] == '}') braceCount--;
             objEnd++;
         }
 
-        std::string obj = resp.body.substr(objStart, objEnd - objStart);
+        std::string obj = body.substr(objStart, objEnd - objStart);
 
         MediaItem item;
         item.ratingKey = extractJsonValue(obj, "ratingKey");
@@ -2654,12 +2685,35 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
             results.push_back(item);
+            if (distances)
+                distances->push_back(obj.find("\"distance\"") != std::string::npos
+                                         ? extractJsonInt(obj, "distance") : -1);
         }
 
         pos = objEnd;
     }
 
-    brls::Logger::info("Found {} search results for '{}'", results.size(), query);
+}
+
+bool PlexClient::voiceSearch(const std::string& query, int type, int limit,
+                             std::vector<MediaItem>& results, std::vector<int>& distances) {
+    std::string url = buildApiUrl("/hubs/search/voice?query=" + HttpClient::urlEncode(query) +
+                                  "&limit=" + std::to_string(limit));
+    if (type > 0) url += "&type=" + std::to_string(type);
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+    if (resp.statusCode != 200) {
+        brls::Logger::error("Voice search failed: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
+    parseSearchItems(resp.body, results, &distances);
+    brls::Logger::info("Voice search: {} result(s) for '{}' (type {})", results.size(), query, type);
     return true;
 }
 
@@ -3978,7 +4032,19 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     } else {
         queryParams += "&directPlay=0&directStream=1";
     }
-    queryParams += "&directStreamAudio=1";
+    // A stream of this item failed: convert what the server would copy.
+    // A log: copying a file's AAC audio into the HLS segments crashed the
+    // server's transcoder at once ("AAC packet too short", exit 183), and
+    // every segment was then a 404.
+    const int fallback = isAudio ? 0 : streamFallback(ratingKey);
+    if (fallback >= 2) {
+        const size_t at = queryParams.find("&directStream=1");
+        if (at != std::string::npos) queryParams.replace(at, 15, "&directStream=0");
+    }
+    queryParams += fallback >= 1 ? "&directStreamAudio=0" : "&directStreamAudio=1";
+    if (fallback > 0)
+        brls::Logger::info("getTranscodeUrl: {} re-encoded after a failed stream",
+                           fallback >= 2 ? "audio and video" : "audio");
     queryParams += "&hasMDE=1";
     queryParams += "&location=lan";
     queryParams += "&audioBoost=100";
@@ -4029,9 +4095,11 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     }
 
     // Resume offset (in seconds)
+    std::string offsetParam;
     if (offsetMs > 0) {
         snprintf(buf, sizeof(buf), "&offset=%.1f", offsetMs / 1000.0);
-        queryParams += buf;
+        offsetParam = buf;
+        queryParams += offsetParam;
     }
 
     // Session ID
@@ -4080,61 +4148,77 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     const char* transcodeType = isAudio ? "music" : "video";
 
     // Step 1: Call /decision with X-Plex-* as HTTP headers
-    snprintf(buf, sizeof(buf), "/%s/:/transcode/universal/decision?", transcodeType);
-    std::string decisionUrl = m_serverUrl + buf + queryParams;
-    brls::Logger::info("getTranscodeUrl: Calling decision endpoint...");
+    auto askDecision = [&](const std::string& params) {
+        snprintf(buf, sizeof(buf), "/%s/:/transcode/universal/decision?", transcodeType);
+        std::string decisionUrl = m_serverUrl + buf + params;
+        brls::Logger::info("getTranscodeUrl: Calling decision endpoint...");
 
-    HttpClient decisionClient;
-    HttpRequest decisionReq;
-    decisionReq.url = decisionUrl;
-    decisionReq.method = "GET";
-    decisionReq.headers["Accept"] = "application/json";
-    // Per official API: X-Plex-Client-Identifier is REQUIRED, in=header
-    {
-        const auto& vc = platform::getVideoConstraints();
-        // The same identifier as the timeline and play queue calls, so the
-        // server sees one client and not two.
-        decisionReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
-        decisionReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
-        decisionReq.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
-        decisionReq.headers["X-Plex-Platform"] = vc.plexPlatform;
-        decisionReq.headers["X-Plex-Device"] = vc.plexDevice;
-        decisionReq.headers["X-Plex-Device-Name"] = vc.plexDevice;
+        HttpClient decisionClient;
+        HttpRequest decisionReq;
+        decisionReq.url = decisionUrl;
+        decisionReq.method = "GET";
+        decisionReq.headers["Accept"] = "application/json";
+        // Per official API: X-Plex-Client-Identifier is REQUIRED, in=header
+        {
+            const auto& vc = platform::getVideoConstraints();
+            // The same identifier as the timeline and play queue calls, so the
+            // server sees one client and not two.
+            decisionReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+            decisionReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+            decisionReq.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+            decisionReq.headers["X-Plex-Platform"] = vc.plexPlatform;
+            decisionReq.headers["X-Plex-Device"] = vc.plexDevice;
+            decisionReq.headers["X-Plex-Device-Name"] = vc.plexDevice;
+        }
+        decisionReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
+        decisionReq.headers["X-Plex-Client-Profile-Extra"] = profileExtra;
+        HttpResponse resp = decisionClient.request(decisionReq);
+
+        brls::Logger::info("getTranscodeUrl: Decision response: {} body: {}",
+                          resp.statusCode, redactBodyForLog(resp.body.substr(0, 500)));
+
+        // What the server will do with each subtitle stream (the body above is cut
+        // at 500 bytes, before the streams). A TV log had a found subtitle drawn
+        // into the transcoded picture although subtitles=none was asked for, so
+        // the player's own copy showed on top of it.
+        m_lastTranscodeBurnsSubtitle = false;
+        for (size_t at = resp.body.find("\"streamType\":3"); at != std::string::npos;
+             at = resp.body.find("\"streamType\":3", at + 1)) {
+            const size_t open = resp.body.rfind('{', at);
+            const size_t close = resp.body.find('}', at);
+            if (open == std::string::npos || close == std::string::npos) break;
+            const std::string obj = resp.body.substr(open, close - open + 1);
+            const std::string decision = extractJsonValue(obj, "decision");
+            const std::string location = extractJsonValue(obj, "location");
+            const std::string burn = extractJsonValue(obj, "burn");
+            const bool burns = decision == "burn" || burn == "1" || burn == "true" ||
+                               location == "segments-video";
+            if (burns) m_lastTranscodeBurnsSubtitle = true;
+            brls::Logger::info("getTranscodeUrl: subtitle stream {} selected={} decision={} "
+                               "location={} burn={} codec={}",
+                               extractJsonValue(obj, "id"), extractJsonValue(obj, "selected"),
+                               decision, location, burn, extractJsonValue(obj, "codec"));
+        }
+        return resp;
+    };
+
+    // Direct play allowed: the server is asked for it first, without the
+    // start position (a direct play is the original file, which the player
+    // seeks to the position itself, below). An Android TV log had Plex answer
+    // 400 Bad Request to directPlay=1 whenever it could not direct play the
+    // file: a movie it had to convert, and a direct-playable one once a
+    // subtitle it would have to burn in was selected. Taking that 400 as a
+    // start anyway had the server refuse the start too, or 404 every
+    // segment. So when direct play is not what the server can do, it is
+    // asked again as what it is, a transcode (directPlay=0), from the
+    // position, and that is started.
+    const bool askedDirect = queryParams.find("&directPlay=1") != std::string::npos;
+    std::string decisionParams = queryParams;
+    if (askedDirect && !offsetParam.empty()) {
+        const size_t at = decisionParams.find(offsetParam);
+        if (at != std::string::npos) decisionParams.erase(at, offsetParam.size());
     }
-    decisionReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
-    decisionReq.headers["X-Plex-Client-Profile-Extra"] = profileExtra;
-    HttpResponse decisionResp = decisionClient.request(decisionReq);
-
-    brls::Logger::info("getTranscodeUrl: Decision response: {} body: {}",
-                      decisionResp.statusCode, redactBodyForLog(decisionResp.body.substr(0, 500)));
-
-    // What the server will do with each subtitle stream (the body above is cut
-    // at 500 bytes, before the streams). A TV log had a found subtitle drawn
-    // into the transcoded picture although subtitles=none was asked for, so
-    // the player's own copy showed on top of it.
-    m_lastTranscodeBurnsSubtitle = false;
-    for (size_t at = decisionResp.body.find("\"streamType\":3"); at != std::string::npos;
-         at = decisionResp.body.find("\"streamType\":3", at + 1)) {
-        const size_t open = decisionResp.body.rfind('{', at);
-        const size_t close = decisionResp.body.find('}', at);
-        if (open == std::string::npos || close == std::string::npos) break;
-        const std::string obj = decisionResp.body.substr(open, close - open + 1);
-        const std::string decision = extractJsonValue(obj, "decision");
-        const std::string location = extractJsonValue(obj, "location");
-        const std::string burn = extractJsonValue(obj, "burn");
-        const bool burns = decision == "burn" || burn == "1" || burn == "true" ||
-                           location == "segments-video";
-        if (burns) m_lastTranscodeBurnsSubtitle = true;
-        brls::Logger::info("getTranscodeUrl: subtitle stream {} selected={} decision={} location={} "
-                           "burn={} codec={}",
-                           extractJsonValue(obj, "id"), extractJsonValue(obj, "selected"), decision,
-                           location, burn, extractJsonValue(obj, "codec"));
-    }
-
-    if (decisionResp.statusCode != 200) {
-        brls::Logger::warning("getTranscodeUrl: Decision returned {}, trying start anyway",
-                             decisionResp.statusCode);
-    }
+    HttpResponse decisionResp = askDecision(decisionParams);
 
     // If the server chose DIRECT PLAY (the user enabled it and the file is
     // compatible), stream the original file directly. The /start endpoints are
@@ -4156,6 +4240,19 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
         url = m_serverUrl + partKey + "?X-Plex-Token=" + m_authToken;
         brls::Logger::info("getTranscodeUrl: Direct play — original file {}", partKey);
         return true;
+    }
+
+    if (askedDirect) {
+        // Not a direct play: asked for again as a transcode, from the position.
+        const size_t at = queryParams.find("&directPlay=1");
+        if (at != std::string::npos) queryParams.replace(at, 13, "&directPlay=0");
+        brls::Logger::info("getTranscodeUrl: not a direct play ({}); asking for a transcode "
+                           "from {:.1f}s", decisionResp.statusCode, offsetMs / 1000.0);
+        decisionResp = askDecision(queryParams);
+    }
+    if (decisionResp.statusCode != 200) {
+        brls::Logger::warning("getTranscodeUrl: Decision returned {}, trying start anyway",
+                             decisionResp.statusCode);
     }
 
     // Step 2: Build the /start URL for MPV to stream.
@@ -4180,6 +4277,15 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     brls::Logger::info("getTranscodeUrl: Transcode URL = {}", redactTokensInUrl(url));
 
     return true;
+}
+
+int PlexClient::streamFallback(const std::string& ratingKey) const {
+    const auto it = m_streamFallback.find(ratingKey);
+    return it == m_streamFallback.end() ? 0 : it->second;
+}
+
+void PlexClient::setStreamFallback(const std::string& ratingKey, int level) {
+    m_streamFallback[ratingKey] = level;
 }
 
 bool PlexClient::updatePlayProgress(const std::string& ratingKey, int timeMs) {

@@ -1413,6 +1413,11 @@ std::vector<MpvPlayer::TrackInfo> MpvPlayer::getTrackList(const std::string& typ
         mpv_get_property(m_mpv, prop, MPV_FORMAT_FLAG, &art);
         info.albumArt = (art != 0);
 
+        snprintf(prop, sizeof(prop), "track-list/%lld/external", (long long)i);
+        int ext = 0;
+        mpv_get_property(m_mpv, prop, MPV_FORMAT_FLAG, &ext);
+        info.external = (ext != 0);
+
         tracks.push_back(info);
     }
 
@@ -1808,6 +1813,9 @@ void MpvPlayer::eventMainLoop() {
                     // a transcode decision for the queue's next song (logs
                     // 7c97dfa5, 6f40de92). See streamRefused().
                     if (text.find("HTTP error 4") != std::string::npos) m_streamRefused.store(true);
+                    // An HLS segment given up on (see segmentsFailed()).
+                    if (text.find("failed too many times, skipping") != std::string::npos)
+                        m_segmentsFailed.fetch_add(1);
                     if (msg->log_level <= MPV_LOG_LEVEL_ERROR) {
                         brls::Logger::error("mpv {}: {}", msg->prefix, text);
                     } else if (msg->log_level <= MPV_LOG_LEVEL_WARN) {
@@ -1839,6 +1847,7 @@ void MpvPlayer::eventMainLoop() {
 
             case MPV_EVENT_START_FILE:
                 brls::Logger::debug("MpvPlayer: EVENT_START_FILE");
+                m_segmentsFailed.store(0);
                 setState(MpvPlayerState::LOADING);
                 break;
 
@@ -2071,6 +2080,11 @@ void MpvPlayer::updatePlaybackInfo() {
         mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h);
         m_playbackInfo.videoWidth = (int)w;
         m_playbackInfo.videoHeight = (int)h;
+        int64_t dw = 0, dh = 0;
+        mpv_get_property(m_mpv, "dwidth", MPV_FORMAT_INT64, &dw);
+        mpv_get_property(m_mpv, "dheight", MPV_FORMAT_INT64, &dh);
+        m_playbackInfo.displayWidth = (int)dw;
+        m_playbackInfo.displayHeight = (int)dh;
 
         double fps = 0.0;
         mpv_get_property(m_mpv, "estimated-vf-fps", MPV_FORMAT_DOUBLE, &fps);

@@ -444,6 +444,7 @@ private:
     std::string m_parentRatingKey;  // Season/album ratingKey for auto-play-next
     std::string m_grandparentRatingKey;  // Show ratingKey for cross-season auto-play-next
     int m_episodeIndex = 0;         // Episode index within season for auto-play-next
+    bool m_errorShown = false;      // a failed video has been reported (update)
     bool m_endHandled = false;      // Prevent multiple triggers when playback ends
     double m_endHandledAtSec = 0.0; // Position m_endHandled was set at; the latch is spent once playback comes back before it
     bool m_isPlaying = false;
@@ -460,6 +461,11 @@ private:
     bool m_isDirectFile = false;   // Playing direct file path (debug)
     // True when the server chose direct play: mpv owns the timeline, so baseOffset is 0 and seeks are local.
     bool m_directPlay = false;
+    // A direct play's subtitle has been matched to the server's choice
+    // (alignDirectPlaySubtitle), once per file.
+    bool m_subsAligned = false;
+    void alignDirectPlaySubtitle();
+    bool retryFailedStream();
     bool m_isQueueMode = false;    // Playing from queue
     bool m_isResuming = false;     // Resuming existing playback (don't restart track)
     // lyrics support removed

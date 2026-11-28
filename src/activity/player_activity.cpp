@@ -2113,6 +2113,7 @@ void PlayerActivity::loadMedia() {
         if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {
             // Direct play: the server returned the original file, so mpv owns the timeline and seeks are local, not restarts.
             m_directPlay = (url.find("/transcode/universal/start") == std::string::npos);
+            m_subsAligned = false;
             m_serverBurnsSub = !m_directPlay && PlexClient::getInstance().lastTranscodeBurnsSubtitle();
             if (m_serverBurnsSub && !m_sideloadUrls.empty())
                 brls::Logger::warning("PlayerActivity: the server draws the subtitle into the picture; "
@@ -2168,6 +2169,55 @@ void PlayerActivity::loadMedia() {
 
     brls::Logger::debug("PlayerActivity: loadMedia exiting");
     m_loadingMedia = false;
+}
+
+// In a direct play mpv opens the original file and picks a subtitle by its
+// own rules: the first one flagged default. A Hunger Games file came up in
+// Arabic that way (its first subtitle, flagged default), with subtitles off
+// in the app and none chosen on the server. The server's choice (the stream
+// selected for the part) is what applies, as it does in a transcode:
+// nothing selected, or subtitles off in the settings, is no subtitle; an
+// embedded one selected is the same one in the file, matched by its place
+// among the file's subtitles (both list them in the file's order). A
+// sidecar the player loaded itself (setSideloadedSubtitle) is left alone.
+void PlayerActivity::alignDirectPlaySubtitle() {
+    if (!m_sideloadUrls.empty()) return;
+    MpvPlayer& player = MpvPlayer::getInstance();
+
+    int wantPlace = -1;   // among the file's own subtitles
+    if (Application::getInstance().getSettings().showSubtitles && m_streamsLoaded) {
+        int place = 0;
+        for (const auto& ps : m_plexStreams) {
+            if (ps.streamType != 3 || ps.external) continue;
+            if (ps.selected) {
+                wantPlace = place;
+                break;
+            }
+            place++;
+        }
+    }
+
+    std::vector<MpvPlayer::TrackInfo> subs;
+    for (const auto& t : player.getTrackList("sub"))
+        if (!t.external) subs.push_back(t);
+    const MpvPlayer::TrackInfo* current = nullptr;
+    for (const auto& t : subs)
+        if (t.selected) current = &t;
+
+    if (wantPlace < 0 || wantPlace >= (int)subs.size()) {
+        if (current) {
+            brls::Logger::info("PlayerActivity: direct play: no subtitle chosen; mpv had picked {} "
+                               "({}), turned off", current->id, current->lang);
+            player.disableSubtitles();
+        }
+        return;
+    }
+    const auto& want = subs[(size_t)wantPlace];
+    if (current && current->id == want.id) return;
+    brls::Logger::info("PlayerActivity: direct play: subtitle {} ({}) as chosen on the server{}",
+                       want.id, want.lang,
+                       current ? ", not mpv's " + current->lang : std::string());
+    player.setSubtitleTrack(want.id);
 }
 
 void PlayerActivity::syncHiddenFocus() {
@@ -2400,6 +2450,22 @@ void PlayerActivity::updateProgress() {
     // Always process MPV events to handle state transitions
     player.update();
 
+    // A transcode that never produced a segment: mpv would skip through the
+    // whole list before giving up. Five in a row before anything played is
+    // enough to ask again or to say so (as hasError() below does).
+    if (!m_isQueueMode && !m_directPlay && player.isLoading() && !m_errorShown &&
+        player.segmentsFailed() >= 5) {
+        brls::Logger::warning("PlayerActivity: {} segments failed before the stream started",
+                              player.segmentsFailed());
+        if (!retryFailedStream()) {
+            m_errorShown = true;
+            player.stop();
+            brls::Application::notify("This video could not be played");
+            showControls();
+        }
+        return;
+    }
+
     // Skip UI updates while MPV is still loading - be gentle on Vita's limited hardware
     if (player.isLoading()) {
         return;
@@ -2410,6 +2476,29 @@ void PlayerActivity::updateProgress() {
     // already seen, so calling this every tick is fine.
     if (m_isQueueMode && player.hasError()) {
         MusicController::getInstance().onPlaybackFailed();
+    }
+    // A video that could not be played said nothing: the screen stayed
+    // empty with the player stopped (an Android TV log, after the server
+    // refused a transcode). Said once per failure, with the controls up so
+    // Back and the subtitle and audio choices are in reach.
+    if (!m_isQueueMode && player.hasError() && !m_errorShown && retryFailedStream()) {
+        // Asked again, converting more of it (retryFailedStream).
+    } else if (!m_isQueueMode && player.hasError()) {
+        if (!m_errorShown) {
+            m_errorShown = true;
+            brls::Logger::error("PlayerActivity: the video could not be played: {}",
+                                player.getErrorMessage());
+            brls::Application::notify("This video could not be played");
+            showControls();
+        }
+    } else {
+        m_errorShown = false;
+    }
+
+    // A direct play's subtitle: the server's choice, not mpv's own.
+    if (m_directPlay && !m_subsAligned && player.isPlaying()) {
+        m_subsAligned = true;
+        alignDirectPlaySubtitle();
     }
 
     // Handle pending seek when playback becomes ready
@@ -4646,8 +4735,33 @@ void PlayerActivity::setSideloadedSubtitle(const PlexStream& ps) {
 // came back as the original file was still treated as a transcode: on a TV
 // log, scrubbing restarted the "transcode" nine times in eight seconds, each
 // time the whole file again.
+// A transcode that failed to load: asked for again, the server converting
+// what it copied before (PlexClient::streamFallback): the audio first, then
+// the video too. A server log: copying a file's AAC audio crashed its
+// transcoder at the first packet ("AAC packet too short", exit 183), so the
+// session was gone and every segment a 404. False once there is nothing
+// more to convert, or for a direct play or a file of the device's own.
+bool PlayerActivity::retryFailedStream() {
+    if (m_directPlay || m_isLocalFile || m_isDirectFile || m_mediaKey.empty()) return false;
+    PlexClient& client = PlexClient::getInstance();
+    const int level = client.streamFallback(m_mediaKey);
+    if (level >= 2) return false;
+    client.setStreamFallback(m_mediaKey, level + 1);
+
+    const int offsetMs = m_transcodeBaseOffsetMs +
+                         static_cast<int>(MpvPlayer::getInstance().getPosition() * 1000);
+    brls::Logger::warning("PlayerActivity: the stream failed; asking again with the {} re-encoded, "
+                          "from {} ms", level == 0 ? "audio" : "audio and video", offsetMs);
+    client.stopTranscode();
+    std::string url;
+    if (!client.getTranscodeUrl(m_mediaKey, url, offsetMs)) return false;
+    loadServerStream(url, offsetMs);
+    return true;
+}
+
 void PlayerActivity::loadServerStream(const std::string& url, int offsetMs) {
     m_directPlay = url.find("/transcode/universal/start") == std::string::npos;
+    m_subsAligned = false;
     if (m_directPlay) {
         m_transcodeBaseOffsetMs = 0;
         if (offsetMs > 0) m_pendingSeek = offsetMs / 1000.0;

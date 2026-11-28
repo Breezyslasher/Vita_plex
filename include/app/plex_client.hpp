@@ -393,7 +393,9 @@ public:
     // (DNS, timeout, no route) as opposed to answering with an empty list.
     // Both come back as a failure here, but they mean opposite things to the
     // user: one is a broken connection, the other an account with no server.
-    bool fetchServers(std::vector<PlexServer>& servers, bool* offline = nullptr);
+    // token: the plex.tv token to ask with; empty for the current one.
+    bool fetchServers(std::vector<PlexServer>& servers, bool* offline = nullptr,
+                      const std::string& token = "");
     bool connectToServer(const std::string& url);
     bool connectToServer(const std::string& url, int timeoutSeconds);
     void logout();
@@ -486,6 +488,12 @@ public:
 
     // Search
     bool search(const std::string& query, std::vector<MediaItem>& results);
+    // GET /hubs/search/voice: titles matched by edit distance, for misheard
+    // spoken requests that /hubs/search finds nothing for. Much slower, so a
+    // last try. type is Plex's (8 artist, 9 album, 10 track, 15 playlist; 0
+    // for any); distances[i] is results[i]'s distance (-1 when not given).
+    bool voiceSearch(const std::string& query, int type, int limit,
+                     std::vector<MediaItem>& results, std::vector<int>& distances);
 
     // Collections, Genres
     bool fetchCollections(const std::string& sectionKey, std::vector<MediaItem>& collections);
@@ -748,10 +756,16 @@ public:
 
     // The last video transcode decision put a subtitle into the picture.
     bool lastTranscodeBurnsSubtitle() const { return m_lastTranscodeBurnsSubtitle; }
+    // How much of an item's transcode the server must convert rather than
+    // copy, after a stream of it failed: 0 as the server decides, 1 the
+    // audio re-encoded, 2 the video too. Kept per item for the session.
+    int streamFallback(const std::string& ratingKey) const;
+    void setStreamFallback(const std::string& ratingKey, int level);
 
 private:
     bool m_playerShowsSubtitle = false;
     bool m_lastTranscodeBurnsSubtitle = false;
+    std::map<std::string, int> m_streamFallback;   // streamFallback()
 
     PlexClient() = default;
     ~PlexClient() = default;
@@ -764,6 +778,10 @@ private:
     std::string extractJsonValue(const std::string& json, const std::string& key);
     int extractJsonInt(const std::string& json, const std::string& key);
     float extractJsonFloat(const std::string& json, const std::string& key);
+    // The items of a /hubs/search or /hubs/search/voice answer; with
+    // distances, each item's "distance" too.
+    void parseSearchItems(const std::string& body, std::vector<MediaItem>& results,
+                          std::vector<int>* distances);
     bool extractJsonBool(const std::string& json, const std::string& key);
 
     // In-place extraction: works on a range [start, end) of a string without creating a substring.

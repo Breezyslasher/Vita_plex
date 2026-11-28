@@ -939,6 +939,65 @@ std::string resolveOneSearch(PlexClient& client, const std::string& query,
     return best ? mediaIdFor(*best) : std::string();
 }
 
+// The last try for a misheard name: Plex's voice search, which matches
+// titles by edit distance ("daniel rustige" still finds a near spelling)
+// where /hubs/search, matching parts of words, finds nothing. It is much
+// slower, so it only runs once everything else has failed, and only a
+// close result is taken: within a third of the words' length in edits.
+// kind narrows it to that type; a hint ("<title> by <artist>") breaks ties.
+std::string resolveVoiceSearch(PlexClient& client, const std::string& query,
+                               const std::string& hint, const std::string& kind) {
+    const std::string want = matchKey(query);
+    if (want.empty()) return {};
+    int type = 0;
+    if (kind == "artist")        type = 8;
+    else if (kind == "album")    type = 9;
+    else if (kind == "track")    type = 10;
+    else if (kind == "playlist") type = 15;
+
+    std::vector<MediaItem> results;
+    std::vector<int> distances;
+    if (!client.voiceSearch(query, type, 10, results, distances) || results.empty()) {
+        brls::Logger::info("MediaBrowser: voice search \"{}\": nothing", query);
+        return {};
+    }
+    const int maxDistance = std::max(1, (int)want.size() / 3);
+
+    const MediaItem* best = nullptr;
+    int bestDistance = 0, bestRank = 0;
+    for (size_t i = 0; i < results.size(); i++) {
+        const MediaItem& m = results[i];
+        const int d = i < distances.size() ? distances[i] : -1;
+        int base;
+        if (m.type == "artist")        base = 4;
+        else if (m.type == "album")    base = 3;
+        else if (m.type == "playlist") base = 2;
+        else if (m.type == "track")    base = 1;
+        else continue;                       // movies, shows: not music
+        if (type != 0 && m.type != kind) continue;
+        if (isHiddenLibrary(m.librarySectionKey)) continue;
+        brls::Logger::info("MediaBrowser: voice search \"{}\": {} \"{}\" distance {}", query,
+                           m.type, m.title, d);
+        if (d < 0 || d > maxDistance) continue;
+        // Nearest first; then the most of the hint's words; then the
+        // broadest kind, as resolveOneSearch has it.
+        const int rank = (hint.empty() ? 0 : hintWordsMatched(m, hint)) * 10 + base;
+        if (!best || d < bestDistance || (d == bestDistance && rank > bestRank)) {
+            best = &m;
+            bestDistance = d;
+            bestRank = rank;
+        }
+    }
+    if (!best) {
+        brls::Logger::info("MediaBrowser: voice search \"{}\": none within {} edit(s)", query,
+                           maxDistance);
+        return {};
+    }
+    brls::Logger::info("MediaBrowser: voice search \"{}\" -> {} \"{}\" (distance {})", query,
+                       best->type, best->title, bestDistance);
+    return mediaIdFor(*best);
+}
+
 // resolveOneSearch, then the near spellings of the term.
 std::string searchWithSpellings(PlexClient& client, const std::string& term,
                                 const std::string& hint, const std::string& kind) {
@@ -1217,6 +1276,22 @@ std::string resolveSearchQuery(PlexClient& client, const std::string& query,
             brls::Logger::info("MediaBrowser: \"{}\" is a genre", q.text);
             return std::string(kShufflePrefix) + "genremix/" + g.first + "/" + g.second;
         }
+    }
+
+    // Nothing found: Plex's voice search for a misheard name, once for the
+    // title (or the whole phrase), then for the artist or album named.
+    if (id.empty()) {
+        const std::string term = title.empty() ? q.text : title;
+        if (!wordsOf(term).empty()) id = resolveVoiceSearch(client, term, hint, q.kind);
+        if (id.empty() && !hint.empty() && !wordsOf(hint).empty()) {
+            id = resolveVoiceSearch(client, hint, "", byArtist ? "artist" : "album");
+            if (byArtist && startsWith(id, "artistsongs/") && !title.empty() &&
+                q.kind != "album" && q.kind != "playlist") {
+                const std::string track = closestArtistTrack(client, id, title);
+                if (!track.empty()) return done(track);
+            }
+        }
+        if (!id.empty()) return done(id);
     }
     return {};
 }
