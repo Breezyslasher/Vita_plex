@@ -5,6 +5,7 @@
 #include "view/library_section_tab.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
+#include "view/long_press_gesture.hpp"
 #include "view/filter_chip.hpp"
 #include "activity/player_activity.hpp"
 #include "app/application.hpp"
@@ -1728,6 +1729,23 @@ void LibrarySectionTab::appendTrackListPage() {
             return true;
         });
         row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+        // The track's Options menu, as every other list of tracks has it:
+        // START, a held OK on a TV remote (which borealis turns into START),
+        // and a long press on a touch screen. These rows had none, so a hold
+        // did nothing inside a playlist.
+        auto openMenu = [this, idx]() {
+            if (idx < m_playlistTracks.size())
+                MediaDetailView::showContextMenuFor(m_playlistTracks[idx]);
+        };
+        row->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                            [openMenu](brls::View*) {
+                                openMenu();
+                                return true;
+                            });
+        row->addGestureRecognizer(new LongPressGestureRecognizer(
+            row, [openMenu](LongPressGestureStatus status) {
+                if (status.state == brls::GestureState::START) openMenu();
+            }));
 
         m_trackListBox->addView(row);
     }
