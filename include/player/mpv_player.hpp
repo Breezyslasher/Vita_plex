@@ -180,6 +180,11 @@ public:
     bool isLoading() const { return m_state == MpvPlayerState::LOADING || m_state == MpvPlayerState::BUFFERING; }
     bool hasEnded() const { return m_state == MpvPlayerState::ENDED; }
     bool hasError() const { return m_state == MpvPlayerState::ERROR; }
+    // HLS segments of the current file given up on. A transcode whose server
+    // process died has none at all (each a 404), and mpv skips them one by
+    // one, still "loading", for as long as the film's segment list lasts (70 s
+    // in a log) before it reports the failure.
+    int segmentsFailed() const { return m_segmentsFailed.load(); }
 
     // Info
     double getPosition() const;
@@ -305,6 +310,7 @@ private:
     std::atomic<MpvPlayerState> m_state{MpvPlayerState::IDLE};
     std::atomic<uint32_t> m_errorSerial{0};     // see errorSerial()
     MpvPlaybackInfo m_playbackInfo;
+    std::atomic<int> m_segmentsFailed{0};
     std::string m_errorMessage;
     std::string m_currentUrl;
     // Server-reported length of the loaded track, milliseconds; 0 when unknown. See loadUrl().

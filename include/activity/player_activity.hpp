@@ -465,6 +465,7 @@ private:
     // (alignDirectPlaySubtitle), once per file.
     bool m_subsAligned = false;
     void alignDirectPlaySubtitle();
+    bool retryFailedStream();
     bool m_isQueueMode = false;    // Playing from queue
     bool m_isResuming = false;     // Resuming existing playback (don't restart track)
     // lyrics support removed

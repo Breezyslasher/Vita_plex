@@ -4032,7 +4032,19 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     } else {
         queryParams += "&directPlay=0&directStream=1";
     }
-    queryParams += "&directStreamAudio=1";
+    // A stream of this item failed: convert what the server would copy.
+    // A log: copying a file's AAC audio into the HLS segments crashed the
+    // server's transcoder at once ("AAC packet too short", exit 183), and
+    // every segment was then a 404.
+    const int fallback = isAudio ? 0 : streamFallback(ratingKey);
+    if (fallback >= 2) {
+        const size_t at = queryParams.find("&directStream=1");
+        if (at != std::string::npos) queryParams.replace(at, 15, "&directStream=0");
+    }
+    queryParams += fallback >= 1 ? "&directStreamAudio=0" : "&directStreamAudio=1";
+    if (fallback > 0)
+        brls::Logger::info("getTranscodeUrl: {} re-encoded after a failed stream",
+                           fallback >= 2 ? "audio and video" : "audio");
     queryParams += "&hasMDE=1";
     queryParams += "&location=lan";
     queryParams += "&audioBoost=100";
@@ -4265,6 +4277,15 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     brls::Logger::info("getTranscodeUrl: Transcode URL = {}", redactTokensInUrl(url));
 
     return true;
+}
+
+int PlexClient::streamFallback(const std::string& ratingKey) const {
+    const auto it = m_streamFallback.find(ratingKey);
+    return it == m_streamFallback.end() ? 0 : it->second;
+}
+
+void PlexClient::setStreamFallback(const std::string& ratingKey, int level) {
+    m_streamFallback[ratingKey] = level;
 }
 
 bool PlexClient::updatePlayProgress(const std::string& ratingKey, int timeMs) {

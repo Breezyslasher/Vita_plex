@@ -1813,6 +1813,9 @@ void MpvPlayer::eventMainLoop() {
                     // a transcode decision for the queue's next song (logs
                     // 7c97dfa5, 6f40de92). See streamRefused().
                     if (text.find("HTTP error 4") != std::string::npos) m_streamRefused.store(true);
+                    // An HLS segment given up on (see segmentsFailed()).
+                    if (text.find("failed too many times, skipping") != std::string::npos)
+                        m_segmentsFailed.fetch_add(1);
                     if (msg->log_level <= MPV_LOG_LEVEL_ERROR) {
                         brls::Logger::error("mpv {}: {}", msg->prefix, text);
                     } else if (msg->log_level <= MPV_LOG_LEVEL_WARN) {
@@ -1844,6 +1847,7 @@ void MpvPlayer::eventMainLoop() {
 
             case MPV_EVENT_START_FILE:
                 brls::Logger::debug("MpvPlayer: EVENT_START_FILE");
+                m_segmentsFailed.store(0);
                 setState(MpvPlayerState::LOADING);
                 break;
 

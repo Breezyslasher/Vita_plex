@@ -2450,6 +2450,22 @@ void PlayerActivity::updateProgress() {
     // Always process MPV events to handle state transitions
     player.update();
 
+    // A transcode that never produced a segment: mpv would skip through the
+    // whole list before giving up. Five in a row before anything played is
+    // enough to ask again or to say so (as hasError() below does).
+    if (!m_isQueueMode && !m_directPlay && player.isLoading() && !m_errorShown &&
+        player.segmentsFailed() >= 5) {
+        brls::Logger::warning("PlayerActivity: {} segments failed before the stream started",
+                              player.segmentsFailed());
+        if (!retryFailedStream()) {
+            m_errorShown = true;
+            player.stop();
+            brls::Application::notify("This video could not be played");
+            showControls();
+        }
+        return;
+    }
+
     // Skip UI updates while MPV is still loading - be gentle on Vita's limited hardware
     if (player.isLoading()) {
         return;
@@ -2465,7 +2481,9 @@ void PlayerActivity::updateProgress() {
     // empty with the player stopped (an Android TV log, after the server
     // refused a transcode). Said once per failure, with the controls up so
     // Back and the subtitle and audio choices are in reach.
-    if (!m_isQueueMode && player.hasError()) {
+    if (!m_isQueueMode && player.hasError() && !m_errorShown && retryFailedStream()) {
+        // Asked again, converting more of it (retryFailedStream).
+    } else if (!m_isQueueMode && player.hasError()) {
         if (!m_errorShown) {
             m_errorShown = true;
             brls::Logger::error("PlayerActivity: the video could not be played: {}",
@@ -4717,6 +4735,30 @@ void PlayerActivity::setSideloadedSubtitle(const PlexStream& ps) {
 // came back as the original file was still treated as a transcode: on a TV
 // log, scrubbing restarted the "transcode" nine times in eight seconds, each
 // time the whole file again.
+// A transcode that failed to load: asked for again, the server converting
+// what it copied before (PlexClient::streamFallback): the audio first, then
+// the video too. A server log: copying a file's AAC audio crashed its
+// transcoder at the first packet ("AAC packet too short", exit 183), so the
+// session was gone and every segment a 404. False once there is nothing
+// more to convert, or for a direct play or a file of the device's own.
+bool PlayerActivity::retryFailedStream() {
+    if (m_directPlay || m_isLocalFile || m_isDirectFile || m_mediaKey.empty()) return false;
+    PlexClient& client = PlexClient::getInstance();
+    const int level = client.streamFallback(m_mediaKey);
+    if (level >= 2) return false;
+    client.setStreamFallback(m_mediaKey, level + 1);
+
+    const int offsetMs = m_transcodeBaseOffsetMs +
+                         static_cast<int>(MpvPlayer::getInstance().getPosition() * 1000);
+    brls::Logger::warning("PlayerActivity: the stream failed; asking again with the {} re-encoded, "
+                          "from {} ms", level == 0 ? "audio" : "audio and video", offsetMs);
+    client.stopTranscode();
+    std::string url;
+    if (!client.getTranscodeUrl(m_mediaKey, url, offsetMs)) return false;
+    loadServerStream(url, offsetMs);
+    return true;
+}
+
 void PlayerActivity::loadServerStream(const std::string& url, int offsetMs) {
     m_directPlay = url.find("/transcode/universal/start") == std::string::npos;
     m_subsAligned = false;

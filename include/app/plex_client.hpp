@@ -756,10 +756,16 @@ public:
 
     // The last video transcode decision put a subtitle into the picture.
     bool lastTranscodeBurnsSubtitle() const { return m_lastTranscodeBurnsSubtitle; }
+    // How much of an item's transcode the server must convert rather than
+    // copy, after a stream of it failed: 0 as the server decides, 1 the
+    // audio re-encoded, 2 the video too. Kept per item for the session.
+    int streamFallback(const std::string& ratingKey) const;
+    void setStreamFallback(const std::string& ratingKey, int level);
 
 private:
     bool m_playerShowsSubtitle = false;
     bool m_lastTranscodeBurnsSubtitle = false;
+    std::map<std::string, int> m_streamFallback;   // streamFallback()
 
     PlexClient() = default;
     ~PlexClient() = default;
