@@ -66,6 +66,10 @@ std::atomic<int> g_group{0};
 // The first song of the list taken back, in the library handed over: the
 // shell's track numbers are the library's, VitaPlex's queue is that list.
 std::atomic<int> g_takeBackFirst{0};
+// The song whose stream began partway (OwnTrack::offsetMs), by its number in
+// the library, and by how much: added to the shell's position in it.
+std::atomic<int> g_offsetTrack{-1};
+std::atomic<long long> g_offsetMs{0};
 
 // By playlist, the other playlists' songs go with the queue, as tiles: up to
 // this many, fetched in up to this long as VitaPlex closes.
@@ -78,7 +82,21 @@ struct OwnTrack {
     // Which list of the library it is in: "q", the queue VitaPlex played;
     // "p<id>", a playlist of the Music section's. Each is contiguous.
     std::string list = "q";
+    // Where the shell's stream of it begins, for the song playing as VitaPlex
+    // closed: the server starts the MP3 there (offset), so the shell's
+    // position in it is from here.
+    long long offsetMs = 0;
 };
+
+// The shell drops a queue line of 768 bytes or more (its MAX_PATH), and every
+// song after it shifts; a title's '|' splits its fields (a URL line's
+// separator; Shell Companion bgm.c, addTrack and SEP).
+constexpr size_t kMaxUrl = 760;
+std::string noBar(std::string s) {
+    for (char& c : s)
+        if (c == '|') c = '/';
+    return s;
+}
 
 uint64_t monotonicMs() {
     timespec ts{};
@@ -104,17 +122,23 @@ std::string serverBase() {
 // encoded (directStream=0): a copied stream is what the server's transcoder
 // fails on for some files, and the shell's player has no fallback.
 std::string mp3Url(const std::string& server, const std::string& token, const std::string& key,
-                   const std::string& session) {
-    return server + "/music/:/transcode/universal/start.mp3?path=" +
+                   const std::string& session, long long offsetMs = 0, bool profile = true) {
+    const std::string url = server + "/music/:/transcode/universal/start.mp3?path=" +
            HttpClient::urlEncode("/library/metadata/" + key) +
            "&mediaIndex=0&partIndex=0&directPlay=0&directStream=0&directStreamAudio=0"
            "&hasMDE=1&location=lan&protocol=http&musicBitrate=320&session=" + session +
            "&X-Plex-Client-Identifier=" + HttpClient::urlEncode(PLEX_CLIENT_ID) +
            "&X-Plex-Product=VitaPlex&X-Plex-Platform=" + HttpClient::urlEncode("PlayStation 4") +
-           "&X-Plex-Client-Profile-Name=Generic&X-Plex-Client-Profile-Extra=" +
-           HttpClient::urlEncode("add-transcode-target(type=musicProfile&context=streaming"
-                                 "&protocol=http&container=mp3&audioCodec=mp3)") +
+           (offsetMs >= 1000 ? "&offset=" + std::to_string(offsetMs / 1000) : std::string()) +
+           (profile ? "&X-Plex-Client-Profile-Name=Generic&X-Plex-Client-Profile-Extra=" +
+                          HttpClient::urlEncode("add-transcode-target(type=musicProfile"
+                                                "&context=streaming&protocol=http"
+                                                "&container=mp3&audioCodec=mp3)")
+                    : std::string()) +
            "&X-Plex-Token=" + token;
+    // Too long for the shell: without the profile (start.mp3 asks for MP3).
+    if (profile && url.size() >= kMaxUrl) return mp3Url(server, token, key, session, offsetMs, false);
+    return url;
 }
 
 // A square JPEG of the cover (the shell asks tiles for &w=&h= itself).
@@ -132,7 +156,7 @@ bool writeOwnQueue(const std::vector<OwnTrack>& tracks) {
     for (const auto& t : tracks)
         out << flat(t.key) << '\t' << flat(t.title) << '\t' << flat(t.artist) << '\t'
             << flat(t.album) << '\t' << flat(t.thumb) << '\t' << t.duration << '\t'
-            << flat(t.list) << '\n';
+            << flat(t.list) << '\t' << t.offsetMs << '\n';
     return (bool)out;
 }
 
@@ -154,6 +178,7 @@ std::vector<OwnTrack> readOwnQueue() {
         t.thumb = f[4];
         t.duration = std::atoi(f[5].c_str());
         if (f.size() > 6 && !f[6].empty()) t.list = f[6];
+        if (f.size() > 7) t.offsetMs = std::atoll(f[7].c_str());
         tracks.push_back(std::move(t));
     }
     return tracks;
@@ -206,6 +231,12 @@ void openAndTakeBack() {
     int end = st.track + 1;
     while (end < (int)own.size() && own[(size_t)end].list == list) end++;
     g_takeBackFirst = first;
+    g_offsetTrack = -1;
+    for (size_t i = 0; i < own.size(); i++)
+        if (own[i].offsetMs > 0) {
+            g_offsetTrack = (int)i;
+            g_offsetMs = own[i].offsetMs;
+        }
     std::vector<MediaItem> items;
     items.reserve((size_t)(end - first));
     for (int i = first; i < end; i++) {
@@ -222,7 +253,8 @@ void openAndTakeBack() {
         items.push_back(std::move(item));
     }
     const int index = st.track - first;
-    const long long at = (long long)st.positionMs;
+    const long long at = (long long)st.positionMs +
+                         (st.track == g_offsetTrack.load() ? g_offsetMs.load() : 0);
     brls::Logger::info("[ps4shell] take back: the shell {} song {} of {} (\"{}\") at {} s",
                        playing ? "plays" : "has paused", index + 1, items.size(),
                        items[(size_t)index].title, at / 1000);
@@ -273,7 +305,8 @@ ShellPlace takeBackNow() {
     }
     place.play = true;
     place.index = std::max(0, st.track - g_takeBackFirst.load());
-    place.atMs = (long long)st.positionMs;
+    place.atMs = (long long)st.positionMs +
+                 (st.track == g_offsetTrack.load() ? g_offsetMs.load() : 0);
     place.paused = had && std::strcmp(before.state, "paused") == 0;
     brls::Logger::info("[ps4shell] take back: the shell stopped at song {} at {} s{}",
                        place.index + 1, place.atMs / 1000, place.paused ? ", paused" : "");
@@ -309,10 +342,11 @@ void handOverOnExit() {
     auto add = [&](const OwnTrack& t, const std::string& album) {
         Strings s;
         s.url = mp3Url(server, token, t.key,
-                       "vp4-" + t.key + "-" + stamp + "-" + std::to_string(strings.size()));
-        s.title = t.title;
-        s.artist = t.artist;
-        s.album = album;
+                       "vp4-" + t.key + "-" + stamp + "-" + std::to_string(strings.size()),
+                       t.offsetMs);
+        s.title = noBar(t.title);
+        s.artist = noBar(t.artist);
+        s.album = noBar(album);
         s.cover = coverUrl(server, token, t.thumb);
         s.id = t.key;
         strings.push_back(std::move(s));
@@ -331,9 +365,16 @@ void handOverOnExit() {
             if (!source.empty() && p.ratingKey == source) queueName = p.title;
         if (queueName.empty()) queueName = "Now Playing";
     }
-    for (const QueueItem& t : items)
-        add({t.ratingKey, t.title, t.artist, t.album, t.thumb, t.duration, "q"},
+    // The song playing: its stream starts where VitaPlex had got to, whole
+    // seconds, as the shell's own #position goes past the end of what it has
+    // fetched of a stream and skips the song.
+    const long long startMs = std::max(0LL, positionMs) / 1000 * 1000;
+    for (size_t i = 0; i < items.size(); i++) {
+        const QueueItem& t = items[i];
+        add({t.ratingKey, t.title, t.artist, t.album, t.thumb, t.duration, "q",
+             (int)i == index ? startMs : 0},
             byPlaylist ? queueName : t.album);
+    }
 
     int lists = 1;
     if (byPlaylist) {
@@ -358,7 +399,7 @@ void handOverOnExit() {
                 if (m.mediaType != MediaType::MUSIC_TRACK || m.ratingKey.empty()) continue;
                 if (strings.size() >= kMaxLibrary) break;
                 add({m.ratingKey, m.title, m.grandparentTitle, m.parentTitle, m.thumb,
-                     m.duration / 1000, "p" + p.ratingKey},
+                     m.duration / 1000, "p" + p.ratingKey, 0},
                     name);
                 added++;
             }
@@ -400,7 +441,7 @@ void handOverOnExit() {
     ScQueue q;
     std::memset(&q, 0, sizeof(q));
     q.index = (uint32_t)index;
-    q.positionMs = (uint32_t)std::max(0LL, positionMs);
+    q.positionMs = 0;  // the stream itself starts there (startMs)
     q.plus = &plus;
     if (scWriteQueue(&q, tracks.data(), (uint32_t)tracks.size()) != 0) {
         brls::Logger::error("[ps4shell] hand-over: the queue could not be written");
