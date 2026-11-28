@@ -10,9 +10,10 @@
  *    URL it can stream on its own (the server's MP3 of it, the token in the
  *    query, as the shell sends no headers), and the player told to play it
  *    from the song and the position VitaPlex had reached. The quick menu's
- *    Music section shows it, grouped into tiles by album or, by the setting,
- *    by the playlist it was played from (the songs' album field is what the
- *    section groups by). Its "+" rates the song on the server.
+ *    Music section shows it in tiles, by the setting: by album, or the user's
+ *    playlists, a tile each, the queue first (the songs' album field is what
+ *    the section groups by; picking a tile plays it). Its "+" rates the song
+ *    on the server.
  *  - As VitaPlex opens again, the queue it handed over (its own copy,
  *    kOwnQueue) is opened in the player where the shell got to, and once
  *    that player is ready the shell's stops (takeBackNow), as on the Vita.
@@ -62,10 +63,21 @@ constexpr uint64_t kStaleMs = 10 * 1000;
 std::atomic<bool> g_open{false};
 std::atomic<bool> g_music{true};
 std::atomic<int> g_group{0};
+// The first song of the list taken back, in the library handed over: the
+// shell's track numbers are the library's, VitaPlex's queue is that list.
+std::atomic<int> g_takeBackFirst{0};
+
+// By playlist, the other playlists' songs go with the queue, as tiles: up to
+// this many, fetched in up to this long as VitaPlex closes.
+constexpr size_t kMaxLibrary = 5000;
+constexpr uint64_t kFetchBudgetMs = 8000;
 
 struct OwnTrack {
     std::string key, title, artist, album, thumb;
     int duration = 0;
+    // Which list of the library it is in: "q", the queue VitaPlex played;
+    // "p<id>", a playlist of the Music section's. Each is contiguous.
+    std::string list = "q";
 };
 
 uint64_t monotonicMs() {
@@ -113,23 +125,14 @@ std::string coverUrl(const std::string& server, const std::string& token,
            "&width=300&height=300&minSize=1&upscale=1&format=jpeg&X-Plex-Token=" + token;
 }
 
-// The title of the playlist the queue came from, for the Music section's
-// tiles by playlist: "" when it cannot be had.
-std::string playlistTitle(const std::string& id) {
-    if (id.empty()) return std::string();
-    std::vector<Playlist> playlists;
-    if (!PlexClient::getInstance().fetchMusicPlaylists(playlists)) return std::string();
-    for (const auto& p : playlists)
-        if (p.ratingKey == id) return p.title;
-    return std::string();
-}
 
 bool writeOwnQueue(const std::vector<OwnTrack>& tracks) {
     std::ofstream out(kOwnQueue, std::ios::trunc);
     if (!out) return false;
     for (const auto& t : tracks)
         out << flat(t.key) << '\t' << flat(t.title) << '\t' << flat(t.artist) << '\t'
-            << flat(t.album) << '\t' << flat(t.thumb) << '\t' << t.duration << '\n';
+            << flat(t.album) << '\t' << flat(t.thumb) << '\t' << t.duration << '\t'
+            << flat(t.list) << '\n';
     return (bool)out;
 }
 
@@ -150,6 +153,7 @@ std::vector<OwnTrack> readOwnQueue() {
         t.album = f[3];
         t.thumb = f[4];
         t.duration = std::atoi(f[5].c_str());
+        if (f.size() > 6 && !f[6].empty()) t.list = f[6];
         tracks.push_back(std::move(t));
     }
     return tracks;
@@ -180,17 +184,32 @@ void openAndTakeBack() {
                            "(status beat {} ms, now {} ms); music over", st.beatMs, now);
         return;
     }
+    // st.track is the song's number in the library handed over (the shell's
+    // queue may be one of its tiles, picked there: st.count is that list's);
+    // its URL names the song, to be sure the library is VitaPlex's copy.
     std::vector<OwnTrack> own = readOwnQueue();
-    if (own.empty() || (int)own.size() != st.count || st.track < 0 ||
-        st.track >= (int)own.size()) {
-        brls::Logger::warning("[ps4shell] take back: the shell plays a queue of {} (song {}), "
-                              "VitaPlex's copy has {}; it plays on there",
-                              st.count, st.track, own.size());
+    const bool known = !own.empty() && st.track >= 0 && st.track < (int)own.size() &&
+        std::string(st.file).find(HttpClient::urlEncode("/library/metadata/" +
+                                                        own[(size_t)st.track].key) + "&") !=
+            std::string::npos;
+    if (!known) {
+        brls::Logger::warning("[ps4shell] take back: the shell plays song {} of {} ({}), not "
+                              "one of VitaPlex's copy ({} songs); it plays on there",
+                              st.track, st.count, st.file, own.size());
         return;
     }
+    // The list the song is in becomes VitaPlex's queue: the queue handed
+    // over, or the playlist picked in the Music section.
+    const std::string list = own[(size_t)st.track].list;
+    int first = st.track;
+    while (first > 0 && own[(size_t)first - 1].list == list) first--;
+    int end = st.track + 1;
+    while (end < (int)own.size() && own[(size_t)end].list == list) end++;
+    g_takeBackFirst = first;
     std::vector<MediaItem> items;
-    items.reserve(own.size());
-    for (const auto& t : own) {
+    items.reserve((size_t)(end - first));
+    for (int i = first; i < end; i++) {
+        const OwnTrack& t = own[(size_t)i];
         MediaItem item;
         item.ratingKey = t.key;
         item.title = t.title;
@@ -202,7 +221,7 @@ void openAndTakeBack() {
         item.mediaType = MediaType::MUSIC_TRACK;
         items.push_back(std::move(item));
     }
-    const int index = st.track;
+    const int index = st.track - first;
     const long long at = (long long)st.positionMs;
     brls::Logger::info("[ps4shell] take back: the shell {} song {} of {} (\"{}\") at {} s",
                        playing ? "plays" : "has paused", index + 1, items.size(),
@@ -253,7 +272,7 @@ ShellPlace takeBackNow() {
         st = before;   // where it last said it was
     }
     place.play = true;
-    place.index = st.track;
+    place.index = std::max(0, st.track - g_takeBackFirst.load());
     place.atMs = (long long)st.positionMs;
     place.paused = had && std::strcmp(before.state, "paused") == 0;
     brls::Logger::info("[ps4shell] take back: the shell stopped at song {} at {} s{}",
@@ -278,11 +297,7 @@ void handOverOnExit() {
     const std::string token = PlexClient::getInstance().getAuthToken();
     if (server.empty() || token.empty()) return;
 
-    // By playlist: one tile for the queue, named after the playlist it was
-    // played from; a queue that was not a playlist keeps its albums.
-    std::string group;
-    if (g_group == 1) group = playlistTitle(queue.getSourcePlaylistId());
-
+    const bool byPlaylist = g_group == 1;
     const long long positionMs = (long long)(player.getPosition() * 1000.0);
     const std::string stamp = std::to_string((long long)time(nullptr));
 
@@ -291,21 +306,69 @@ void handOverOnExit() {
     };
     std::vector<Strings> strings;
     std::vector<OwnTrack> own;
-    strings.reserve(items.size());
-    own.reserve(items.size());
-    for (size_t i = 0; i < items.size(); i++) {
-        const QueueItem& t = items[i];
+    auto add = [&](const OwnTrack& t, const std::string& album) {
         Strings s;
-        s.url = mp3Url(server, token, t.ratingKey, "vp4-" + t.ratingKey + "-" + stamp + "-" +
-                                                       std::to_string(i));
+        s.url = mp3Url(server, token, t.key,
+                       "vp4-" + t.key + "-" + stamp + "-" + std::to_string(strings.size()));
         s.title = t.title;
         s.artist = t.artist;
-        s.album = group.empty() ? t.album : group;
+        s.album = album;
         s.cover = coverUrl(server, token, t.thumb);
-        s.id = t.ratingKey;
+        s.id = t.key;
         strings.push_back(std::move(s));
-        own.push_back({t.ratingKey, t.title, t.artist, t.album, t.thumb, t.duration});
+        own.push_back(t);
+    };
+
+    // By playlist, the Music section's tiles are the user's playlists, the
+    // queue first (the player's first tile, album0), named after the playlist
+    // it was played from, else "Now Playing"; the others after it.
+    std::vector<Playlist> playlists;
+    const std::string source = queue.getSourcePlaylistId();
+    std::string queueName;
+    if (byPlaylist) {
+        if (!PlexClient::getInstance().fetchMusicPlaylists(playlists)) playlists.clear();
+        for (const auto& p : playlists)
+            if (!source.empty() && p.ratingKey == source) queueName = p.title;
+        if (queueName.empty()) queueName = "Now Playing";
     }
+    for (const QueueItem& t : items)
+        add({t.ratingKey, t.title, t.artist, t.album, t.thumb, t.duration, "q"},
+            byPlaylist ? queueName : t.album);
+
+    int lists = 1;
+    if (byPlaylist) {
+        // Tiles go by name: a second playlist of one name gets a number.
+        std::vector<std::string> names{queueName};
+        const uint64_t until = monotonicMs() + kFetchBudgetMs;
+        for (const auto& p : playlists) {
+            if (p.ratingKey == source || strings.size() >= kMaxLibrary) continue;
+            if (monotonicMs() > until) {
+                brls::Logger::warning("[ps4shell] hand-over: out of time for the playlists; "
+                                      "{} of {} in", lists - 1, playlists.size());
+                break;
+            }
+            std::vector<PlaylistItem> entries;
+            if (!PlexClient::getInstance().fetchPlaylistItems(p.ratingKey, entries)) continue;
+            std::string name = p.title.empty() ? "Playlist" : p.title;
+            for (int n = 2; std::find(names.begin(), names.end(), name) != names.end(); n++)
+                name = (p.title.empty() ? "Playlist" : p.title) + " (" + std::to_string(n) + ")";
+            size_t added = 0;
+            for (const auto& e : entries) {
+                const MediaItem& m = e.media;
+                if (m.mediaType != MediaType::MUSIC_TRACK || m.ratingKey.empty()) continue;
+                if (strings.size() >= kMaxLibrary) break;
+                add({m.ratingKey, m.title, m.grandparentTitle, m.parentTitle, m.thumb,
+                     m.duration / 1000, "p" + p.ratingKey},
+                    name);
+                added++;
+            }
+            if (added) {
+                names.push_back(name);
+                lists++;
+            }
+        }
+    }
+
     std::vector<ScTrack> tracks(strings.size());
     for (size_t i = 0; i < strings.size(); i++) {
         ScTrack& tr = tracks[i];
@@ -349,7 +412,12 @@ void handOverOnExit() {
 
     // VitaPlex's player first, so the two never play at once.
     player.pause();
-    if (scMusicPlay() != 0) {
+    // By playlist the library holds every playlist; the shell's queue is the
+    // first tile's (the queue handed over), picked as the Music section picks
+    // one, from the song playing and, still due from the reload, its place.
+    const std::string pick = "stop\nreload\npick=album0:" + std::to_string(index) + ":" +
+                             std::to_string(index) + "\n";
+    if ((byPlaylist ? scCommand(pick.c_str()) : scMusicPlay()) != 0) {
         brls::Logger::error("[ps4shell] hand-over: the shell's player could not be told to play");
         return;
     }
@@ -357,10 +425,14 @@ void handOverOnExit() {
     scCommand(repeat == RepeatMode::ONE ? "repeat=2" : repeat == RepeatMode::ALL ? "repeat=1"
                                                                                   : "repeat=0");
     if (queue.isShuffleEnabled()) scCommand("shuffle=1");
-    brls::Logger::info("[ps4shell] hand-over: {} songs to the shell, from \"{}\" at {} s, "
-                       "grouped by {}",
-                       items.size(), items[(size_t)index].title, positionMs / 1000,
-                       group.empty() ? "album" : "playlist \"" + group + "\"");
+    if (byPlaylist)
+        brls::Logger::info("[ps4shell] hand-over: a queue of {} (\"{}\") and {} more playlists, "
+                           "{} songs, to the shell, from \"{}\" at {} s",
+                           items.size(), queueName, lists - 1, strings.size(),
+                           items[(size_t)index].title, positionMs / 1000);
+    else
+        brls::Logger::info("[ps4shell] hand-over: {} songs to the shell, by album, from \"{}\" "
+                           "at {} s", items.size(), items[(size_t)index].title, positionMs / 1000);
 }
 
 }  // namespace bgaudio

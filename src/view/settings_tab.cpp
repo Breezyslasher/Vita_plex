@@ -1240,9 +1240,10 @@ brls::Box* SettingsTab::createMusicSection() {
         ps4Info->setText("When VitaPlex is closed with music playing, the queue plays on in the "
                          "Music section of the quick menu (hold PS), from where it had got to, "
                          "streamed from the server as MP3s; \"+\" (R3) there rates the song. "
-                         "Albums: a tile for each album. Playlist: one tile named after the "
-                         "playlist the queue was played from (a queue that is not a playlist "
-                         "keeps its albums). Opening VitaPlex takes the music back. Needs "
+                         "Albums: a tile for each album in the queue. Playlist: a tile for each "
+                         "of your music playlists, the one playing first (\"Now Playing\" for a "
+                         "queue that is not a playlist); picking one there plays it. Opening "
+                         "VitaPlex takes the music back. Needs "
                          "GoldHEN; uses the Shell Companion module, which stays loaded until "
                          "the PS4 restarts.");
         ps4Info->setFontSize(14);
