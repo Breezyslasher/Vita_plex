@@ -95,6 +95,9 @@ struct MediaItem {
 
     // Album subtype (album, single, ep, compilation, soundtrack, live, etc.)
     std::string subtype;
+    // Set for a track listed from a playlist: its entry there, which
+    // removing it from the playlist takes (removeFromPlaylist).
+    std::string playlistItemId;
 
     // An extra's kind, as /extras gives it: 1 trailer, 2 deleted scene,
     // 3 interview, 4 music video, 5 behind the scenes, 6 scene or featurette

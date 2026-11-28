@@ -179,6 +179,7 @@ private:
 
     // Current playlist track list (stored as member to avoid per-row copies)
     std::vector<MediaItem> m_playlistTracks;
+    void removePlaylistTrack(const std::string& playlistItemId, const std::string& title);
     std::string m_currentPlaylistId;
     size_t m_trackListRendered = 0;  // How many track rows rendered so far
     brls::Button* m_trackListLoadMoreBtn = nullptr;

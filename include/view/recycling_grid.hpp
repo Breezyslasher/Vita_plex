@@ -32,6 +32,12 @@ public:
     void appendItems(const std::vector<MediaItem>& newItems);
     void setOnItemSelected(std::function<void(const MediaItem&)> callback);
     void setOnItemStartAction(std::function<void(const MediaItem&)> callback);
+    // Called just before an item's shared Options menu opens, to add rows of
+    // the owner's own (MediaDetailView::s_extraMenuRows), e.g. "Remove from
+    // Playlist" while the grid shows a playlist.
+    void setBeforeItemMenu(std::function<void(const MediaItem&)> callback) {
+        m_beforeItemMenu = std::move(callback);
+    }
 
     // Called automatically when user scrolls to the bottom. Owner should fetch the next page and call appendItems().
     void setOnLoadMore(std::function<void()> callback);
@@ -87,6 +93,7 @@ private:
     std::vector<MediaItem> m_items;
     std::function<void(const MediaItem&)> m_onItemSelected;
     std::function<void(const MediaItem&)> m_onItemStartAction;
+    std::function<void(const MediaItem&)> m_beforeItemMenu;
     std::function<void()> m_onLoadMore;
 
     brls::Box* m_contentBox = nullptr;

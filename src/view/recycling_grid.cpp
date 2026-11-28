@@ -237,7 +237,9 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
             if (ownerHandles) {
                 if (m_onItemStartAction) m_onItemStartAction(capturedItem);
             } else {
+                if (m_beforeItemMenu) m_beforeItemMenu(capturedItem);
                 MediaDetailView::showContextMenuFor(capturedItem);
+                MediaDetailView::s_extraMenuRows.clear();   // if no menu took them
             }
         };
 

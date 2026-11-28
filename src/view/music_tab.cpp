@@ -16,6 +16,8 @@
 #include "activity/player_activity.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
+
+#include <algorithm>
 #include "platform/platform.hpp"
 
 namespace vitaplex {
@@ -105,6 +107,38 @@ MusicTab::MusicTab() {
     });
     m_contentGrid->setOnItemStartAction([this](const MediaItem& item) {
         showAlbumContextMenu(item);
+    });
+    // A track of the playlist on show: "Remove from Playlist" in its menu.
+    m_contentGrid->setBeforeItemMenu([this](const MediaItem& item) {
+        if (!m_viewingPlaylist || m_currentPlaylistId.empty() || item.playlistItemId.empty()) return;
+        MediaDetailView::s_extraMenuRows.push_back(
+            {"delete-outline.png", "Remove from Playlist", "", false, false,
+             [this, playlistId = m_currentPlaylistId, entry = item.playlistItemId,
+              title = item.title](brls::View*) {
+                 std::weak_ptr<bool> aliveWeak = m_alive;
+                 asyncRun([this, playlistId, entry, title, aliveWeak]() {
+                     const bool ok = PlexClient::getInstance().removeFromPlaylist(playlistId, entry);
+                     brls::sync([this, ok, playlistId, entry, title, aliveWeak]() {
+                         if (!ok) {
+                             brls::Application::notify("Couldn't remove " + title +
+                                                       " from the playlist");
+                             return;
+                         }
+                         brls::Application::notify("Removed from playlist: " + title);
+                         auto alive = aliveWeak.lock();
+                         if (!alive || !*alive || !m_viewingPlaylist ||
+                             m_currentPlaylistId != playlistId)
+                             return;
+                         m_items.erase(std::remove_if(m_items.begin(), m_items.end(),
+                                                      [&](const MediaItem& t) {
+                                                          return t.playlistItemId == entry;
+                                                      }),
+                                       m_items.end());
+                         m_contentGrid->setDataSource(m_items);
+                     });
+                 });
+                 return true;
+             }});
     });
     m_mainContainer->addView(m_contentGrid);
 

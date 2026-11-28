@@ -6194,6 +6194,7 @@ bool PlexClient::fetchPlaylistItems(const std::string& playlistId, std::vector<P
         item.media.index = extractJsonInt(objStr, "index");  // Track number
         item.media.type = extractJsonValue(objStr, "type");
         item.media.mediaType = parseMediaType(item.media.type);
+        item.media.playlistItemId = item.playlistItemId;
 
         if (!item.media.ratingKey.empty()) {
             items.push_back(item);

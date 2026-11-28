@@ -17,6 +17,7 @@
 #include "app/music_queue.hpp"
 #include "app/downloads_manager.hpp"
 #include "platform/platform.hpp"
+#include <algorithm>
 #include <cctype>
 
 namespace vitaplex {
@@ -1734,8 +1735,17 @@ void LibrarySectionTab::appendTrackListPage() {
         // and a long press on a touch screen. These rows had none, so a hold
         // did nothing inside a playlist.
         auto openMenu = [this, idx]() {
-            if (idx < m_playlistTracks.size())
-                MediaDetailView::showContextMenuFor(m_playlistTracks[idx]);
+            if (idx >= m_playlistTracks.size()) return;
+            const MediaItem& track = m_playlistTracks[idx];
+            if (!m_currentPlaylistId.empty() && !track.playlistItemId.empty())
+                MediaDetailView::s_extraMenuRows.push_back(
+                    {"delete-outline.png", "Remove from Playlist", "", false, false,
+                     [this, entry = track.playlistItemId, title = track.title](brls::View*) {
+                         removePlaylistTrack(entry, title);
+                         return true;
+                     }});
+            MediaDetailView::showContextMenuFor(track);
+            MediaDetailView::s_extraMenuRows.clear();   // if no menu took them
         };
         row->registerAction("Options", brls::ControllerButton::BUTTON_START,
                             [openMenu](brls::View*) {
@@ -1774,6 +1784,39 @@ void LibrarySectionTab::appendTrackListPage() {
     // Rows and the load-more button are built focusable. If the list happens to
     // be hidden right now, they must not join the focus order until it is shown.
     syncTrackListFocus();
+}
+
+// Removes a track from the playlist on the server, then from the list shown,
+// which is drawn again as far as it had been (its rows hold indices).
+void LibrarySectionTab::removePlaylistTrack(const std::string& playlistItemId,
+                                            const std::string& title) {
+    const std::string playlistId = m_currentPlaylistId;
+    std::weak_ptr<bool> aliveWeak = m_alive;
+    asyncRun([this, playlistId, playlistItemId, title, aliveWeak]() {
+        const bool ok = PlexClient::getInstance().removeFromPlaylist(playlistId, playlistItemId);
+        brls::sync([this, ok, playlistId, playlistItemId, title, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!ok) {
+                brls::Application::notify("Couldn't remove " + title + " from the playlist");
+                return;
+            }
+            brls::Application::notify("Removed from playlist: " + title);
+            if (!alive || !*alive || m_currentPlaylistId != playlistId) return;
+            auto it = std::find_if(m_playlistTracks.begin(), m_playlistTracks.end(),
+                                   [&](const MediaItem& t) { return t.playlistItemId == playlistItemId; });
+            if (it == m_playlistTracks.end()) return;
+            m_playlistTracks.erase(it);
+            const size_t shown = m_trackListRendered;
+            m_trackListBox->clearViews();
+            m_trackListLoadMoreBtn = nullptr;
+            m_trackListRendered = 0;
+            while (m_trackListRendered < std::min(shown, m_playlistTracks.size()))
+                appendTrackListPage();
+            if (m_playlistTracks.empty()) appendTrackListPage();
+            if (!m_trackListBox->getChildren().empty())
+                brls::Application::giveFocus(m_trackListScroll);
+        });
+    });
 }
 
 void LibrarySectionTab::performPlaylistTrackAction(size_t trackIndex) {
