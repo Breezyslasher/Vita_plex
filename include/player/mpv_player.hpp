@@ -55,6 +55,10 @@ struct MpvPlaybackInfo {
     std::string videoCodec;
     int videoWidth = 0;
     int videoHeight = 0;
+    // As shown (the pixel aspect applied): a 720x352 picture of 32:27
+    // pixels is 853x352 on screen. 0 until known.
+    int displayWidth = 0;
+    int displayHeight = 0;
     double fps = 0.0;
     std::string audioCodec;
     int audioChannels = 0;

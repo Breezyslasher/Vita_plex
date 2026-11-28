@@ -2080,6 +2080,11 @@ void MpvPlayer::updatePlaybackInfo() {
         mpv_get_property(m_mpv, "height", MPV_FORMAT_INT64, &h);
         m_playbackInfo.videoWidth = (int)w;
         m_playbackInfo.videoHeight = (int)h;
+        int64_t dw = 0, dh = 0;
+        mpv_get_property(m_mpv, "dwidth", MPV_FORMAT_INT64, &dw);
+        mpv_get_property(m_mpv, "dheight", MPV_FORMAT_INT64, &dh);
+        m_playbackInfo.displayWidth = (int)dw;
+        m_playbackInfo.displayHeight = (int)dh;
 
         double fps = 0.0;
         mpv_get_property(m_mpv, "estimated-vf-fps", MPV_FORMAT_DOUBLE, &fps);

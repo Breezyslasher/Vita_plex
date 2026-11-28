@@ -66,17 +66,37 @@ void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height
         return;
     }
 
-    // Calculate video dimensions while maintaining aspect ratio
-    float videoWidth = (float)player.getVideoWidth();
-    float videoHeight = (float)player.getVideoHeight();
-    float aspectRatio = videoWidth / videoHeight;
+    // mpv draws each frame into a render target of a fixed size
+    // (getVideoWidth x getVideoHeight, 1920x1080 on a PC), the film fitted
+    // into it with black bars of its own. Fitting that whole target into the
+    // view added the target's bars to the view's: a 2.41:1 film in a window
+    // wider than 16:9 had black down both sides as well as above and below.
+    // So the part of the target the film covers is what is fitted, by the
+    // film's own shape (its display size, the pixel aspect applied).
+    const float texW = (float)player.getVideoWidth();
+    const float texH = (float)player.getVideoHeight();
+    if (texW <= 0 || texH <= 0) return;
+    const auto& info = player.getPlaybackInfo();
+    float aspectRatio = texW / texH;
+    if (info.displayWidth > 0 && info.displayHeight > 0)
+        aspectRatio = (float)info.displayWidth / (float)info.displayHeight;
+
+    // The film's rectangle inside the target, as mpv centres it.
+    float srcX = 0, srcY = 0, srcW = texW, srcH = texH;
+    if (aspectRatio > texW / texH) {
+        srcH = texW / aspectRatio;
+        srcY = (texH - srcH) / 2.0f;
+    } else {
+        srcW = texH * aspectRatio;
+        srcX = (texW - srcW) / 2.0f;
+    }
 
     float drawWidth = width;
     float drawHeight = height;
     float drawX = x;
     float drawY = y;
 
-    // Fit video to view while maintaining aspect ratio
+    // Fit the film to the view, keeping its shape
     if (width / height > aspectRatio) {
         // View is wider than video
         drawWidth = height * aspectRatio;
@@ -87,8 +107,11 @@ void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height
         drawY = y + (height - drawHeight) / 2.0f;
     }
 
-    // Create image pattern for video frame
-    NVGpaint imgPaint = nvgImagePattern(vg, drawX, drawY, drawWidth, drawHeight, 0.0f, videoImage, 1.0f);
+    // The whole target placed so that the film's part lands on the draw rect.
+    const float sx = drawWidth / srcW;
+    const float sy = drawHeight / srcH;
+    NVGpaint imgPaint = nvgImagePattern(vg, drawX - srcX * sx, drawY - srcY * sy, texW * sx,
+                                        texH * sy, 0.0f, videoImage, 1.0f);
 
     // Draw video frame
     nvgBeginPath(vg);
