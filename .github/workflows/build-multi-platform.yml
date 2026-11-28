@@ -1817,7 +1817,7 @@ jobs:
           # Caches the msys2 base + installed packages between runs.
           cache: true
           release: ${{ contains(matrix.sys, 'arm64') }}
-          # No glfw here: the next step installs switchfin's glfw-3.5.0-1
+          # No glfw here: the next step installs switchfin's glfw-3.5.1-1
           # (pacman -U) over it anyway, and MSYS2's own package left the
           # MINGW64 repo (2026-11-27: "target not found:
           # mingw-w64-x86_64-glfw"), failing the x64 row before checkout.
@@ -1835,7 +1835,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: portlib-cache
-          key: mingw-portlibs-${{ matrix.env }}-glfw-3.5.0-1_curl-8.21.0-1_mpv-0.41.0-2_libwebp-1.6.0-1
+          key: mingw-portlibs-${{ matrix.env }}-glfw-3.5.1-1_curl-8.23.0-3_mpv-0.42.0-2_libwebp-1.6.0-1
 
       - name: Install dependency
         run: |
@@ -1845,16 +1845,14 @@ jobs:
           # file (curl-8.16.0-1 is simply gone), and a rebuild at the SAME
           # pkgver-pkgrel silently swaps the contents in place.
           #
-          # Keep this set on one switchfin build batch. glfw-3.5.0-1,
-          # libwebp-1.6.0-1, mpv-0.41.0-2 and curl-8.21.0-1 were all built
-          # 2026-09-17 07:59-08:24; glfw and libwebp kept their filenames, so
-          # only curl and mpv move here. mpv-0.41.0-1 still resolves, but it
-          # is a 2026-09-01 leftover and the only member that would be off
-          # batch — mpv does not link libcurl, so this is about keeping the
-          # set coherent, not an ABI break.
+          # Keep this set on one switchfin build batch. 2026-11-28: glfw-3.5.0-1,
+          # curl-8.21.0-1 and mpv-0.41.0-2 were gone (404, both arches; the
+          # arm64 row still built from its cache); the release now has
+          # glfw-3.5.1-1, curl-8.23.0-3 and mpv-0.42.0-2, and libwebp-1.6.0-1
+          # is unchanged, for both mingw-w64-x86_64 and clang-aarch64.
           # Current list: https://github.com/dragonflylee/switchfin/releases/tag/mingw-packages
           mkdir -p portlib-cache
-          for pkg in glfw-3.5.0-1 curl-8.21.0-1 mpv-0.41.0-2 libwebp-1.6.0-1; do
+          for pkg in glfw-3.5.1-1 curl-8.23.0-3 mpv-0.42.0-2 libwebp-1.6.0-1; do
             f="portlib-cache/${MINGW_PACKAGE_PREFIX}-${pkg}-any.pkg.tar.zst"
             url="https://github.com/dragonflylee/switchfin/releases/download/mingw-packages/${MINGW_PACKAGE_PREFIX}-${pkg}-any.pkg.tar.zst"
             # curl reports a bare "(22) 404" with no filename, and this loop
