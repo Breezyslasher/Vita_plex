@@ -88,12 +88,14 @@ std::string serverBase() {
 }
 
 // The server's MP3 of a song, every parameter in the query (the shell's
-// player sends no headers), a session of its own for each song.
+// player sends no headers), a session of its own for each song. Always
+// encoded (directStream=0): a copied stream is what the server's transcoder
+// fails on for some files, and the shell's player has no fallback.
 std::string mp3Url(const std::string& server, const std::string& token, const std::string& key,
                    const std::string& session) {
     return server + "/music/:/transcode/universal/start.mp3?path=" +
            HttpClient::urlEncode("/library/metadata/" + key) +
-           "&mediaIndex=0&partIndex=0&directPlay=0&directStream=1&directStreamAudio=1"
+           "&mediaIndex=0&partIndex=0&directPlay=0&directStream=0&directStreamAudio=0"
            "&hasMDE=1&location=lan&protocol=http&musicBitrate=320&session=" + session +
            "&X-Plex-Client-Identifier=" + HttpClient::urlEncode(PLEX_CLIENT_ID) +
            "&X-Plex-Product=VitaPlex&X-Plex-Platform=" + HttpClient::urlEncode("PlayStation 4") +
@@ -170,9 +172,12 @@ void openAndTakeBack() {
     const bool paused = std::strcmp(st.state, "paused") == 0;
     if (!playing && !paused) return;
     const uint64_t now = monotonicMs();
-    if (st.beatMs == 0 || now > st.beatMs + kStaleMs) {
-        brls::Logger::info("[ps4shell] take back: the shell's status is {} s old; music over",
-                           st.beatMs ? (now - st.beatMs) / 1000 : 0);
+    // The clock starts again at each boot: a status from before one reads
+    // later than now (or long ago), and its player is not running.
+    if (st.beatMs == 0 || st.beatMs > now + 1000 || now > st.beatMs + kStaleMs ||
+        !scPlayerRunning()) {
+        brls::Logger::info("[ps4shell] take back: the shell's player is not playing "
+                           "(status beat {} ms, now {} ms); music over", st.beatMs, now);
         return;
     }
     std::vector<OwnTrack> own = readOwnQueue();
