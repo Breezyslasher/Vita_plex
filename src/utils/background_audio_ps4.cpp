@@ -332,7 +332,6 @@ void handOverOnExit() {
 
     const bool byPlaylist = g_group == 1;
     const long long positionMs = (long long)(player.getPosition() * 1000.0);
-    const std::string stamp = std::to_string((long long)time(nullptr));
 
     struct Strings {
         std::string url, title, artist, album, cover, id;
@@ -341,9 +340,10 @@ void handOverOnExit() {
     std::vector<OwnTrack> own;
     auto add = [&](const OwnTrack& t, const std::string& album) {
         Strings s;
-        s.url = mp3Url(server, token, t.key,
-                       "vp4-" + t.key + "-" + stamp + "-" + std::to_string(strings.size()),
-                       t.offsetMs);
+        // The session is the song's own, the same at every hand-over: the
+        // shell keeps Liked ("+") by the whole URL, which would match no song
+        // the next time with a time in it.
+        s.url = mp3Url(server, token, t.key, "vp4-" + t.key, t.offsetMs);
         s.title = noBar(t.title);
         s.artist = noBar(t.artist);
         s.album = noBar(album);
