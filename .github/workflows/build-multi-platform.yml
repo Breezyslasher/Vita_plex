@@ -708,7 +708,7 @@ jobs:
         run: |
           mkdir -p build-sc
           curl -fsSL --retry 4 --retry-all-errors -o build-sc/shell_companion.suprx \
-            "https://github.com/Breezyslasher/vita-shell-companion/releases/download/$SC_TAG/shell_companion.suprx"
+            "https://github.com/Breezyslasher/playstation-shell-companion/releases/download/$SC_TAG/shell_companion.suprx"
           ls -l build-sc/shell_companion.suprx
 
       - name: Build

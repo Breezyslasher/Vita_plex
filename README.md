@@ -137,7 +137,7 @@ Apache-2.0. Media playback is provided by [libmpv](https://mpv.io) (LGPL-2.1+),
 which is linked dynamically.
 
 The PS Vita's package (`VitaPlex.vpk`) also carries the SceShell plugin of
-[vita-shell-companion](https://github.com/Breezyslasher/vita-shell-companion),
+[playstation-shell-companion](https://github.com/Breezyslasher/playstation-shell-companion),
 a program of its own licensed under the GNU GPL, version 3, based on the one of
 [ElevenMPV-A](https://github.com/GrapheneCt/ElevenMPV-A) by GrapheneCt, which
 began as VitaPlex's quick menu plugin. VitaPlex builds in its client library
